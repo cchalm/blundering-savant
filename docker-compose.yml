@@ -1,0 +1,45 @@
+version: '3.8'
+
+services:
+  virtual-developer:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: virtual-developer-bot
+    restart: unless-stopped
+    environment:
+      - GITHUB_TOKEN=${GITHUB_TOKEN}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - GITHUB_USERNAME=${GITHUB_USERNAME}
+      - CHECK_INTERVAL=${CHECK_INTERVAL:-5m}
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+    volumes:
+      - ./logs:/app/logs
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    healthcheck:
+      test: ["CMD", "sh", "-c", "ps aux | grep '[v]irtual-developer' || exit 1"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+
+# Optional: Add a Redis service for state persistence
+  redis:
+    image: redis:7-alpine
+    container_name: virtual-developer-redis
+    restart: unless-stopped
+    volumes:
+      - redis-data:/data
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+
+volumes:
+  redis-data:
