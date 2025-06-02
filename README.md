@@ -1,6 +1,6 @@
-# Virtual Developer Bot
+# Halfanewgrad Bot
 
-A GitHub bot powered by Anthropic's Claude API that acts as a virtual developer, automatically solving issues and creating pull requests.
+A GitHub bot powered by Anthropic's Claude API that acts as a virtual developer, automatically creating pull requests to resolve issues.
 
 ## Features
 
@@ -41,7 +41,7 @@ A GitHub bot powered by Anthropic's Claude API that acts as a virtual developer,
 1. Clone this repository:
 ```bash
 git clone <repository-url>
-cd virtual-developer-bot
+cd halfanewgrad
 ```
 
 2. Copy the environment template:
@@ -65,13 +65,13 @@ docker-compose up -d
 
 Using Docker directly:
 ```bash
-docker build -t virtual-developer .
+docker build -t halfanewgrad .
 docker run -d \
-  --name virtual-developer \
+  --name halfanewgrad \
   -e GITHUB_TOKEN=$GITHUB_TOKEN \
   -e ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY \
   -e GITHUB_USERNAME=$GITHUB_USERNAME \
-  virtual-developer
+  halfanewgrad
 ```
 
 ## Usage
@@ -102,7 +102,7 @@ docker run -d \
 
 View logs:
 ```bash
-docker-compose logs -f virtual-developer
+docker-compose logs -f halfanewgrad
 ```
 
 Check health:
@@ -128,7 +128,7 @@ docker-compose ps
 ## Troubleshooting
 
 ### Bot not responding to issues
-- Check logs: `docker-compose logs virtual-developer`
+- Check logs: `docker-compose logs halfanewgrad`
 - Verify the issue is assigned to the correct username
 - Ensure the bot has repository access
 

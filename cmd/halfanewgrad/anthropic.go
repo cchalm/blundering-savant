@@ -1,79 +1,34 @@
 package main
 
 import (
-	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
-	"io"
-	"net/http"
+	"log"
 	"time"
 
+	"github.com/anthropics/anthropic-sdk-go"
+	"github.com/anthropics/anthropic-sdk-go/option"
 	"github.com/google/go-github/v57/github"
 )
 
-// AnthropicClient handles communication with the Anthropic API
+// AnthropicClient wraps the official Anthropic SDK client
 type AnthropicClient struct {
-	apiKey     string
-	baseURL    string
-	httpClient *http.Client
+	client anthropic.Client
 }
 
-// NewAnthropicClient creates a new Anthropic API client
+// NewAnthropicClient creates a new Anthropic API client using the official SDK
 func NewAnthropicClient(apiKey string) *AnthropicClient {
+	client := anthropic.NewClient(
+		option.WithAPIKey(apiKey),
+	)
 	return &AnthropicClient{
-		apiKey:  apiKey,
-		baseURL: "https://api.anthropic.com/v1",
-		httpClient: &http.Client{
-			Timeout: 30 * time.Second,
-		},
+		client: client,
 	}
 }
 
-// Message represents an Anthropic message
-type Message struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
-}
-
-// Tool represents a tool that can be used by Claude
-type Tool struct {
-	Name        string          `json:"name"`
-	Description string          `json:"description"`
-	InputSchema json.RawMessage `json:"input_schema"`
-}
-
-// AnthropicRequest represents a request to the Anthropic API
-type AnthropicRequest struct {
-	Model     string    `json:"model"`
-	Messages  []Message `json:"messages"`
-	MaxTokens int       `json:"max_tokens"`
-	Tools     []Tool    `json:"tools,omitempty"`
-	System    string    `json:"system,omitempty"`
-}
-
-// AnthropicResponse represents a response from the Anthropic API
-type AnthropicResponse struct {
-	ID      string `json:"id"`
-	Type    string `json:"type"`
-	Role    string `json:"role"`
-	Content []struct {
-		Type  string          `json:"type"`
-		Text  string          `json:"text,omitempty"`
-		ID    string          `json:"id,omitempty"`
-		Name  string          `json:"name,omitempty"`
-		Input json.RawMessage `json:"input,omitempty"`
-	} `json:"content"`
-	Model        string `json:"model"`
-	StopReason   string `json:"stop_reason"`
-	StopSequence string `json:"stop_sequence"`
-	Usage        struct {
-		InputTokens  int `json:"input_tokens"`
-		OutputTokens int `json:"output_tokens"`
-	} `json:"usage"`
-}
-
-// CreateMessage sends a message to the Anthropic API
-func (c *AnthropicClient) CreateMessage(prompt string, tools []Tool) (*AnthropicResponse, error) {
+// CreateMessage sends a message to the Anthropic API with optional tools
+func (ac *AnthropicClient) CreateMessage(ctx context.Context, prompt string, tools []anthropic.ToolParam) (*anthropic.Message, error) {
 	systemPrompt := `You are a highly skilled software developer working as a virtual assistant on GitHub.
 Your responsibilities include:
 1. Analyzing GitHub issues and creating high-quality code solutions
@@ -94,54 +49,38 @@ When using tools:
 - Ensure your branch names are descriptive and follow conventions (e.g., fix/issue-description, feature/new-feature)
 - Write clear, conventional commit messages`
 
-	request := &AnthropicRequest{
-		Model: "claude-3-opus-20240229",
-		Messages: []Message{
-			{
-				Role:    "user",
-				Content: prompt,
-			},
-		},
+	params := anthropic.MessageNewParams{
+		Model:     anthropic.ModelClaudeSonnet4_0,
 		MaxTokens: 4096,
-		Tools:     tools,
-		System:    systemPrompt,
+		System: []anthropic.TextBlockParam{
+			{Text: systemPrompt},
+		},
+		Messages: []anthropic.MessageParam{
+			anthropic.NewUserMessage(anthropic.NewTextBlock(prompt)),
+		},
 	}
 
-	body, err := json.Marshal(request)
+	// Add tools if provided
+	if len(tools) > 0 {
+		toolsUnion := make([]anthropic.ToolUnionParam, len(tools))
+		for i, tool := range tools {
+			toolsUnion[i] = anthropic.ToolUnionParam{
+				OfTool: &tool,
+			}
+		}
+		params.Tools = toolsUnion
+	}
+
+	message, err := ac.client.Messages.New(ctx, params)
 	if err != nil {
-		return nil, fmt.Errorf("failed to marshal request: %w", err)
+		return nil, fmt.Errorf("failed to create message: %w", err)
 	}
 
-	req, err := http.NewRequest("POST", c.baseURL+"/messages", bytes.NewBuffer(body))
-	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
-	}
-
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("x-api-key", c.apiKey)
-	req.Header.Set("anthropic-version", "2023-06-01")
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("failed to send request: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("API request failed with status %d: %s", resp.StatusCode, string(body))
-	}
-
-	var response AnthropicResponse
-	if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
-		return nil, fmt.Errorf("failed to decode response: %w", err)
-	}
-
-	return &response, nil
+	return message, nil
 }
 
 // AnalyzeCodeContext analyzes code context for better responses
-func (c *AnthropicClient) AnalyzeCodeContext(fileContent, issueDescription, styleGuide string) (*AnthropicResponse, error) {
+func (ac *AnthropicClient) AnalyzeCodeContext(ctx context.Context, fileContent, issueDescription, styleGuide string) (*anthropic.Message, error) {
 	prompt := fmt.Sprintf(`Analyze this code file in the context of the following issue:
 
 Issue: %s
@@ -158,11 +97,16 @@ Please identify:
 3. How this file might relate to the issue
 4. Any potential areas that need modification`, issueDescription, fileContent, styleGuide)
 
-	return c.CreateMessage(prompt, nil)
+	return ac.CreateMessage(ctx, prompt, nil)
 }
 
 // GenerateCodeReview generates a response to code review comments
-func (c *AnthropicClient) GenerateCodeReview(comment, codeContext string, isApproval bool) (*AnthropicResponse, error) {
+func (ac *AnthropicClient) GenerateCodeReview(ctx context.Context, comment, codeContext string, isApproval bool) (*anthropic.Message, error) {
+	reviewType := "change-requesting"
+	if isApproval {
+		reviewType = "approving"
+	}
+
 	prompt := fmt.Sprintf(`A reviewer has left the following comment on a pull request:
 
 Comment: %s
@@ -177,13 +121,13 @@ Please generate an appropriate response that:
 2. Explains any reasoning behind the current implementation if needed
 3. Indicates whether and how you'll address the feedback
 4. Asks for clarification if the comment is unclear
-5. Maintains a collaborative and respectful tone`, comment, codeContext, map[bool]string{true: "approving", false: "change-requesting"}[isApproval])
+5. Maintains a collaborative and respectful tone`, comment, codeContext, reviewType)
 
-	return c.CreateMessage(prompt, nil)
+	return ac.CreateMessage(ctx, prompt, nil)
 }
 
 // GeneratePRDescription creates a detailed PR description
-func (c *AnthropicClient) GeneratePRDescription(issue *github.Issue, changes map[string]FileChange, styleGuide string) (string, error) {
+func (ac *AnthropicClient) GeneratePRDescription(ctx context.Context, issue *github.Issue, changes map[string]FileChange, styleGuide string) (string, error) {
 	changesDescription := ""
 	for path, change := range changes {
 		action := "Modified"
@@ -211,15 +155,199 @@ Please create a PR description that:
 
 Keep it concise but informative.`, *issue.Title, *issue.Body, changesDescription)
 
-	response, err := c.CreateMessage(prompt, nil)
+	response, err := ac.CreateMessage(ctx, prompt, nil)
 	if err != nil {
 		return "", err
 	}
 
 	// Extract the text from the response
-	if len(response.Content) > 0 && response.Content[0].Type == "text" {
-		return response.Content[0].Text, nil
+	if len(response.Content) > 0 {
+		switch content := response.Content[0].AsAny().(type) {
+		case anthropic.TextBlock:
+			return content.Text, nil
+		}
 	}
 
 	return "", fmt.Errorf("unexpected response format")
+}
+
+// generateSolutionWithTools generates a solution using Claude with tools
+func (ac *AnthropicClient) generateSolutionWithTools(ctx context.Context, issue *github.Issue, repo *github.Repository, styleGuide *StyleGuide, codebaseInfo *CodebaseInfo) (*Solution, error) {
+	// Define tools for Claude to use
+	tools := []anthropic.ToolParam{
+		{
+			Name:        "analyze_file",
+			Description: anthropic.String("Analyze a file from the repository to understand its structure and content"),
+			InputSchema: anthropic.ToolInputSchemaParam{
+				Properties: map[string]interface{}{
+					"path": map[string]interface{}{
+						"type":        "string",
+						"description": "The file path to analyze",
+					},
+				},
+			},
+		},
+		{
+			Name:        "create_solution",
+			Description: anthropic.String("Create a solution with file changes to resolve the issue"),
+			InputSchema: anthropic.ToolInputSchemaParam{
+				Properties: map[string]interface{}{
+					"branch": map[string]interface{}{
+						"type":        "string",
+						"description": "Name of the branch to create",
+					},
+					"commit_message": map[string]interface{}{
+						"type":        "string",
+						"description": "Commit message for the changes",
+					},
+					"files": map[string]interface{}{
+						"type":        "object",
+						"description": "Map of file paths to their new content",
+						"additionalProperties": map[string]interface{}{
+							"type": "object",
+							"properties": map[string]interface{}{
+								"content": map[string]interface{}{"type": "string"},
+								"is_new":  map[string]interface{}{"type": "boolean"},
+							},
+						},
+					},
+					"description": map[string]interface{}{
+						"type":        "string",
+						"description": "Description of the solution",
+					},
+				},
+			},
+		},
+	}
+
+	prompt := buildSolutionPrompt(issue, repo, styleGuide, codebaseInfo)
+
+	response, err := ac.CreateMessage(ctx, prompt, tools)
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate solution: %w", err)
+	}
+
+	// Process the response and extract tool uses
+	solution, err := ac.processToolResponse(ctx, response, issue)
+	if err != nil {
+		return nil, fmt.Errorf("failed to process tool response: %w", err)
+	}
+
+	return solution, nil
+}
+
+// processToolResponse processes Claude's response containing tool uses
+func (ac *AnthropicClient) processToolResponse(ctx context.Context, response *anthropic.Message, issue *github.Issue) (*Solution, error) {
+	var solution *Solution
+
+	for _, content := range response.Content {
+		switch block := content.AsAny().(type) {
+		case anthropic.ToolUseBlock:
+			if block.Name == "create_solution" {
+				// Parse the tool input
+				var solutionData struct {
+					Branch        string                     `json:"branch"`
+					CommitMessage string                     `json:"commit_message"`
+					Files         map[string]json.RawMessage `json:"files"`
+					Description   string                     `json:"description"`
+				}
+
+				inputJSON, err := json.Marshal(block.Input)
+				if err != nil {
+					return nil, fmt.Errorf("failed to marshal tool input: %w", err)
+				}
+
+				if err := json.Unmarshal(inputJSON, &solutionData); err != nil {
+					return nil, fmt.Errorf("failed to parse solution data: %w", err)
+				}
+
+				// Convert to our Solution type
+				solution = &Solution{
+					Branch:        solutionData.Branch,
+					CommitMessage: solutionData.CommitMessage,
+					Description:   solutionData.Description,
+					Files:         make(map[string]FileChange),
+				}
+
+				// Parse file changes
+				for path, fileData := range solutionData.Files {
+					var fileChange struct {
+						Content string `json:"content"`
+						IsNew   bool   `json:"is_new"`
+					}
+					if err := json.Unmarshal(fileData, &fileChange); err != nil {
+						log.Printf("Warning: failed to parse file change for %s: %v", path, err)
+						continue
+					}
+					solution.Files[path] = FileChange{
+						Path:    path,
+						Content: fileChange.Content,
+						IsNew:   fileChange.IsNew,
+					}
+				}
+
+				return solution, nil
+			}
+		}
+	}
+
+	// If no solution was found in tool use, create a default one
+	if solution == nil {
+		log.Println("No solution found in tool response, creating default solution")
+		solution = &Solution{
+			Branch:        fmt.Sprintf("fix/issue-%d-%d", *issue.Number, time.Now().Unix()),
+			CommitMessage: fmt.Sprintf("Fix: %s", *issue.Title),
+			Description:   "Automated fix for the reported issue",
+			Files:         make(map[string]FileChange),
+		}
+	}
+
+	return solution, nil
+}
+
+// buildSolutionPrompt creates the prompt for generating a solution
+func buildSolutionPrompt(issue *github.Issue, repo *github.Repository, styleGuide *StyleGuide, codebaseInfo *CodebaseInfo) string {
+	prompt := fmt.Sprintf(`You are working on a GitHub issue. Your task is to analyze the issue and create a solution.
+
+Repository: %s
+Main Language: %s
+Issue #%d: %s
+
+Issue Description:
+%s
+
+`, *repo.FullName, codebaseInfo.MainLanguage, *issue.Number, *issue.Title, *issue.Body)
+
+	if styleGuide != nil && styleGuide.Content != "" {
+		prompt += fmt.Sprintf("\nStyle Guide:\n%s\n", styleGuide.Content)
+	}
+
+	if codebaseInfo.ReadmeContent != "" {
+		prompt += fmt.Sprintf("\nREADME excerpt:\n%s\n", truncateString(codebaseInfo.ReadmeContent, 1000))
+	}
+
+	if len(codebaseInfo.FileTree) > 0 {
+		prompt += "\nRepository structure (sample files):\n"
+		for i, file := range codebaseInfo.FileTree {
+			if i >= 20 { // Limit to first 20 files
+				prompt += "...\n"
+				break
+			}
+			prompt += fmt.Sprintf("- %s\n", file)
+		}
+	}
+
+	prompt += `
+Please analyze this issue and create a solution. Follow these guidelines:
+1. First use analyze_file to examine any relevant files mentioned in the issue
+2. Respect the existing code style and conventions
+3. Write clean, maintainable code
+4. Include appropriate tests if applicable
+5. Make minimal changes to solve the issue
+6. Use descriptive branch names and commit messages
+7. Finally, use create_solution to provide your complete solution
+
+Start by analyzing relevant files, then create your solution.`
+
+	return prompt
 }

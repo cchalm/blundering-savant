@@ -2,13 +2,13 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"log"
 	"os"
 	"strings"
 	"time"
 
+	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/google/go-github/v57/github"
 	"github.com/joho/godotenv"
 	"golang.org/x/oauth2"
@@ -35,6 +35,30 @@ type StyleGuide struct {
 	Content   string
 	FilePath  string
 	RepoStyle map[string]string // language -> style patterns
+}
+
+// CodebaseInfo holds information about the repository structure
+type CodebaseInfo struct {
+	MainLanguage  string
+	FileTree      []string
+	ReadmeContent string
+	PackageInfo   map[string]string
+}
+
+// Solution represents the generated code solution
+type Solution struct {
+	Branch        string
+	CommitMessage string
+	Files         map[string]FileChange
+	Description   string
+}
+
+// FileChange represents a change to a file
+type FileChange struct {
+	Path       string
+	Content    string
+	IsNew      bool
+	OldContent string
 }
 
 func main() {
@@ -245,14 +269,6 @@ func (vd *VirtualDeveloper) findStyleGuides(ctx context.Context, owner, repo str
 	return styleGuide, nil
 }
 
-// CodebaseInfo holds information about the repository structure
-type CodebaseInfo struct {
-	MainLanguage  string
-	FileTree      []string
-	ReadmeContent string
-	PackageInfo   map[string]string
-}
-
 // analyzeCodebase examines the repository structure
 func (vd *VirtualDeveloper) analyzeCodebase(ctx context.Context, owner, repo string) (*CodebaseInfo, error) {
 	info := &CodebaseInfo{
@@ -298,80 +314,10 @@ func (vd *VirtualDeveloper) analyzeCodebase(ctx context.Context, owner, repo str
 	return info, nil
 }
 
-// Solution represents the generated code solution
-type Solution struct {
-	Branch        string
-	CommitMessage string
-	Files         map[string]FileChange
-	Description   string
-}
-
-// FileChange represents a change to a file
-type FileChange struct {
-	Path       string
-	Content    string
-	IsNew      bool
-	OldContent string
-}
-
 // generateSolution uses Anthropic to create a solution
 func (vd *VirtualDeveloper) generateSolution(issue *github.Issue, repo *github.Repository, styleGuide *StyleGuide, codebaseInfo *CodebaseInfo) (*Solution, error) {
-	// Prepare context for Anthropic
-	prompt := vd.buildPrompt(issue, repo, styleGuide, codebaseInfo)
-
-	// Call Anthropic with tools
-	response, err := vd.anthropicClient.CreateMessage(prompt, []Tool{
-		{
-			Name:        "analyze_file",
-			Description: "Analyze a file from the repository",
-			InputSchema: json.RawMessage(`{"type":"object","properties":{"path":{"type":"string","description":"File path"}},"required":["path"]}`),
-		},
-		{
-			Name:        "create_solution",
-			Description: "Create a solution with file changes",
-			InputSchema: json.RawMessage(`{"type":"object","properties":{"branch":{"type":"string"},"commit_message":{"type":"string"},"files":{"type":"object"},"description":{"type":"string"}},"required":["branch","commit_message","files","description"]}`),
-		},
-	})
-	if err != nil {
-		return nil, fmt.Errorf("failed to generate solution: %w", err)
-	}
-
-	// Parse the solution from the response
-	return vd.parseSolution(response)
-}
-
-// buildPrompt creates the prompt for Anthropic
-func (vd *VirtualDeveloper) buildPrompt(issue *github.Issue, repo *github.Repository, styleGuide *StyleGuide, codebaseInfo *CodebaseInfo) string {
-	prompt := fmt.Sprintf(`You are a virtual developer working on a GitHub issue. Your task is to analyze the issue and create a solution.
-
-Repository: %s
-Main Language: %s
-Issue #%d: %s
-
-Issue Description:
-%s
-
-`, *repo.FullName, codebaseInfo.MainLanguage, *issue.Number, *issue.Title, *issue.Body)
-
-	if styleGuide != nil && styleGuide.Content != "" {
-		prompt += fmt.Sprintf("\nStyle Guide:\n%s\n", styleGuide.Content)
-	}
-
-	if codebaseInfo.ReadmeContent != "" {
-		prompt += fmt.Sprintf("\nREADME excerpt:\n%s\n", truncateString(codebaseInfo.ReadmeContent, 1000))
-	}
-
-	prompt += `
-Please analyze this issue and create a solution. Follow these guidelines:
-1. Respect the existing code style and conventions
-2. Write clean, maintainable code
-3. Include appropriate tests if applicable
-4. Make minimal changes to solve the issue
-5. Use descriptive commit messages
-
-Use the analyze_file tool to examine relevant files, then use create_solution to provide your solution.`
-
-	return prompt
+	ctx := context.Background()
+	return vd.anthropicClient.generateSolutionWithTools(ctx, issue, repo, styleGuide, codebaseInfo)
 }
 
 // Helper function to truncate strings
@@ -380,20 +326,6 @@ func truncateString(s string, maxLen int) string {
 		return s
 	}
 	return s[:maxLen] + "..."
-}
-
-// parseSolution extracts the solution from Anthropic's response
-func (vd *VirtualDeveloper) parseSolution(response *AnthropicResponse) (*Solution, error) {
-	// This is a simplified version - in reality, you'd parse the tool use responses
-	// For now, we'll create a mock solution
-	solution := &Solution{
-		Branch:        fmt.Sprintf("fix/issue-%d", time.Now().Unix()),
-		CommitMessage: "Fix issue based on description",
-		Files:         make(map[string]FileChange),
-		Description:   "Automated fix for the reported issue",
-	}
-
-	return solution, nil
 }
 
 // createPullRequest creates a new PR with the solution
@@ -602,12 +534,49 @@ func (vd *VirtualDeveloper) respondToReviewComment(ctx context.Context, owner, r
 }
 
 func (vd *VirtualDeveloper) generateCommentResponse(comment *github.IssueComment) string {
-	// Use Anthropic to generate appropriate response
-	// For now, return a simple acknowledgment
+	ctx := context.Background()
+	prompt := fmt.Sprintf(`A user has commented on a pull request: "%s"
+
+Please generate a professional and helpful response that acknowledges their feedback and indicates how you'll address it.`, *comment.Body)
+
+	response, err := vd.anthropicClient.CreateMessage(ctx, prompt, nil)
+	if err != nil {
+		log.Printf("Error generating comment response: %v", err)
+		return "Thank you for your feedback. I'll review this and make any necessary adjustments."
+	}
+
+	// Extract text from response
+	if len(response.Content) > 0 {
+		switch content := response.Content[0].AsAny().(type) {
+		case anthropic.TextBlock:
+			return content.Text
+		}
+	}
+
 	return "Thank you for your feedback. I'll review this and make any necessary adjustments."
 }
 
 func (vd *VirtualDeveloper) generateReviewResponse(comment *github.PullRequestComment) string {
+	ctx := context.Background()
+	codeContext := ""
+	if comment.DiffHunk != nil {
+		codeContext = *comment.DiffHunk
+	}
+
+	response, err := vd.anthropicClient.GenerateCodeReview(ctx, *comment.Body, codeContext, false)
+	if err != nil {
+		log.Printf("Error generating review response: %v", err)
+		return "I'll address this review comment in the next update."
+	}
+
+	// Extract text from response
+	if len(response.Content) > 0 {
+		switch content := response.Content[0].AsAny().(type) {
+		case anthropic.TextBlock:
+			return content.Text
+		}
+	}
+
 	return "I'll address this review comment in the next update."
 }
 
