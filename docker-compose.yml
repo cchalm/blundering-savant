@@ -1,8 +1,6 @@
 services:
   bot:
-    build:
-      context: .
-      dockerfile: Dockerfile
+    image: halfanewgrad:latest
     container_name: halfanewgrad-bot
     restart: unless-stopped
     environment:
