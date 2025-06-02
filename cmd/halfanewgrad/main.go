@@ -135,6 +135,10 @@ func (vd *VirtualDeveloper) checkAndProcessIssues() {
 	}
 
 	for _, issue := range issues.Issues {
+		if issue == nil || issue.RepositoryURL == nil || issue.Number == nil {
+			continue
+		}
+
 		issueKey := fmt.Sprintf("%s-%d", *issue.RepositoryURL, *issue.Number)
 
 		// Skip if already processed
@@ -150,7 +154,12 @@ func (vd *VirtualDeveloper) checkAndProcessIssues() {
 		owner := parts[len(parts)-2]
 		repo := parts[len(parts)-1]
 
-		log.Printf("Processing issue #%d in %s/%s: %s", *issue.Number, owner, repo, *issue.Title)
+		issueTitle := "untitled"
+		if issue.Title != nil {
+			issueTitle = *issue.Title
+		}
+
+		log.Printf("Processing issue #%d in %s/%s: %s", *issue.Number, owner, repo, issueTitle)
 
 		if err := vd.processIssue(ctx, owner, repo, issue); err != nil {
 			log.Printf("Error processing issue #%d: %v", *issue.Number, err)
@@ -168,6 +177,10 @@ func (vd *VirtualDeveloper) checkAndProcessIssues() {
 
 // processIssue handles a single issue
 func (vd *VirtualDeveloper) processIssue(ctx context.Context, owner, repo string, issue *github.Issue) error {
+	if issue == nil || issue.Number == nil {
+		return fmt.Errorf("invalid issue: missing required fields")
+	}
+
 	// Post initial comment
 	if err := vd.postIssueComment(ctx, owner, repo, *issue.Number,
 		"👋 I'm starting work on this issue. I'll analyze the codebase and create a PR shortly."); err != nil {
@@ -205,9 +218,11 @@ func (vd *VirtualDeveloper) processIssue(ctx context.Context, owner, repo string
 	}
 
 	// Post success comment on issue
-	if err := vd.postIssueComment(ctx, owner, repo, *issue.Number,
-		fmt.Sprintf("I've created PR #%d to address this issue. Please review and let me know if any changes are needed.", *pr.Number)); err != nil {
-		log.Printf("Warning: Failed to post success comment: %v", err)
+	if pr != nil && pr.Number != nil {
+		if err := vd.postIssueComment(ctx, owner, repo, *issue.Number,
+			fmt.Sprintf("I've created PR #%d to address this issue. Please review and let me know if any changes are needed.", *pr.Number)); err != nil {
+			log.Printf("Warning: Failed to post success comment: %v", err)
+		}
 	}
 
 	return nil
@@ -362,10 +377,20 @@ func (vd *VirtualDeveloper) createPullRequest(ctx context.Context, owner, repo s
 		}
 	}
 
-	// Create pull request
-	prTitle := fmt.Sprintf("Fix: %s", *issue.Title)
+	// Create pull request with safe field access
+	issueTitle := "Fix issue"
+	if issue != nil && issue.Title != nil {
+		issueTitle = *issue.Title
+	}
+
+	issueNumber := 0
+	if issue != nil && issue.Number != nil {
+		issueNumber = *issue.Number
+	}
+
+	prTitle := fmt.Sprintf("Fix: %s", issueTitle)
 	prBody := fmt.Sprintf("This PR addresses issue #%d\n\n%s\n\n---\n*This PR was created by the Virtual Developer bot*",
-		*issue.Number, solution.Description)
+		issueNumber, solution.Description)
 
 	pr := &github.NewPullRequest{
 		Title:               github.String(prTitle),
@@ -425,6 +450,10 @@ func (vd *VirtualDeveloper) checkPullRequestUpdates() {
 	}
 
 	for _, pr := range prs.Issues {
+		if pr == nil || pr.RepositoryURL == nil || pr.Number == nil {
+			continue
+		}
+
 		// Extract owner and repo
 		parts := strings.Split(*pr.RepositoryURL, "/")
 		if len(parts) < 2 {

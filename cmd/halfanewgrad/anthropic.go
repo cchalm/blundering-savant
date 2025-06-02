@@ -137,6 +137,17 @@ func (ac *AnthropicClient) GeneratePRDescription(ctx context.Context, issue *git
 		changesDescription += fmt.Sprintf("- %s `%s`\n", action, path)
 	}
 
+	// Safe extraction with nil checks
+	issueTitle := "<No title>"
+	if issue.Title != nil {
+		issueTitle = *issue.Title
+	}
+
+	issueBody := "<No description>"
+	if issue.Body != nil {
+		issueBody = *issue.Body
+	}
+
 	prompt := fmt.Sprintf(`Generate a clear and comprehensive pull request description for the following:
 
 Issue Title: %s
@@ -153,7 +164,7 @@ Please create a PR description that:
 5. Notes any potential impacts or considerations
 6. Follows professional PR description conventions
 
-Keep it concise but informative.`, *issue.Title, *issue.Body, changesDescription)
+Keep it concise but informative.`, issueTitle, issueBody, changesDescription)
 
 	response, err := ac.CreateMessage(ctx, prompt, nil)
 	if err != nil {
@@ -294,9 +305,21 @@ func (ac *AnthropicClient) processToolResponse(ctx context.Context, response *an
 	// If no solution was found in tool use, create a default one
 	if solution == nil {
 		log.Println("No solution found in tool response, creating default solution")
+
+		// Safe extraction with nil checks
+		issueNumber := 0
+		if issue.Number != nil {
+			issueNumber = *issue.Number
+		}
+
+		issueTitle := "Fix issue"
+		if issue.Title != nil {
+			issueTitle = *issue.Title
+		}
+
 		solution = &Solution{
-			Branch:        fmt.Sprintf("fix/issue-%d-%d", *issue.Number, time.Now().Unix()),
-			CommitMessage: fmt.Sprintf("Fix: %s", *issue.Title),
+			Branch:        fmt.Sprintf("fix/issue-%d-%d", issueNumber, time.Now().Unix()),
+			CommitMessage: fmt.Sprintf("Fix: %s", issueTitle),
 			Description:   "Automated fix for the reported issue",
 			Files:         make(map[string]FileChange),
 		}
@@ -307,6 +330,32 @@ func (ac *AnthropicClient) processToolResponse(ctx context.Context, response *an
 
 // buildSolutionPrompt creates the prompt for generating a solution
 func buildSolutionPrompt(issue *github.Issue, repo *github.Repository, styleGuide *StyleGuide, codebaseInfo *CodebaseInfo) string {
+	// Safe string extraction with nil checks
+	repoName := "unknown"
+	if repo != nil && repo.FullName != nil {
+		repoName = *repo.FullName
+	}
+
+	mainLang := "unknown"
+	if codebaseInfo != nil {
+		mainLang = codebaseInfo.MainLanguage
+	}
+
+	issueNumber := 0
+	if issue.Number != nil {
+		issueNumber = *issue.Number
+	}
+
+	issueTitle := "No title"
+	if issue.Title != nil {
+		issueTitle = *issue.Title
+	}
+
+	issueBody := "No description provided"
+	if issue.Body != nil {
+		issueBody = *issue.Body
+	}
+
 	prompt := fmt.Sprintf(`You are working on a GitHub issue. Your task is to analyze the issue and create a solution.
 
 Repository: %s
@@ -316,17 +365,17 @@ Issue #%d: %s
 Issue Description:
 %s
 
-`, *repo.FullName, codebaseInfo.MainLanguage, *issue.Number, *issue.Title, *issue.Body)
+`, repoName, mainLang, issueNumber, issueTitle, issueBody)
 
 	if styleGuide != nil && styleGuide.Content != "" {
 		prompt += fmt.Sprintf("\nStyle Guide:\n%s\n", styleGuide.Content)
 	}
 
-	if codebaseInfo.ReadmeContent != "" {
+	if codebaseInfo != nil && codebaseInfo.ReadmeContent != "" {
 		prompt += fmt.Sprintf("\nREADME excerpt:\n%s\n", truncateString(codebaseInfo.ReadmeContent, 1000))
 	}
 
-	if len(codebaseInfo.FileTree) > 0 {
+	if codebaseInfo != nil && len(codebaseInfo.FileTree) > 0 {
 		prompt += "\nRepository structure (sample files):\n"
 		for i, file := range codebaseInfo.FileTree {
 			if i >= 20 { // Limit to first 20 files
