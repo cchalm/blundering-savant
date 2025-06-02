@@ -5,6 +5,7 @@
 
 # Variables
 APP_NAME := halfanewgrad
+SERVICE_NAME := bot
 DOCKER_IMAGE := $(APP_NAME):latest
 COMPOSE_FILE := docker-compose.yml
 
@@ -51,15 +52,15 @@ restart: stop run
 
 ## logs: View bot logs
 logs:
-	docker-compose logs -f $(APP_NAME)
+	docker-compose logs -f ${SERVICE_NAME}
 
 ## logs-tail: View last 100 lines of logs
 logs-tail:
-	docker-compose logs --tail=100 $(APP_NAME)
+	docker-compose logs --tail=100 ${SERVICE_NAME}
 
 ## status: Check bot status
 status:
-	@echo "Haldanewgrad Bot Status:"
+	@echo "Halfanewgrad Bot Status:"
 	@docker-compose ps
 
 ## clean: Clean up containers and images
@@ -118,4 +119,4 @@ docker-logs:
 
 ## health: Check health of the service
 health:
-	@docker-compose exec $(APP_NAME) /bin/sh -c "ps aux | grep '[v]irtual-developer'" > /dev/null 2>&1 && echo "✓ Bot is healthy" || echo "✗ Bot is not running"
+	@docker-compose exec $(APP_NAME) /bin/sh -c "ps aux | grep '[h]alfanewgrad'" > /dev/null 2>&1 && echo "✓ Bot is healthy" || echo "✗ Bot is not running"
