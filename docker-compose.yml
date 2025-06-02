@@ -1,7 +1,5 @@
-version: '3.8'
-
 services:
-  halfanewgrad:
+  bot:
     build:
       context: .
       dockerfile: Dockerfile
@@ -26,20 +24,3 @@ services:
       timeout: 3s
       retries: 3
       start_period: 5s
-
-# Optional: Add a Redis service for state persistence
-  redis:
-    image: redis:7-alpine
-    container_name: halfanewgrad-redis
-    restart: unless-stopped
-    volumes:
-      - redis-data:/data
-    command: redis-server --appendonly yes
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 10s
-      timeout: 3s
-      retries: 3
-
-volumes:
-  redis-data:
