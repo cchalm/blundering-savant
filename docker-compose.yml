@@ -1,11 +1,11 @@
 version: '3.8'
 
 services:
-  virtual-developer:
+  halfanewgrad:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: virtual-developer-bot
+    container_name: halfanewgrad-bot
     restart: unless-stopped
     environment:
       - GITHUB_TOKEN=${GITHUB_TOKEN}
@@ -30,7 +30,7 @@ services:
 # Optional: Add a Redis service for state persistence
   redis:
     image: redis:7-alpine
-    container_name: virtual-developer-redis
+    container_name: halfanewgrad-redis
     restart: unless-stopped
     volumes:
       - redis-data:/data

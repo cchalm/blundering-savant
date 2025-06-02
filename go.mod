@@ -1,6 +1,6 @@
 module github.com/cchalm/halfanewgrad
 
-go 1.23.0
+go 1.24.3
 
 toolchain go1.23.9
 

@@ -4,19 +4,19 @@
 .DEFAULT_GOAL := help
 
 # Variables
-APP_NAME := virtual-developer
+APP_NAME := halfanewgrad
 DOCKER_IMAGE := $(APP_NAME):latest
 COMPOSE_FILE := docker-compose.yml
 
 ## help: Display this help message
 help:
-	@echo "Virtual Developer Bot - Available Commands:"
+	@echo "Halfanewgrad Bot - Available Commands:"
 	@echo ""
 	@awk 'BEGIN {FS = ":.*##"; printf "\033[36m%-15s\033[0m %s\n", "Command", "Description"} /^[a-zA-Z_-]+:.*?##/ { printf "\033[36m%-15s\033[0m %s\n", $$1, $$2 }' $(MAKEFILE_LIST)
 
 ## setup: Initial setup - copy env file and download dependencies
 setup:
-	@echo "Setting up Virtual Developer Bot..."
+	@echo "Setting up halfanewgrad bot..."
 	@test -f .env || cp .env.example .env
 	@echo "✓ Environment file created (please edit .env with your credentials)"
 	@go mod download
@@ -35,14 +35,14 @@ build:
 
 ## run: Run the bot using Docker Compose
 run:
-	@echo "Starting Virtual Developer Bot..."
+	@echo "Starting halfanewgrad Bot..."
 	docker-compose up -d
 	@echo "✓ Bot started successfully"
 	@echo "Run 'make logs' to view logs"
 
 ## stop: Stop the bot
 stop:
-	@echo "Stopping Virtual Developer Bot..."
+	@echo "Stopping halfanewgrad Bot..."
 	docker-compose down
 	@echo "✓ Bot stopped"
 
@@ -59,7 +59,7 @@ logs-tail:
 
 ## status: Check bot status
 status:
-	@echo "Virtual Developer Bot Status:"
+	@echo "Haldanewgrad Bot Status:"
 	@docker-compose ps
 
 ## clean: Clean up containers and images
@@ -96,7 +96,7 @@ update:
 ## dev: Run locally without Docker (for development)
 dev:
 	@test -f .env || (echo "Error: .env file not found. Run 'make setup' first." && exit 1)
-	@echo "Running Virtual Developer Bot locally..."
+	@echo "Running halfanewgrad Bot locally..."
 	go run .
 
 ## shell: Open a shell in the running container

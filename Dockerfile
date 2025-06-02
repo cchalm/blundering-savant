@@ -1,5 +1,5 @@
 # Build stage
-FROM golang:1.21-alpine AS builder
+FROM golang:1.24-alpine AS builder
 
 # Install git and ca-certificates
 RUN apk add --no-cache git ca-certificates
@@ -17,7 +17,7 @@ RUN go mod download
 COPY . .
 
 # Build the application
-RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o virtual-developer .
+RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o halfanewgrad ./cmd/halfanewgrad
 
 # Final stage
 FROM alpine:latest
@@ -33,7 +33,7 @@ RUN addgroup -g 1000 -S appuser && \
 WORKDIR /app
 
 # Copy binary from builder
-COPY --from=builder /app/virtual-developer .
+COPY --from=builder /app/halfanewgrad .
 
 # Change ownership
 RUN chown -R appuser:appuser /app
@@ -43,7 +43,7 @@ USER appuser
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-    CMD ["/bin/sh", "-c", "ps aux | grep '[v]irtual-developer' || exit 1"]
+    CMD ["/bin/sh", "-c", "ps aux | grep '[h]alfanewgrad' || exit 1"]
 
 # Run the application
-CMD ["./virtual-developer"]
+CMD ["./halfanewgrad"]
