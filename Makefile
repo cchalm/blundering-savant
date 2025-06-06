@@ -59,7 +59,7 @@ logs-tail:
 
 ## status: Check bot status
 status:
-	@echo "Haldanewgrad Bot Status:"
+	@echo "Halfanewgrad Bot Status:"
 	@docker-compose ps
 
 ## clean: Clean up containers and images
