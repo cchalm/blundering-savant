@@ -5,11 +5,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
-	"time"
+	"strings"
 
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/option"
-	"github.com/google/go-github/v57/github"
+	"github.com/google/go-github/v72/github"
 )
 
 // AnthropicClient wraps the official Anthropic SDK client
@@ -46,8 +46,11 @@ When analyzing code:
 When using tools:
 - Use analyze_file to examine relevant files before making changes
 - Use create_solution to provide your complete solution with all necessary file changes
-- Ensure your branch names are descriptive and follow conventions (e.g., fix/issue-description, feature/new-feature)
-- Write clear, conventional commit messages`
+- Ensure your solutions include actual file content, not just placeholders
+- Write clear, conventional commit messages
+- Always include at least one meaningful file change in your solution
+
+IMPORTANT: When creating solutions, you MUST include actual implementation code in the files, not just comments or placeholders. The solution should be ready to run and address the specific issue described.`
 
 	params := anthropic.MessageNewParams{
 		Model:     anthropic.ModelClaudeSonnet4_0,
@@ -205,7 +208,7 @@ func (ac *AnthropicClient) generateSolutionWithTools(ctx context.Context, issue 
 				Properties: map[string]interface{}{
 					"branch": map[string]interface{}{
 						"type":        "string",
-						"description": "Name of the branch to create",
+						"description": "Name of the branch to create (e.g., fix/issue-123-description)",
 					},
 					"commit_message": map[string]interface{}{
 						"type":        "string",
@@ -217,14 +220,21 @@ func (ac *AnthropicClient) generateSolutionWithTools(ctx context.Context, issue 
 						"additionalProperties": map[string]interface{}{
 							"type": "object",
 							"properties": map[string]interface{}{
-								"content": map[string]interface{}{"type": "string"},
-								"is_new":  map[string]interface{}{"type": "boolean"},
+								"content": map[string]interface{}{
+									"type":        "string",
+									"description": "Complete file content with actual implementation code",
+								},
+								"is_new": map[string]interface{}{
+									"type":        "boolean",
+									"description": "Whether this is a new file",
+								},
 							},
+							"required": []string{"content", "is_new"},
 						},
 					},
 					"description": map[string]interface{}{
 						"type":        "string",
-						"description": "Description of the solution",
+						"description": "Description of the solution and what changes were made",
 					},
 				},
 			},
@@ -242,6 +252,11 @@ func (ac *AnthropicClient) generateSolutionWithTools(ctx context.Context, issue 
 	solution, err := ac.processToolResponse(ctx, response, issue)
 	if err != nil {
 		return nil, fmt.Errorf("failed to process tool response: %w", err)
+	}
+
+	// Validate that the solution has files
+	if len(solution.Files) == 0 {
+		return nil, fmt.Errorf("solution contains no file changes")
 	}
 
 	return solution, nil
@@ -272,6 +287,17 @@ func (ac *AnthropicClient) processToolResponse(ctx context.Context, response *an
 					return nil, fmt.Errorf("failed to parse solution data: %w", err)
 				}
 
+				// Validate required fields
+				if solutionData.Branch == "" {
+					return nil, fmt.Errorf("solution missing branch name")
+				}
+				if solutionData.CommitMessage == "" {
+					return nil, fmt.Errorf("solution missing commit message")
+				}
+				if len(solutionData.Files) == 0 {
+					return nil, fmt.Errorf("solution contains no files")
+				}
+
 				// Convert to our Solution type
 				solution = &Solution{
 					Branch:        solutionData.Branch,
@@ -290,6 +316,13 @@ func (ac *AnthropicClient) processToolResponse(ctx context.Context, response *an
 						log.Printf("Warning: failed to parse file change for %s: %v", path, err)
 						continue
 					}
+
+					// Validate file content is not empty
+					if strings.TrimSpace(fileChange.Content) == "" {
+						log.Printf("Warning: file %s has empty content", path)
+						continue
+					}
+
 					solution.Files[path] = FileChange{
 						Path:    path,
 						Content: fileChange.Content,
@@ -302,27 +335,9 @@ func (ac *AnthropicClient) processToolResponse(ctx context.Context, response *an
 		}
 	}
 
-	// If no solution was found in tool use, create a default one
+	// If no solution was found in tool use, return an error
 	if solution == nil {
-		log.Println("No solution found in tool response, creating default solution")
-
-		// Safe extraction with nil checks
-		issueNumber := 0
-		if issue.Number != nil {
-			issueNumber = *issue.Number
-		}
-
-		issueTitle := "Fix issue"
-		if issue.Title != nil {
-			issueTitle = *issue.Title
-		}
-
-		solution = &Solution{
-			Branch:        fmt.Sprintf("fix/issue-%d-%d", issueNumber, time.Now().Unix()),
-			CommitMessage: fmt.Sprintf("Fix: %s", issueTitle),
-			Description:   "Automated fix for the reported issue",
-			Files:         make(map[string]FileChange),
-		}
+		return nil, fmt.Errorf("no valid solution found in Claude's response")
 	}
 
 	return solution, nil
@@ -356,7 +371,7 @@ func buildSolutionPrompt(issue *github.Issue, repo *github.Repository, styleGuid
 		issueBody = *issue.Body
 	}
 
-	prompt := fmt.Sprintf(`You are working on a GitHub issue. Your task is to analyze the issue and create a solution.
+	prompt := fmt.Sprintf(`You are working on a GitHub issue. Your task is to analyze the issue and create a complete, working solution.
 
 Repository: %s
 Main Language: %s
@@ -386,17 +401,23 @@ Issue Description:
 		}
 	}
 
-	prompt += `
-Please analyze this issue and create a solution. Follow these guidelines:
-1. First use analyze_file to examine any relevant files mentioned in the issue
-2. Respect the existing code style and conventions
-3. Write clean, maintainable code
-4. Include appropriate tests if applicable
-5. Make minimal changes to solve the issue
-6. Use descriptive branch names and commit messages
-7. Finally, use create_solution to provide your complete solution
+	prompt += fmt.Sprintf(`
+Please analyze this issue and create a complete solution. Follow these guidelines:
 
-Start by analyzing relevant files, then create your solution.`
+1. Create a descriptive branch name following the pattern: fix/issue-%d-brief-description
+2. Implement the actual solution code - do not use placeholders or TODOs
+3. Include complete, working file contents
+4. Respect existing code style and conventions
+5. Write a clear commit message describing what was fixed
+6. Provide a comprehensive description of the changes
+
+You must use the create_solution tool to provide your complete implementation. Ensure that:
+- All file contents are complete and functional
+- The solution directly addresses the issue described
+- Branch names are descriptive and follow conventions
+- At least one file is modified or created
+
+Start by creating your solution now.`, issueNumber)
 
 	return prompt
 }

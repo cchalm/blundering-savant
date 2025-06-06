@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/anthropics/anthropic-sdk-go"
-	"github.com/google/go-github/v57/github"
+	"github.com/google/go-github/v72/github"
 	"github.com/joho/godotenv"
 	"golang.org/x/oauth2"
 )
@@ -27,7 +27,6 @@ type VirtualDeveloper struct {
 	config          *Config
 	githubClient    *github.Client
 	anthropicClient *AnthropicClient
-	processedIssues map[string]bool
 }
 
 // StyleGuide represents coding style information
@@ -60,6 +59,11 @@ type FileChange struct {
 	IsNew      bool
 	OldContent string
 }
+
+const (
+	LabelInProgress = "virtual-dev-in-progress"
+	LabelCompleted  = "virtual-dev-completed"
+)
 
 func main() {
 	// Load environment variables
@@ -105,7 +109,6 @@ func NewVirtualDeveloper(config *Config) *VirtualDeveloper {
 		config:          config,
 		githubClient:    github.NewClient(tc),
 		anthropicClient: NewAnthropicClient(config.AnthropicAPIKey),
-		processedIssues: make(map[string]bool),
 	}
 }
 
@@ -126,8 +129,8 @@ func (vd *VirtualDeveloper) Run() {
 func (vd *VirtualDeveloper) checkAndProcessIssues() {
 	ctx := context.Background()
 
-	// Search for issues assigned to our bot
-	query := fmt.Sprintf("assignee:%s is:issue is:open", vd.config.GitHubUsername)
+	// Search for issues assigned to our bot that are not already in progress
+	query := fmt.Sprintf("assignee:%s is:issue is:open -label:\"%s\"", vd.config.GitHubUsername, LabelInProgress)
 	issues, _, err := vd.githubClient.Search.Issues(ctx, query, nil)
 	if err != nil {
 		log.Printf("Error searching issues: %v", err)
@@ -136,13 +139,6 @@ func (vd *VirtualDeveloper) checkAndProcessIssues() {
 
 	for _, issue := range issues.Issues {
 		if issue == nil || issue.RepositoryURL == nil || issue.Number == nil {
-			continue
-		}
-
-		issueKey := fmt.Sprintf("%s-%d", *issue.RepositoryURL, *issue.Number)
-
-		// Skip if already processed
-		if vd.processedIssues[issueKey] {
 			continue
 		}
 
@@ -163,11 +159,10 @@ func (vd *VirtualDeveloper) checkAndProcessIssues() {
 
 		if err := vd.processIssue(ctx, owner, repo, issue); err != nil {
 			log.Printf("Error processing issue #%d: %v", *issue.Number, err)
-			// Post error comment on issue
+			// Post error comment on issue and remove in-progress label
 			vd.postIssueComment(ctx, owner, repo, *issue.Number,
 				fmt.Sprintf("I encountered an error while working on this issue: %v\n\nI'll need human assistance to proceed.", err))
-		} else {
-			vd.processedIssues[issueKey] = true
+			vd.removeLabel(ctx, owner, repo, *issue.Number, LabelInProgress)
 		}
 	}
 
@@ -179,6 +174,11 @@ func (vd *VirtualDeveloper) checkAndProcessIssues() {
 func (vd *VirtualDeveloper) processIssue(ctx context.Context, owner, repo string, issue *github.Issue) error {
 	if issue == nil || issue.Number == nil {
 		return fmt.Errorf("invalid issue: missing required fields")
+	}
+
+	// Add in-progress label first
+	if err := vd.addLabel(ctx, owner, repo, *issue.Number, LabelInProgress); err != nil {
+		return fmt.Errorf("failed to add in-progress label: %w", err)
 	}
 
 	// Post initial comment
@@ -217,6 +217,14 @@ func (vd *VirtualDeveloper) processIssue(ctx context.Context, owner, repo string
 		return fmt.Errorf("failed to create pull request: %w", err)
 	}
 
+	// Add completed label and remove in-progress
+	if err := vd.addLabel(ctx, owner, repo, *issue.Number, LabelCompleted); err != nil {
+		log.Printf("Warning: Failed to add completed label: %v", err)
+	}
+	if err := vd.removeLabel(ctx, owner, repo, *issue.Number, LabelInProgress); err != nil {
+		log.Printf("Warning: Failed to remove in-progress label: %v", err)
+	}
+
 	// Post success comment on issue
 	if pr != nil && pr.Number != nil {
 		if err := vd.postIssueComment(ctx, owner, repo, *issue.Number,
@@ -226,6 +234,50 @@ func (vd *VirtualDeveloper) processIssue(ctx context.Context, owner, repo string
 	}
 
 	return nil
+}
+
+// addLabel adds a label to an issue
+func (vd *VirtualDeveloper) addLabel(ctx context.Context, owner, repo string, issueNumber int, label string) error {
+	// Ensure the label exists in the repository
+	if err := vd.ensureLabelExists(ctx, owner, repo, label); err != nil {
+		log.Printf("Warning: Could not ensure label exists: %v", err)
+	}
+
+	labels := []string{label}
+	_, _, err := vd.githubClient.Issues.AddLabelsToIssue(ctx, owner, repo, issueNumber, labels)
+	return err
+}
+
+// removeLabel removes a label from an issue
+func (vd *VirtualDeveloper) removeLabel(ctx context.Context, owner, repo string, issueNumber int, label string) error {
+	_, err := vd.githubClient.Issues.RemoveLabelForIssue(ctx, owner, repo, issueNumber, label)
+	return err
+}
+
+// ensureLabelExists creates a label if it doesn't exist
+func (vd *VirtualDeveloper) ensureLabelExists(ctx context.Context, owner, repo, labelName string) error {
+	// Check if label already exists
+	_, _, err := vd.githubClient.Issues.GetLabel(ctx, owner, repo, labelName)
+	if err == nil {
+		return nil // Label already exists
+	}
+
+	// Create the label
+	label := &github.Label{
+		Name:  github.String(labelName),
+		Color: github.String("0366d6"), // Blue color
+	}
+
+	if labelName == LabelInProgress {
+		label.Color = github.String("fbca04") // Yellow for in-progress
+		label.Description = github.String("Issue is being worked on by the virtual developer")
+	} else if labelName == LabelCompleted {
+		label.Color = github.String("28a745") // Green for completed
+		label.Description = github.String("Issue has been addressed by the virtual developer")
+	}
+
+	_, _, err = vd.githubClient.Issues.CreateLabel(ctx, owner, repo, label)
+	return err
 }
 
 // findStyleGuides searches for coding style documentation
@@ -370,11 +422,67 @@ func (vd *VirtualDeveloper) createPullRequest(ctx context.Context, owner, repo s
 		return nil, fmt.Errorf("failed to create branch: %w", err)
 	}
 
-	// Apply file changes
+	// Ensure we have file changes to commit
+	if len(solution.Files) == 0 {
+		return nil, fmt.Errorf("no file changes specified in solution")
+	}
+
+	// Get the base tree
+	baseCommit, _, err := vd.githubClient.Git.GetCommit(ctx, owner, repo, *ref.Object.SHA)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get base commit: %w", err)
+	}
+
+	// Create tree entries for all changes
+	var treeEntries []*github.TreeEntry
 	for path, change := range solution.Files {
-		if err := vd.applyFileChange(ctx, owner, repo, solution.Branch, path, change); err != nil {
-			return nil, fmt.Errorf("failed to apply change to %s: %w", path, err)
+		// Create blob for file content
+		blob := &github.Blob{
+			Content:  github.String(change.Content),
+			Encoding: github.String("utf-8"),
 		}
+
+		createdBlob, _, err := vd.githubClient.Git.CreateBlob(ctx, owner, repo, blob)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create blob for %s: %w", path, err)
+		}
+
+		treeEntry := &github.TreeEntry{
+			Path: github.String(path),
+			Mode: github.String("100644"), // Regular file
+			Type: github.String("blob"),
+			SHA:  createdBlob.SHA,
+		}
+		treeEntries = append(treeEntries, treeEntry)
+	}
+
+	createdTree, _, err := vd.githubClient.Git.CreateTree(ctx, owner, repo, *baseCommit.Tree.SHA, treeEntries)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create tree: %w", err)
+	}
+
+	// Create commit
+	commit := &github.Commit{
+		Message: github.String(solution.CommitMessage),
+		Tree:    createdTree,
+		Parents: []*github.Commit{baseCommit},
+	}
+
+	createdCommit, _, err := vd.githubClient.Git.CreateCommit(ctx, owner, repo, commit, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create commit: %w", err)
+	}
+
+	// Update branch reference to point to new commit
+	branchRef, _, err := vd.githubClient.Git.GetRef(ctx, owner, repo, fmt.Sprintf("refs/heads/%s", solution.Branch))
+	if err != nil {
+		return nil, fmt.Errorf("failed to get branch ref: %w", err)
+	}
+
+	branchRef.Object.SHA = createdCommit.SHA
+	_, _, err = vd.githubClient.Git.UpdateRef(ctx, owner, repo, branchRef, false)
+	if err != nil {
+		return nil, fmt.Errorf("failed to update branch ref: %w", err)
 	}
 
 	// Create pull request with safe field access
@@ -408,35 +516,6 @@ func (vd *VirtualDeveloper) createPullRequest(ctx context.Context, owner, repo s
 	return createdPR, nil
 }
 
-// applyFileChange applies a single file change
-func (vd *VirtualDeveloper) applyFileChange(ctx context.Context, owner, repo, branch, path string, change FileChange) error {
-	var currentSHA *string
-
-	// Get current file if it exists
-	if !change.IsNew {
-		currentFile, _, _, err := vd.githubClient.Repositories.GetContents(ctx, owner, repo, path, &github.RepositoryContentGetOptions{
-			Ref: branch,
-		})
-		if err == nil && currentFile != nil {
-			currentSHA = currentFile.SHA
-		}
-	}
-
-	// Create or update file
-	opts := &github.RepositoryContentFileOptions{
-		Message: github.String(fmt.Sprintf("Update %s", path)),
-		Content: []byte(change.Content),
-		Branch:  github.String(branch),
-	}
-
-	if currentSHA != nil {
-		opts.SHA = currentSHA
-	}
-
-	_, _, err := vd.githubClient.Repositories.CreateFile(ctx, owner, repo, path, opts)
-	return err
-}
-
 // checkPullRequestUpdates monitors PR comments and reviews
 func (vd *VirtualDeveloper) checkPullRequestUpdates() {
 	ctx := context.Background()
@@ -462,16 +541,59 @@ func (vd *VirtualDeveloper) checkPullRequestUpdates() {
 		owner := parts[len(parts)-2]
 		repo := parts[len(parts)-1]
 
-		// Check for new comments
-		vd.processPRComments(ctx, owner, repo, *pr.Number)
-
-		// Check for review comments
-		vd.processPRReviews(ctx, owner, repo, *pr.Number)
+		// Process PR feedback and potentially update the diff
+		vd.processPRFeedback(ctx, owner, repo, *pr.Number)
 	}
 }
 
-// processPRComments handles comments on PRs
-func (vd *VirtualDeveloper) processPRComments(ctx context.Context, owner, repo string, prNumber int) {
+// processPRFeedback handles all feedback on a PR and potentially updates it
+func (vd *VirtualDeveloper) processPRFeedback(ctx context.Context, owner, repo string, prNumber int) {
+	// Get the PR details
+	pr, _, err := vd.githubClient.PullRequests.Get(ctx, owner, repo, prNumber)
+	if err != nil {
+		log.Printf("Error getting PR details: %v", err)
+		return
+	}
+
+	// Check if we need to update based on feedback
+	needsUpdate, feedback := vd.checkForUnaddressedFeedback(ctx, owner, repo, prNumber)
+	if !needsUpdate {
+		return
+	}
+
+	log.Printf("Processing feedback for PR #%d in %s/%s", prNumber, owner, repo)
+
+	// Get the original issue
+	var issue *github.Issue
+	if pr.Body != nil {
+		// Extract issue number from PR body
+		if issueNum := extractIssueNumber(*pr.Body); issueNum > 0 {
+			issue, _, _ = vd.githubClient.Issues.Get(ctx, owner, repo, issueNum)
+		}
+	}
+
+	// Generate updated solution based on feedback
+	updatedSolution, err := vd.generateUpdatedSolution(ctx, owner, repo, pr, issue, feedback)
+	if err != nil {
+		log.Printf("Error generating updated solution: %v", err)
+		return
+	}
+
+	// Apply the updates
+	if err := vd.updatePullRequest(ctx, owner, repo, pr, updatedSolution); err != nil {
+		log.Printf("Error updating PR: %v", err)
+		return
+	}
+
+	// Post a comprehensive review response
+	vd.postComprehensiveReview(ctx, owner, repo, prNumber, feedback, updatedSolution)
+}
+
+// checkForUnaddressedFeedback checks if there's feedback that needs addressing
+func (vd *VirtualDeveloper) checkForUnaddressedFeedback(ctx context.Context, owner, repo string, prNumber int) (bool, []string) {
+	var feedback []string
+
+	// Get recent comments (last 10)
 	comments, _, err := vd.githubClient.Issues.ListComments(ctx, owner, repo, prNumber, &github.IssueListCommentsOptions{
 		Sort:      github.String("created"),
 		Direction: github.String("desc"),
@@ -479,134 +601,242 @@ func (vd *VirtualDeveloper) processPRComments(ctx context.Context, owner, repo s
 			PerPage: 10,
 		},
 	})
-	if err != nil {
-		log.Printf("Error getting PR comments: %v", err)
-		return
-	}
-
-	for _, comment := range comments {
-		// Skip our own comments
-		if comment.User != nil && *comment.User.Login == vd.config.GitHubUsername {
-			continue
-		}
-
-		// Check if we've already responded to this comment
-		if vd.hasRespondedToComment(ctx, owner, repo, prNumber, *comment.ID) {
-			continue
-		}
-
-		// Generate and post response
-		vd.respondToComment(ctx, owner, repo, prNumber, comment)
-	}
-}
-
-// processPRReviews handles review comments
-func (vd *VirtualDeveloper) processPRReviews(ctx context.Context, owner, repo string, prNumber int) {
-	reviews, _, err := vd.githubClient.PullRequests.ListReviews(ctx, owner, repo, prNumber, nil)
-	if err != nil {
-		log.Printf("Error getting PR reviews: %v", err)
-		return
-	}
-
-	for _, review := range reviews {
-		if review.State != nil && (*review.State == "CHANGES_REQUESTED" || *review.State == "COMMENTED") {
-			// Get review comments
-			comments, _, err := vd.githubClient.PullRequests.ListReviewComments(ctx, owner, repo, prNumber, *review.ID, nil)
-			if err != nil {
+	if err == nil {
+		for _, comment := range comments {
+			// Skip our own comments
+			if comment.User != nil && *comment.User.Login == vd.config.GitHubUsername {
 				continue
 			}
-
-			for _, comment := range comments {
-				if vd.hasRespondedToReviewComment(ctx, owner, repo, prNumber, *comment.ID) {
-					continue
-				}
-
-				vd.respondToReviewComment(ctx, owner, repo, prNumber, comment)
+			if comment.Body != nil {
+				feedback = append(feedback, *comment.Body)
 			}
 		}
 	}
-}
 
-// Helper methods for comment tracking and responses
-func (vd *VirtualDeveloper) hasRespondedToComment(ctx context.Context, owner, repo string, prNumber int, commentID int64) bool {
-	// In a production system, you'd track this in a database
-	// For now, we'll check if there's a comment after this one from the bot
-	return false
-}
+	// Get review comments
+	reviews, _, err := vd.githubClient.PullRequests.ListReviews(ctx, owner, repo, prNumber, nil)
+	if err == nil {
+		for _, review := range reviews {
+			if review.State != nil && (*review.State == "CHANGES_REQUESTED" || *review.State == "COMMENTED") {
+				if review.Body != nil && *review.Body != "" {
+					feedback = append(feedback, *review.Body)
+				}
 
-func (vd *VirtualDeveloper) hasRespondedToReviewComment(ctx context.Context, owner, repo string, prNumber int, commentID int64) bool {
-	return false
-}
-
-func (vd *VirtualDeveloper) respondToComment(ctx context.Context, owner, repo string, prNumber int, comment *github.IssueComment) {
-	// Generate response using Anthropic
-	response := vd.generateCommentResponse(comment)
-
-	// Post response
-	vd.postIssueComment(ctx, owner, repo, prNumber, response)
-}
-
-func (vd *VirtualDeveloper) respondToReviewComment(ctx context.Context, owner, repo string, prNumber int, comment *github.PullRequestComment) {
-	// Generate response and potentially update code
-	response := vd.generateReviewResponse(comment)
-
-	// Post response as a review comment reply
-	reply := &github.PullRequestComment{
-		Body:      github.String(response),
-		InReplyTo: comment.ID,
-	}
-
-	_, _, err := vd.githubClient.PullRequests.CreateComment(ctx, owner, repo, prNumber, reply)
-	if err != nil {
-		log.Printf("Error posting review comment reply: %v", err)
-	}
-}
-
-func (vd *VirtualDeveloper) generateCommentResponse(comment *github.IssueComment) string {
-	ctx := context.Background()
-	prompt := fmt.Sprintf(`A user has commented on a pull request: "%s"
-
-Please generate a professional and helpful response that acknowledges their feedback and indicates how you'll address it.`, *comment.Body)
-
-	response, err := vd.anthropicClient.CreateMessage(ctx, prompt, nil)
-	if err != nil {
-		log.Printf("Error generating comment response: %v", err)
-		return "Thank you for your feedback. I'll review this and make any necessary adjustments."
-	}
-
-	// Extract text from response
-	if len(response.Content) > 0 {
-		switch content := response.Content[0].AsAny().(type) {
-		case anthropic.TextBlock:
-			return content.Text
+				// Get individual review comments
+				reviewComments, _, err := vd.githubClient.PullRequests.ListReviewComments(ctx, owner, repo, prNumber, *review.ID, nil)
+				if err == nil {
+					for _, comment := range reviewComments {
+						if comment.Body != nil {
+							feedback = append(feedback, *comment.Body)
+						}
+					}
+				}
+			}
 		}
 	}
 
-	return "Thank you for your feedback. I'll review this and make any necessary adjustments."
+	return len(feedback) > 0, feedback
 }
 
-func (vd *VirtualDeveloper) generateReviewResponse(comment *github.PullRequestComment) string {
-	ctx := context.Background()
-	codeContext := ""
-	if comment.DiffHunk != nil {
-		codeContext = *comment.DiffHunk
-	}
-
-	response, err := vd.anthropicClient.GenerateCodeReview(ctx, *comment.Body, codeContext, false)
+// generateUpdatedSolution creates an updated solution based on feedback
+func (vd *VirtualDeveloper) generateUpdatedSolution(ctx context.Context, owner, repo string, pr *github.PullRequest, issue *github.Issue, feedback []string) (*Solution, error) {
+	// Get current PR files
+	prFiles, _, err := vd.githubClient.PullRequests.ListFiles(ctx, owner, repo, *pr.Number, nil)
 	if err != nil {
-		log.Printf("Error generating review response: %v", err)
-		return "I'll address this review comment in the next update."
+		return nil, fmt.Errorf("failed to get PR files: %w", err)
 	}
 
-	// Extract text from response
-	if len(response.Content) > 0 {
-		switch content := response.Content[0].AsAny().(type) {
-		case anthropic.TextBlock:
-			return content.Text
+	// Build context for the AI
+	feedbackContext := strings.Join(feedback, "\n\n---\n\n")
+
+	var currentFiles []string
+	for _, file := range prFiles {
+		if file.Filename != nil {
+			currentFiles = append(currentFiles, *file.Filename)
 		}
 	}
 
-	return "I'll address this review comment in the next update."
+	// Use Anthropic to generate updated solution
+	prompt := fmt.Sprintf(`I have a pull request that has received feedback. Please analyze the feedback and update the solution accordingly.
+
+Original Issue: %s
+
+Current PR Files: %s
+
+Feedback received:
+%s
+
+Please generate an updated solution that addresses all the feedback while maintaining the original intent of fixing the issue. Use the create_solution tool to provide the complete updated implementation.`,
+		getIssueDescription(issue),
+		strings.Join(currentFiles, ", "),
+		feedbackContext)
+
+	// Define tools for creating updated solution
+	tools := []anthropic.ToolParam{
+		{
+			Name:        "create_solution",
+			Description: anthropic.String("Create an updated solution with file changes to address the feedback"),
+			InputSchema: anthropic.ToolInputSchemaParam{
+				Properties: map[string]interface{}{
+					"commit_message": map[string]interface{}{
+						"type":        "string",
+						"description": "Commit message for the updates",
+					},
+					"files": map[string]interface{}{
+						"type":        "object",
+						"description": "Map of file paths to their new content",
+						"additionalProperties": map[string]interface{}{
+							"type": "object",
+							"properties": map[string]interface{}{
+								"content": map[string]interface{}{"type": "string"},
+								"is_new":  map[string]interface{}{"type": "boolean"},
+							},
+						},
+					},
+					"description": map[string]interface{}{
+						"type":        "string",
+						"description": "Description of the updates made",
+					},
+				},
+			},
+		},
+	}
+
+	response, err := vd.anthropicClient.CreateMessage(ctx, prompt, tools)
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate updated solution: %w", err)
+	}
+
+	// Process the response
+	return vd.anthropicClient.processToolResponse(ctx, response, issue)
+}
+
+// updatePullRequest applies updates to an existing PR
+func (vd *VirtualDeveloper) updatePullRequest(ctx context.Context, owner, repo string, pr *github.PullRequest, solution *Solution) error {
+	if pr.Head == nil || pr.Head.Ref == nil {
+		return fmt.Errorf("invalid PR head reference")
+	}
+
+	branchName := *pr.Head.Ref
+
+	// Get current branch reference
+	ref, _, err := vd.githubClient.Git.GetRef(ctx, owner, repo, fmt.Sprintf("refs/heads/%s", branchName))
+	if err != nil {
+		return fmt.Errorf("failed to get branch ref: %w", err)
+	}
+
+	// Get the current commit
+	currentCommit, _, err := vd.githubClient.Git.GetCommit(ctx, owner, repo, *ref.Object.SHA)
+	if err != nil {
+		return fmt.Errorf("failed to get current commit: %w", err)
+	}
+
+	// Create tree entries for all changes
+	var treeEntries []*github.TreeEntry
+	for path, change := range solution.Files {
+		// Create blob for file content
+		blob := &github.Blob{
+			Content:  github.String(change.Content),
+			Encoding: github.String("utf-8"),
+		}
+
+		createdBlob, _, err := vd.githubClient.Git.CreateBlob(ctx, owner, repo, blob)
+		if err != nil {
+			return fmt.Errorf("failed to create blob for %s: %w", path, err)
+		}
+
+		treeEntry := &github.TreeEntry{
+			Path: github.String(path),
+			Mode: github.String("100644"),
+			Type: github.String("blob"),
+			SHA:  createdBlob.SHA,
+		}
+		treeEntries = append(treeEntries, treeEntry)
+	}
+
+	createdTree, _, err := vd.githubClient.Git.CreateTree(ctx, owner, repo, *currentCommit.Tree.SHA, treeEntries)
+	if err != nil {
+		return fmt.Errorf("failed to create tree: %w", err)
+	}
+
+	// Create new commit
+	commit := &github.Commit{
+		Message: github.String(solution.CommitMessage),
+		Tree:    createdTree,
+		Parents: []*github.Commit{currentCommit},
+	}
+
+	createdCommit, _, err := vd.githubClient.Git.CreateCommit(ctx, owner, repo, commit, nil)
+	if err != nil {
+		return fmt.Errorf("failed to create commit: %w", err)
+	}
+
+	// Update branch reference
+	ref.Object.SHA = createdCommit.SHA
+	_, _, err = vd.githubClient.Git.UpdateRef(ctx, owner, repo, ref, false)
+	if err != nil {
+		return fmt.Errorf("failed to update branch ref: %w", err)
+	}
+
+	return nil
+}
+
+// postComprehensiveReview posts a single review addressing all feedback
+func (vd *VirtualDeveloper) postComprehensiveReview(ctx context.Context, owner, repo string, prNumber int, feedback []string, solution *Solution) {
+	reviewBody := fmt.Sprintf(`Thank you for the feedback! I've updated the PR to address all the points raised:
+
+%s
+
+The changes have been committed and should address all the concerns mentioned. Please let me know if you need any further adjustments.`, solution.Description)
+
+	review := &github.PullRequestReviewRequest{
+		Body:  github.String(reviewBody),
+		Event: github.String("COMMENT"),
+	}
+
+	_, _, err := vd.githubClient.PullRequests.CreateReview(ctx, owner, repo, prNumber, review)
+	if err != nil {
+		log.Printf("Error posting comprehensive review: %v", err)
+	}
+}
+
+// Helper functions
+
+// extractIssueNumber extracts issue number from PR body
+func extractIssueNumber(body string) int {
+	// Look for patterns like "#123" or "issue #123"
+	lines := strings.Split(body, "\n")
+	for _, line := range lines {
+		if strings.Contains(line, "#") {
+			parts := strings.Fields(line)
+			for _, part := range parts {
+				if strings.HasPrefix(part, "#") {
+					var num int
+					if _, err := fmt.Sscanf(part, "#%d", &num); err == nil {
+						return num
+					}
+				}
+			}
+		}
+	}
+	return 0
+}
+
+// getIssueDescription safely gets issue description
+func getIssueDescription(issue *github.Issue) string {
+	if issue == nil {
+		return "No issue provided"
+	}
+
+	description := ""
+	if issue.Title != nil {
+		description += "Title: " + *issue.Title + "\n"
+	}
+	if issue.Body != nil {
+		description += "Description: " + *issue.Body
+	}
+
+	return description
 }
 
 // postIssueComment posts a comment on an issue or PR
