@@ -5,11 +5,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
-	"strings"
 
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/option"
-	"github.com/google/go-github/v72/github"
 )
 
 // AnthropicClient wraps the official Anthropic SDK client
@@ -27,31 +25,193 @@ func NewAnthropicClient(apiKey string) *AnthropicClient {
 	}
 }
 
-// CreateMessage sends a message to the Anthropic API with optional tools
-func (ac *AnthropicClient) CreateMessage(ctx context.Context, prompt string, tools []anthropic.ToolParam) (*anthropic.Message, error) {
+// Action represents an action the AI decided to take
+type Action struct {
+	Type   string                 // "analyze_file", "create_solution", "post_comment", "add_reaction", "request_review"
+	Data   map[string]interface{} // Action-specific data
+	ToolID string                 // Tool use ID for responses
+}
+
+// InteractionResult represents the outcome of an AI interaction
+type InteractionResult struct {
+	Actions          []Action
+	Solution         *Solution // May be nil if AI chose not to create one
+	Comments         []Comment // Comments to post
+	NeedsMoreInfo    bool      // AI is waiting for responses
+	ContinuationData string    // Data to continue conversation later
+}
+
+// Comment represents a comment to be posted
+type Comment struct {
+	Type         string // "issue", "pr", "review", "review_reply"
+	Body         string
+	InReplyTo    *int64           // For reply threads
+	FilePath     string           // For review comments
+	Line         int              // For review comments
+	Side         string           // For review comments
+	AddReactions map[int64]string // CommentID -> reaction emoji
+}
+
+// ProcessWorkItem processes a work item and returns what actions to take
+func (ac *AnthropicClient) ProcessWorkItem(ctx context.Context, workCtx *WorkContext) (*InteractionResult, error) {
 	systemPrompt := `You are a highly skilled software developer working as a virtual assistant on GitHub.
+
 Your responsibilities include:
-1. Analyzing GitHub issues and creating high-quality code solutions
-2. Following repository coding standards and style guides meticulously
-3. Writing clean, maintainable, and well-tested code
-4. Responding professionally to PR comments and reviews
-5. Making minimal, focused changes that directly address the issue
+1. Analyzing GitHub issues and pull requests
+2. Engaging in technical discussions professionally
+3. Creating high-quality code solutions when appropriate
+4. Following repository coding standards and style guides
+5. Providing guidance on best practices
 
-When analyzing code:
-- Pay careful attention to existing patterns and conventions
-- Maintain consistency with the surrounding codebase
-- Consider edge cases and error handling
-- Write appropriate tests when applicable
+When interacting:
+- Ask clarifying questions when requirements are unclear
+- Push back professionally on suggestions that violate best practices
+- Explain your reasoning when disagreeing with suggestions
+- Only create solutions when you have enough information
+- Engage in discussion threads appropriately
+- Add reactions to acknowledge you've seen comments
 
-When using tools:
-- Use analyze_file to examine relevant files before making changes
-- Use create_solution to provide your complete solution with all necessary file changes
-- Ensure your solutions include actual file content, not just placeholders
-- Write clear, conventional commit messages
-- Always include at least one meaningful file change in your solution
+You have access to several tools:
+- analyze_file: Examine files to understand the codebase
+- create_solution: Generate a complete solution (only when ready)
+- post_comment: Post comments to engage in discussion
+- add_reaction: React to existing comments
+- request_review: Ask specific users for review or input
 
-IMPORTANT: When creating solutions, you MUST include actual implementation code in the files, not just comments or placeholders. The solution should be ready to run and address the specific issue described.`
+Choose the appropriate tools based on the situation. You don't always need to create a solution immediately - sometimes discussion is more valuable.`
 
+	// Define all available tools
+	tools := []anthropic.ToolParam{
+		{
+			Name:        "analyze_file",
+			Description: anthropic.String("Analyze a file from the repository to understand its structure and content"),
+			InputSchema: anthropic.ToolInputSchemaParam{
+				Properties: map[string]interface{}{
+					"path": map[string]interface{}{
+						"type":        "string",
+						"description": "The file path to analyze",
+					},
+				},
+			},
+		},
+		{
+			Name:        "post_comment",
+			Description: anthropic.String("Post a comment to engage in discussion"),
+			InputSchema: anthropic.ToolInputSchemaParam{
+				Properties: map[string]interface{}{
+					"comment_type": map[string]interface{}{
+						"type":        "string",
+						"enum":        []string{"issue", "pr", "review", "review_reply"},
+						"description": "Type of comment to post",
+					},
+					"body": map[string]interface{}{
+						"type":        "string",
+						"description": "The comment text (markdown supported)",
+					},
+					"in_reply_to": map[string]interface{}{
+						"type":        "integer",
+						"description": "ID of comment being replied to (for threads)",
+					},
+					"file_path": map[string]interface{}{
+						"type":        "string",
+						"description": "File path (for review comments)",
+					},
+					"line": map[string]interface{}{
+						"type":        "integer",
+						"description": "Line number (for review comments)",
+					},
+					"side": map[string]interface{}{
+						"type":        "string",
+						"enum":        []string{"LEFT", "RIGHT"},
+						"description": "Side of diff (for review comments)",
+					},
+				},
+			},
+		},
+		{
+			Name:        "add_reaction",
+			Description: anthropic.String("Add a reaction to acknowledge or respond to a comment"),
+			InputSchema: anthropic.ToolInputSchemaParam{
+				Properties: map[string]interface{}{
+					"comment_id": map[string]interface{}{
+						"type":        "integer",
+						"description": "ID of the comment to react to",
+					},
+					"reaction": map[string]interface{}{
+						"type":        "string",
+						"enum":        []string{"+1", "-1", "laugh", "confused", "heart", "hooray", "rocket", "eyes"},
+						"description": "The reaction emoji to add",
+					},
+				},
+			},
+		},
+		{
+			Name:        "create_solution",
+			Description: anthropic.String("Create a complete solution with file changes (only use when you have all necessary information)"),
+			InputSchema: anthropic.ToolInputSchemaParam{
+				Properties: ac.buildSolutionToolProperties(workCtx.IsInitialSolution),
+			},
+		},
+		{
+			Name:        "request_review",
+			Description: anthropic.String("Request review or input from specific users"),
+			InputSchema: anthropic.ToolInputSchemaParam{
+				Properties: map[string]interface{}{
+					"usernames": map[string]interface{}{
+						"type":        "array",
+						"items":       map[string]interface{}{"type": "string"},
+						"description": "GitHub usernames to request review from",
+					},
+					"message": map[string]interface{}{
+						"type":        "string",
+						"description": "Message explaining what input is needed",
+					},
+				},
+			},
+		},
+		{
+			Name:        "mark_ready_to_implement",
+			Description: anthropic.String("Indicate that you have enough information and are ready to implement a solution in the next interaction"),
+			InputSchema: anthropic.ToolInputSchemaParam{
+				Properties: map[string]interface{}{
+					"summary": map[string]interface{}{
+						"type":        "string",
+						"description": "Summary of what will be implemented",
+					},
+				},
+			},
+		},
+	}
+
+	// Build prompt from work context
+	prompt := workCtx.BuildPrompt()
+
+	// Add instructions about current state
+	if workCtx.IsInitialSolution && workCtx.Issue != nil {
+		prompt += "\n\nThis is a new issue. Analyze it carefully and decide whether to:\n"
+		prompt += "1. Ask clarifying questions if requirements are unclear\n"
+		prompt += "2. Create a solution if you have enough information\n"
+		prompt += "3. Discuss approach or concerns before implementing"
+	} else if len(workCtx.NeedsToRespond) > 0 {
+		prompt += "\n\nThere are comments that may need your response. Consider whether to:\n"
+		prompt += "1. Answer questions or provide clarifications\n"
+		prompt += "2. Implement requested changes\n"
+		prompt += "3. Explain why certain suggestions might not be appropriate\n"
+		prompt += "4. Ask for more information"
+	}
+
+	// Create message with tools
+	message, err := ac.CreateMessage(ctx, prompt, tools, systemPrompt)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create message: %w", err)
+	}
+
+	// Process response
+	return ac.processInteractionResponse(ctx, message, workCtx)
+}
+
+// CreateMessage sends a message to the Anthropic API with optional tools
+func (ac *AnthropicClient) CreateMessage(ctx context.Context, prompt string, tools []anthropic.ToolParam, systemPrompt string) (*anthropic.Message, error) {
 	params := anthropic.MessageNewParams{
 		Model:     anthropic.ModelClaudeSonnet4_0,
 		MaxTokens: 4096,
@@ -82,342 +242,215 @@ IMPORTANT: When creating solutions, you MUST include actual implementation code 
 	return message, nil
 }
 
-// AnalyzeCodeContext analyzes code context for better responses
-func (ac *AnthropicClient) AnalyzeCodeContext(ctx context.Context, fileContent, issueDescription, styleGuide string) (*anthropic.Message, error) {
-	prompt := fmt.Sprintf(`Analyze this code file in the context of the following issue:
-
-Issue: %s
-
-File content:
-%s
-
-Style guide (if available):
-%s
-
-Please identify:
-1. The main purpose and structure of this code
-2. Relevant coding patterns and conventions used
-3. How this file might relate to the issue
-4. Any potential areas that need modification`, issueDescription, fileContent, styleGuide)
-
-	return ac.CreateMessage(ctx, prompt, nil)
-}
-
-// GenerateCodeReview generates a response to code review comments
-func (ac *AnthropicClient) GenerateCodeReview(ctx context.Context, comment, codeContext string, isApproval bool) (*anthropic.Message, error) {
-	reviewType := "change-requesting"
-	if isApproval {
-		reviewType = "approving"
+// processInteractionResponse processes the AI's response and extracts actions
+func (ac *AnthropicClient) processInteractionResponse(ctx context.Context, response *anthropic.Message, workCtx *WorkContext) (*InteractionResult, error) {
+	result := &InteractionResult{
+		Actions:  []Action{},
+		Comments: []Comment{},
 	}
-
-	prompt := fmt.Sprintf(`A reviewer has left the following comment on a pull request:
-
-Comment: %s
-
-Code context:
-%s
-
-This comment is part of a %s review.
-
-Please generate an appropriate response that:
-1. Acknowledges the feedback professionally
-2. Explains any reasoning behind the current implementation if needed
-3. Indicates whether and how you'll address the feedback
-4. Asks for clarification if the comment is unclear
-5. Maintains a collaborative and respectful tone`, comment, codeContext, reviewType)
-
-	return ac.CreateMessage(ctx, prompt, nil)
-}
-
-// GeneratePRDescription creates a detailed PR description
-func (ac *AnthropicClient) GeneratePRDescription(ctx context.Context, issue *github.Issue, changes map[string]FileChange, styleGuide string) (string, error) {
-	changesDescription := ""
-	for path, change := range changes {
-		action := "Modified"
-		if change.IsNew {
-			action = "Created"
-		}
-		changesDescription += fmt.Sprintf("- %s `%s`\n", action, path)
-	}
-
-	// Safe extraction with nil checks
-	issueTitle := "<No title>"
-	if issue.Title != nil {
-		issueTitle = *issue.Title
-	}
-
-	issueBody := "<No description>"
-	if issue.Body != nil {
-		issueBody = *issue.Body
-	}
-
-	prompt := fmt.Sprintf(`Generate a clear and comprehensive pull request description for the following:
-
-Issue Title: %s
-Issue Description: %s
-
-Files changed:
-%s
-
-Please create a PR description that:
-1. Clearly explains what the PR does
-2. References the original issue
-3. Lists the key changes made
-4. Mentions any testing performed
-5. Notes any potential impacts or considerations
-6. Follows professional PR description conventions
-
-Keep it concise but informative.`, issueTitle, issueBody, changesDescription)
-
-	response, err := ac.CreateMessage(ctx, prompt, nil)
-	if err != nil {
-		return "", err
-	}
-
-	// Extract the text from the response
-	if len(response.Content) > 0 {
-		switch content := response.Content[0].AsAny().(type) {
-		case anthropic.TextBlock:
-			return content.Text, nil
-		}
-	}
-
-	return "", fmt.Errorf("unexpected response format")
-}
-
-// generateSolutionWithTools generates a solution using Claude with tools
-func (ac *AnthropicClient) generateSolutionWithTools(ctx context.Context, issue *github.Issue, repo *github.Repository, styleGuide *StyleGuide, codebaseInfo *CodebaseInfo) (*Solution, error) {
-	// Define tools for Claude to use
-	tools := []anthropic.ToolParam{
-		{
-			Name:        "analyze_file",
-			Description: anthropic.String("Analyze a file from the repository to understand its structure and content"),
-			InputSchema: anthropic.ToolInputSchemaParam{
-				Properties: map[string]interface{}{
-					"path": map[string]interface{}{
-						"type":        "string",
-						"description": "The file path to analyze",
-					},
-				},
-			},
-		},
-		{
-			Name:        "create_solution",
-			Description: anthropic.String("Create a solution with file changes to resolve the issue"),
-			InputSchema: anthropic.ToolInputSchemaParam{
-				Properties: map[string]interface{}{
-					"branch": map[string]interface{}{
-						"type":        "string",
-						"description": "Name of the branch to create (e.g., fix/issue-123-description)",
-					},
-					"commit_message": map[string]interface{}{
-						"type":        "string",
-						"description": "Commit message for the changes",
-					},
-					"files": map[string]interface{}{
-						"type":        "object",
-						"description": "Map of file paths to their new content",
-						"additionalProperties": map[string]interface{}{
-							"type": "object",
-							"properties": map[string]interface{}{
-								"content": map[string]interface{}{
-									"type":        "string",
-									"description": "Complete file content with actual implementation code",
-								},
-								"is_new": map[string]interface{}{
-									"type":        "boolean",
-									"description": "Whether this is a new file",
-								},
-							},
-							"required": []string{"content", "is_new"},
-						},
-					},
-					"description": map[string]interface{}{
-						"type":        "string",
-						"description": "Description of the solution and what changes were made",
-					},
-				},
-			},
-		},
-	}
-
-	prompt := buildSolutionPrompt(issue, repo, styleGuide, codebaseInfo)
-
-	response, err := ac.CreateMessage(ctx, prompt, tools)
-	if err != nil {
-		return nil, fmt.Errorf("failed to generate solution: %w", err)
-	}
-
-	// Process the response and extract tool uses
-	solution, err := ac.processToolResponse(ctx, response, issue)
-	if err != nil {
-		return nil, fmt.Errorf("failed to process tool response: %w", err)
-	}
-
-	// Validate that the solution has files
-	if len(solution.Files) == 0 {
-		return nil, fmt.Errorf("solution contains no file changes")
-	}
-
-	return solution, nil
-}
-
-// processToolResponse processes Claude's response containing tool uses
-func (ac *AnthropicClient) processToolResponse(ctx context.Context, response *anthropic.Message, issue *github.Issue) (*Solution, error) {
-	var solution *Solution
 
 	for _, content := range response.Content {
 		switch block := content.AsAny().(type) {
 		case anthropic.ToolUseBlock:
-			if block.Name == "create_solution" {
-				// Parse the tool input
-				var solutionData struct {
-					Branch        string                     `json:"branch"`
-					CommitMessage string                     `json:"commit_message"`
-					Files         map[string]json.RawMessage `json:"files"`
-					Description   string                     `json:"description"`
+			action, err := ac.processToolUse(block, workCtx)
+			if err != nil {
+				log.Printf("Warning: failed to process tool use %s: %v", block.Name, err)
+				continue
+			}
+
+			result.Actions = append(result.Actions, *action)
+
+			// Process specific action types
+			switch action.Type {
+			case "create_solution":
+				// Extract solution from action data
+				if solution, ok := action.Data["solution"].(*Solution); ok {
+					result.Solution = solution
 				}
 
-				inputJSON, err := json.Marshal(block.Input)
-				if err != nil {
-					return nil, fmt.Errorf("failed to marshal tool input: %w", err)
+			case "post_comment":
+				// Extract comment from action data
+				comment := Comment{
+					Type: action.Data["comment_type"].(string),
+					Body: action.Data["body"].(string),
 				}
 
-				if err := json.Unmarshal(inputJSON, &solutionData); err != nil {
-					return nil, fmt.Errorf("failed to parse solution data: %w", err)
+				if replyTo, ok := action.Data["in_reply_to"].(float64); ok {
+					replyToInt := int64(replyTo)
+					comment.InReplyTo = &replyToInt
 				}
 
-				// Validate required fields
-				if solutionData.Branch == "" {
-					return nil, fmt.Errorf("solution missing branch name")
-				}
-				if solutionData.CommitMessage == "" {
-					return nil, fmt.Errorf("solution missing commit message")
-				}
-				if len(solutionData.Files) == 0 {
-					return nil, fmt.Errorf("solution contains no files")
+				if filePath, ok := action.Data["file_path"].(string); ok {
+					comment.FilePath = filePath
 				}
 
-				// Convert to our Solution type
-				solution = &Solution{
-					Branch:        solutionData.Branch,
-					CommitMessage: solutionData.CommitMessage,
-					Description:   solutionData.Description,
-					Files:         make(map[string]FileChange),
+				if line, ok := action.Data["line"].(float64); ok {
+					comment.Line = int(line)
 				}
 
-				// Parse file changes
-				for path, fileData := range solutionData.Files {
-					var fileChange struct {
-						Content string `json:"content"`
-						IsNew   bool   `json:"is_new"`
-					}
-					if err := json.Unmarshal(fileData, &fileChange); err != nil {
-						log.Printf("Warning: failed to parse file change for %s: %v", path, err)
-						continue
-					}
+				if side, ok := action.Data["side"].(string); ok {
+					comment.Side = side
+				}
 
-					// Validate file content is not empty
-					if strings.TrimSpace(fileChange.Content) == "" {
-						log.Printf("Warning: file %s has empty content", path)
-						continue
-					}
+				result.Comments = append(result.Comments, comment)
 
-					solution.Files[path] = FileChange{
-						Path:    path,
-						Content: fileChange.Content,
-						IsNew:   fileChange.IsNew,
+			case "add_reaction":
+				// Handle reactions
+				if commentID, ok := action.Data["comment_id"].(float64); ok {
+					if reaction, ok := action.Data["reaction"].(string); ok {
+						if result.Comments == nil {
+							result.Comments = []Comment{}
+						}
+						// Add a special comment type for reactions
+						result.Comments = append(result.Comments, Comment{
+							AddReactions: map[int64]string{
+								int64(commentID): reaction,
+							},
+						})
 					}
 				}
 
-				return solution, nil
+			case "mark_ready_to_implement":
+				result.NeedsMoreInfo = false
+				result.ContinuationData = action.Data["summary"].(string)
+
+			case "analyze_file", "request_review":
+				// These will be handled by the caller
+				result.NeedsMoreInfo = true
 			}
 		}
 	}
 
-	// If no solution was found in tool use, return an error
-	if solution == nil {
-		return nil, fmt.Errorf("no valid solution found in Claude's response")
+	// Check if AI is waiting for more information
+	if result.Solution == nil && len(result.Comments) > 0 {
+		result.NeedsMoreInfo = true
+	}
+
+	return result, nil
+}
+
+// processToolUse processes a single tool use block
+func (ac *AnthropicClient) processToolUse(block anthropic.ToolUseBlock, workCtx *WorkContext) (*Action, error) {
+	action := &Action{
+		Type:   block.Name,
+		Data:   make(map[string]interface{}),
+		ToolID: block.ID,
+	}
+
+	// Marshal and unmarshal to convert to map
+	inputJSON, err := json.Marshal(block.Input)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal input: %w", err)
+	}
+
+	var inputMap map[string]interface{}
+	if err := json.Unmarshal(inputJSON, &inputMap); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal input: %w", err)
+	}
+
+	action.Data = inputMap
+
+	// Special processing for create_solution
+	if block.Name == "create_solution" {
+		solution, err := ac.parseSolutionFromInput(inputMap, workCtx)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse solution: %w", err)
+		}
+		action.Data["solution"] = solution
+	}
+
+	return action, nil
+}
+
+// parseSolutionFromInput parses solution data from tool input
+func (ac *AnthropicClient) parseSolutionFromInput(input map[string]interface{}, workCtx *WorkContext) (*Solution, error) {
+	solution := &Solution{
+		Files: make(map[string]FileChange),
+	}
+
+	// Extract fields
+	if branch, ok := input["branch"].(string); ok {
+		solution.Branch = branch
+	} else if !workCtx.IsInitialSolution && workCtx.PullRequest != nil && workCtx.PullRequest.Head != nil {
+		solution.Branch = *workCtx.PullRequest.Head.Ref
+	}
+
+	if commitMsg, ok := input["commit_message"].(string); ok {
+		solution.CommitMessage = commitMsg
+	} else {
+		return nil, fmt.Errorf("missing commit message")
+	}
+
+	if desc, ok := input["description"].(string); ok {
+		solution.Description = desc
+	}
+
+	// Parse files
+	if files, ok := input["files"].(map[string]interface{}); ok {
+		for path, fileData := range files {
+			if fileMap, ok := fileData.(map[string]interface{}); ok {
+				fileChange := FileChange{
+					Path: path,
+				}
+
+				if content, ok := fileMap["content"].(string); ok {
+					fileChange.Content = content
+				}
+
+				if isNew, ok := fileMap["is_new"].(bool); ok {
+					fileChange.IsNew = isNew
+				}
+
+				solution.Files[path] = fileChange
+			}
+		}
+	}
+
+	if len(solution.Files) == 0 {
+		return nil, fmt.Errorf("solution contains no files")
 	}
 
 	return solution, nil
 }
 
-// buildSolutionPrompt creates the prompt for generating a solution
-func buildSolutionPrompt(issue *github.Issue, repo *github.Repository, styleGuide *StyleGuide, codebaseInfo *CodebaseInfo) string {
-	// Safe string extraction with nil checks
-	repoName := "unknown"
-	if repo != nil && repo.FullName != nil {
-		repoName = *repo.FullName
+// Helper methods
+
+func (ac *AnthropicClient) buildSolutionToolProperties(isInitialSolution bool) map[string]interface{} {
+	props := map[string]interface{}{
+		"commit_message": map[string]interface{}{
+			"type":        "string",
+			"description": "Commit message for the changes",
+		},
+		"files": map[string]interface{}{
+			"type":        "object",
+			"description": "Map of file paths to their new content",
+			"additionalProperties": map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"content": map[string]interface{}{
+						"type":        "string",
+						"description": "Complete file content with actual implementation code",
+					},
+					"is_new": map[string]interface{}{
+						"type":        "boolean",
+						"description": "Whether this is a new file",
+					},
+				},
+				"required": []string{"content", "is_new"},
+			},
+		},
+		"description": map[string]interface{}{
+			"type":        "string",
+			"description": "Description of the solution and what changes were made",
+		},
 	}
 
-	mainLang := "unknown"
-	if codebaseInfo != nil {
-		mainLang = codebaseInfo.MainLanguage
-	}
-
-	issueNumber := 0
-	if issue.Number != nil {
-		issueNumber = *issue.Number
-	}
-
-	issueTitle := "No title"
-	if issue.Title != nil {
-		issueTitle = *issue.Title
-	}
-
-	issueBody := "No description provided"
-	if issue.Body != nil {
-		issueBody = *issue.Body
-	}
-
-	prompt := fmt.Sprintf(`You are working on a GitHub issue. Your task is to analyze the issue and create a complete, working solution.
-
-Repository: %s
-Main Language: %s
-Issue #%d: %s
-
-Issue Description:
-%s
-
-`, repoName, mainLang, issueNumber, issueTitle, issueBody)
-
-	if styleGuide != nil && styleGuide.Content != "" {
-		prompt += fmt.Sprintf("\nStyle Guide:\n%s\n", styleGuide.Content)
-	}
-
-	if codebaseInfo != nil && codebaseInfo.ReadmeContent != "" {
-		prompt += fmt.Sprintf("\nREADME excerpt:\n%s\n", truncateString(codebaseInfo.ReadmeContent, 1000))
-	}
-
-	if codebaseInfo != nil && len(codebaseInfo.FileTree) > 0 {
-		prompt += "\nRepository structure (sample files):\n"
-		for i, file := range codebaseInfo.FileTree {
-			if i >= 20 { // Limit to first 20 files
-				prompt += "...\n"
-				break
-			}
-			prompt += fmt.Sprintf("- %s\n", file)
+	if isInitialSolution {
+		props["branch"] = map[string]interface{}{
+			"type":        "string",
+			"description": "Name of the branch to create (e.g., fix/issue-123-description)",
 		}
 	}
 
-	prompt += fmt.Sprintf(`
-Please analyze this issue and create a complete solution. Follow these guidelines:
-
-1. Create a descriptive branch name following the pattern: fix/issue-%d-brief-description
-2. Implement the actual solution code - do not use placeholders or TODOs
-3. Include complete, working file contents
-4. Respect existing code style and conventions
-5. Write a clear commit message describing what was fixed
-6. Provide a comprehensive description of the changes
-
-You must use the create_solution tool to provide your complete implementation. Ensure that:
-- All file contents are complete and functional
-- The solution directly addresses the issue described
-- Branch names are descriptive and follow conventions
-- At least one file is modified or created
-
-Start by creating your solution now.`, issueNumber)
-
-	return prompt
+	return props
 }
