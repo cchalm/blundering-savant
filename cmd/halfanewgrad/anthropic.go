@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"strings"
 
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/option"
@@ -27,7 +28,7 @@ func NewAnthropicClient(apiKey string) *AnthropicClient {
 
 // Action represents an action the AI decided to take
 type Action struct {
-	Type   string                 // "analyze_file", "create_solution", "post_comment", "add_reaction", "request_review"
+	Type   string                 // "view", "str_replace", "create", "insert", "post_comment", "add_reaction", etc.
 	Data   map[string]interface{} // Action-specific data
 	ToolID string                 // Tool use ID for responses
 }
@@ -35,10 +36,8 @@ type Action struct {
 // InteractionResult represents the outcome of an AI interaction
 type InteractionResult struct {
 	Actions          []Action
-	Solution         *Solution // May be nil if AI chose not to create one
-	Comments         []Comment // Comments to post
-	NeedsMoreInfo    bool      // AI is waiting for responses
-	ContinuationData string    // Data to continue conversation later
+	NeedsMoreInfo    bool   // AI is waiting for tool responses
+	ContinuationData string // Data to continue conversation later
 }
 
 // Comment represents a comment to be posted
@@ -72,24 +71,70 @@ When interacting:
 - Add reactions to acknowledge you've seen comments
 
 You have access to several tools:
-- analyze_file: Examine files to understand the codebase
-- create_solution: Generate a complete solution (only when ready)
+- str_replace_based_edit_tool: A text editor for viewing, creating, and editing files
+  - view: Examine file contents or list directory contents
+  - str_replace: Replace specific text in files with new text
+  - create: Create new files with specified content
+  - insert: Insert text at specific line numbers
+- create_branch: Create a new branch (for initial solutions)
+- create_pull_request: Create a pull request from the current branch
 - post_comment: Post comments to engage in discussion
 - add_reaction: React to existing comments
 - request_review: Ask specific users for review or input
+
+The text editor tool is your primary way to examine and modify code. Use it to:
+- View files to understand the codebase structure
+- Make precise edits using str_replace
+- Create new files when needed
+- Insert code at specific locations
+
+When working on a new issue:
+1. First explore the codebase with the text editor
+2. Create a branch with create_branch
+3. Make your changes using the text editor tools
+4. Create a pull request with create_pull_request
+
+When using str_replace:
+- The old_str must match EXACTLY, including whitespace
+- Include enough context to make the match unique
+- Use line numbers from view output for reference
 
 Choose the appropriate tools based on the situation. You don't always need to create a solution immediately - sometimes discussion is more valuable.`
 
 	// Define all available tools
 	tools := []anthropic.ToolParam{
 		{
-			Name:        "analyze_file",
-			Description: anthropic.String("Analyze a file from the repository to understand its structure and content"),
+			Type: "text_editor_20250429",
+			Name: "str_replace_based_edit_tool",
+		},
+		{
+			Name:        "create_branch",
+			Description: anthropic.String("Create a new branch for working on an issue (only for initial solutions)"),
 			InputSchema: anthropic.ToolInputSchemaParam{
 				Properties: map[string]interface{}{
-					"path": map[string]interface{}{
+					"branch_name": map[string]interface{}{
 						"type":        "string",
-						"description": "The file path to analyze",
+						"description": "Name of the branch to create (e.g., fix/issue-123-description)",
+					},
+				},
+			},
+		},
+		{
+			Name:        "create_pull_request",
+			Description: anthropic.String("Create a pull request with all current changes"),
+			InputSchema: anthropic.ToolInputSchemaParam{
+				Properties: map[string]interface{}{
+					"commit_message": map[string]interface{}{
+						"type":        "string",
+						"description": "Commit message for the changes",
+					},
+					"pull_request_title": map[string]interface{}{
+						"type":        "string",
+						"description": "Title for the pull request",
+					},
+					"pull_request_body": map[string]interface{}{
+						"type":        "string",
+						"description": "Description of the solution and what changes were made",
 					},
 				},
 			},
@@ -146,13 +191,6 @@ Choose the appropriate tools based on the situation. You don't always need to cr
 			},
 		},
 		{
-			Name:        "create_solution",
-			Description: anthropic.String("Create a complete solution with file changes (only use when you have all necessary information)"),
-			InputSchema: anthropic.ToolInputSchemaParam{
-				Properties: ac.buildSolutionToolProperties(workCtx.IsInitialSolution),
-			},
-		},
-		{
 			Name:        "request_review",
 			Description: anthropic.String("Request review or input from specific users"),
 			InputSchema: anthropic.ToolInputSchemaParam{
@@ -169,20 +207,9 @@ Choose the appropriate tools based on the situation. You don't always need to cr
 				},
 			},
 		},
-		{
-			Name:        "mark_ready_to_implement",
-			Description: anthropic.String("Indicate that you have enough information and are ready to implement a solution in the next interaction"),
-			InputSchema: anthropic.ToolInputSchemaParam{
-				Properties: map[string]interface{}{
-					"summary": map[string]interface{}{
-						"type":        "string",
-						"description": "Summary of what will be implemented",
-					},
-				},
-			},
-		},
 	}
 
+	// Rest of the function remains the same...
 	// Build prompt from work context
 	prompt := workCtx.BuildPrompt()
 
@@ -190,12 +217,16 @@ Choose the appropriate tools based on the situation. You don't always need to cr
 	if workCtx.IsInitialSolution && workCtx.Issue != nil {
 		prompt += "\n\nThis is a new issue. Analyze it carefully and decide whether to:\n"
 		prompt += "1. Ask clarifying questions if requirements are unclear\n"
-		prompt += "2. Create a solution if you have enough information\n"
-		prompt += "3. Discuss approach or concerns before implementing"
+		prompt += "2. Use the text editor tool to examine the codebase and understand the structure\n"
+		prompt += "3. Create a branch for your work using create_branch\n"
+		prompt += "4. Make your changes using the text editor tools\n"
+		prompt += "5. Create a pull request using create_pull_request\n"
+		prompt += "6. Discuss approach or concerns before implementing\n\n"
+		prompt += "Start by using the text editor tool to view key files and understand the codebase structure."
 	} else if len(workCtx.NeedsToRespond) > 0 {
 		prompt += "\n\nThere are comments that may need your response. Consider whether to:\n"
 		prompt += "1. Answer questions or provide clarifications\n"
-		prompt += "2. Implement requested changes\n"
+		prompt += "2. Use the text editor tool to examine files and implement requested changes\n"
 		prompt += "3. Explain why certain suggestions might not be appropriate\n"
 		prompt += "4. Ask for more information"
 	}
@@ -242,11 +273,45 @@ func (ac *AnthropicClient) CreateMessage(ctx context.Context, prompt string, too
 	return message, nil
 }
 
+// CreateMessageWithHistory creates a message with conversation history
+func (ac *AnthropicClient) CreateMessageWithHistory(ctx context.Context, messages []anthropic.MessageParam) (*anthropic.Message, error) {
+	params := anthropic.MessageNewParams{
+		Model:     anthropic.ModelClaudeSonnet4_0,
+		MaxTokens: 4096,
+		Messages:  messages,
+	}
+
+	message, err := ac.client.Messages.New(ctx, params)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create message: %w", err)
+	}
+
+	return message, nil
+}
+
+// CreateMessageWithSystemPrompt creates a message with conversation history and system prompt
+func (ac *AnthropicClient) CreateMessageWithSystemPrompt(ctx context.Context, messages []anthropic.MessageParam, systemPrompt string) (*anthropic.Message, error) {
+	params := anthropic.MessageNewParams{
+		Model:     anthropic.ModelClaudeSonnet4_0,
+		MaxTokens: 4096,
+		System: []anthropic.TextBlockParam{
+			{Text: systemPrompt},
+		},
+		Messages: messages,
+	}
+
+	message, err := ac.client.Messages.New(ctx, params)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create message: %w", err)
+	}
+
+	return message, nil
+}
+
 // processInteractionResponse processes the AI's response and extracts actions
 func (ac *AnthropicClient) processInteractionResponse(ctx context.Context, response *anthropic.Message, workCtx *WorkContext) (*InteractionResult, error) {
 	result := &InteractionResult{
-		Actions:  []Action{},
-		Comments: []Comment{},
+		Actions: []Action{},
 	}
 
 	for _, content := range response.Content {
@@ -259,72 +324,19 @@ func (ac *AnthropicClient) processInteractionResponse(ctx context.Context, respo
 			}
 
 			result.Actions = append(result.Actions, *action)
-
-			// Process specific action types
-			switch action.Type {
-			case "create_solution":
-				// Extract solution from action data
-				if solution, ok := action.Data["solution"].(*Solution); ok {
-					result.Solution = solution
-				}
-
-			case "post_comment":
-				// Extract comment from action data
-				comment := Comment{
-					Type: action.Data["comment_type"].(string),
-					Body: action.Data["body"].(string),
-				}
-
-				if replyTo, ok := action.Data["in_reply_to"].(float64); ok {
-					replyToInt := int64(replyTo)
-					comment.InReplyTo = &replyToInt
-				}
-
-				if filePath, ok := action.Data["file_path"].(string); ok {
-					comment.FilePath = filePath
-				}
-
-				if line, ok := action.Data["line"].(float64); ok {
-					comment.Line = int(line)
-				}
-
-				if side, ok := action.Data["side"].(string); ok {
-					comment.Side = side
-				}
-
-				result.Comments = append(result.Comments, comment)
-
-			case "add_reaction":
-				// Handle reactions
-				if commentID, ok := action.Data["comment_id"].(float64); ok {
-					if reaction, ok := action.Data["reaction"].(string); ok {
-						if result.Comments == nil {
-							result.Comments = []Comment{}
-						}
-						// Add a special comment type for reactions
-						result.Comments = append(result.Comments, Comment{
-							AddReactions: map[int64]string{
-								int64(commentID): reaction,
-							},
-						})
-					}
-				}
-
-			case "mark_ready_to_implement":
-				result.NeedsMoreInfo = false
-				result.ContinuationData = action.Data["summary"].(string)
-
-			case "analyze_file", "request_review":
-				// These will be handled by the caller
-				result.NeedsMoreInfo = true
-			}
 		}
 	}
 
-	// Check if AI is waiting for more information
-	if result.Solution == nil && len(result.Comments) > 0 {
-		result.NeedsMoreInfo = true
+	// Check if AI is waiting for tool responses
+	hasToolActions := false
+	for _, action := range result.Actions {
+		switch action.Type {
+		case "view", "str_replace", "create", "insert", "undo_edit":
+			hasToolActions = true
+		}
 	}
+
+	result.NeedsMoreInfo = hasToolActions
 
 	return result, nil
 }
@@ -350,107 +362,223 @@ func (ac *AnthropicClient) processToolUse(block anthropic.ToolUseBlock, workCtx 
 
 	action.Data = inputMap
 
-	// Special processing for create_solution
-	if block.Name == "create_solution" {
-		solution, err := ac.parseSolutionFromInput(inputMap, workCtx)
-		if err != nil {
-			return nil, fmt.Errorf("failed to parse solution: %w", err)
+	// Special processing for text editor commands
+	if block.Name == "str_replace_based_edit_tool" {
+		// Extract the command type from the input
+		if command, ok := inputMap["command"].(string); ok {
+			action.Type = command
 		}
-		action.Data["solution"] = solution
 	}
 
 	return action, nil
 }
 
-// parseSolutionFromInput parses solution data from tool input
-func (ac *AnthropicClient) parseSolutionFromInput(input map[string]interface{}, workCtx *WorkContext) (*Solution, error) {
-	solution := &Solution{
-		Files: make(map[string]FileChange),
+// ExecuteTextEditorCommand executes a text editor command and returns the result
+func (ac *AnthropicClient) ExecuteTextEditorCommand(ctx context.Context, action Action, fileSystem *GitHubFileSystem) (string, error) {
+	command := action.Type
+	_, ok := action.Data["path"].(string)
+	if !ok {
+		return "", fmt.Errorf("no path specified for command %s", command)
 	}
 
-	// Extract fields
-	if branch, ok := input["branch"].(string); ok {
-		solution.Branch = branch
-	} else if !workCtx.IsInitialSolution && workCtx.PullRequest != nil && workCtx.PullRequest.Head != nil {
-		solution.Branch = *workCtx.PullRequest.Head.Ref
+	switch command {
+	case "view":
+		return ac.executeViewCommand(action, fileSystem)
+	case "str_replace":
+		return ac.executeStrReplaceCommand(action, fileSystem)
+	case "create":
+		return ac.executeCreateCommand(action, fileSystem)
+	case "insert":
+		return ac.executeInsertCommand(action, fileSystem)
+	case "undo_edit":
+		return ac.executeUndoEditCommand(action, fileSystem)
+	default:
+		return "", fmt.Errorf("unknown text editor command: %s", command)
 	}
-
-	if commitMsg, ok := input["commit_message"].(string); ok {
-		solution.CommitMessage = commitMsg
-	} else {
-		return nil, fmt.Errorf("missing commit message")
-	}
-
-	if desc, ok := input["description"].(string); ok {
-		solution.Description = desc
-	}
-
-	// Parse files
-	if files, ok := input["files"].(map[string]interface{}); ok {
-		for path, fileData := range files {
-			if fileMap, ok := fileData.(map[string]interface{}); ok {
-				fileChange := FileChange{
-					Path: path,
-				}
-
-				if content, ok := fileMap["content"].(string); ok {
-					fileChange.Content = content
-				}
-
-				if isNew, ok := fileMap["is_new"].(bool); ok {
-					fileChange.IsNew = isNew
-				}
-
-				solution.Files[path] = fileChange
-			}
-		}
-	}
-
-	if len(solution.Files) == 0 {
-		return nil, fmt.Errorf("solution contains no files")
-	}
-
-	return solution, nil
 }
 
-// Helper methods
+// executeViewCommand handles the view command
+func (ac *AnthropicClient) executeViewCommand(action Action, fs *GitHubFileSystem) (string, error) {
+	path := action.Data["path"].(string)
 
-func (ac *AnthropicClient) buildSolutionToolProperties(isInitialSolution bool) map[string]interface{} {
-	props := map[string]interface{}{
-		"commit_message": map[string]interface{}{
-			"type":        "string",
-			"description": "Commit message for the changes",
-		},
-		"files": map[string]interface{}{
-			"type":        "object",
-			"description": "Map of file paths to their new content",
-			"additionalProperties": map[string]interface{}{
-				"type": "object",
-				"properties": map[string]interface{}{
-					"content": map[string]interface{}{
-						"type":        "string",
-						"description": "Complete file content with actual implementation code",
-					},
-					"is_new": map[string]interface{}{
-						"type":        "boolean",
-						"description": "Whether this is a new file",
-					},
-				},
-				"required": []string{"content", "is_new"},
-			},
-		},
-		"description": map[string]interface{}{
-			"type":        "string",
-			"description": "Description of the solution and what changes were made",
-		},
+	isDir, err := fs.IsDirectory(path)
+	if err != nil {
+		return "", fmt.Errorf("error checking path: %w", err)
 	}
 
-	if isInitialSolution {
-		props["branch"] = map[string]interface{}{
-			"type":        "string",
-			"description": "Name of the branch to create (e.g., fix/issue-123-description)",
+	if isDir {
+		// List directory contents
+		files, err := fs.ListDirectory(path)
+		if err != nil {
+			return "", fmt.Errorf("error listing directory: %w", err)
 		}
+
+		result := fmt.Sprintf("Directory contents of %s:\n", path)
+		for _, file := range files {
+			result += fmt.Sprintf("  %s\n", file)
+		}
+		return result, nil
 	}
 
-	return props
+	// Read file contents
+	content, err := fs.ReadFile(path)
+	if err != nil {
+		return "", fmt.Errorf("error reading file: %w", err)
+	}
+
+	// Handle view_range if specified
+	if viewRange, ok := action.Data["view_range"].([]interface{}); ok && len(viewRange) == 2 {
+		startLine := int(viewRange[0].(float64))
+		endLine := int(viewRange[1].(float64))
+
+		lines := strings.Split(content, "\n")
+		if endLine == -1 {
+			endLine = len(lines)
+		}
+
+		if startLine < 1 {
+			startLine = 1
+		}
+		if endLine > len(lines) {
+			endLine = len(lines)
+		}
+
+		var result strings.Builder
+		for i := startLine - 1; i < endLine; i++ {
+			result.WriteString(fmt.Sprintf("%d: %s\n", i+1, lines[i]))
+		}
+		return result.String(), nil
+	}
+
+	// Return full file with line numbers
+	lines := strings.Split(content, "\n")
+	var result strings.Builder
+	for i, line := range lines {
+		result.WriteString(fmt.Sprintf("%d: %s\n", i+1, line))
+	}
+	return result.String(), nil
+}
+
+// executeStrReplaceCommand handles the str_replace command
+func (ac *AnthropicClient) executeStrReplaceCommand(action Action, fs *GitHubFileSystem) (string, error) {
+	path := action.Data["path"].(string)
+	oldStr, ok := action.Data["old_str"].(string)
+	if !ok {
+		return "", fmt.Errorf("old_str not specified")
+	}
+	newStr, ok := action.Data["new_str"].(string)
+	if !ok {
+		return "", fmt.Errorf("new_str not specified")
+	}
+
+	// Read current file content
+	content, err := fs.ReadFile(path)
+	if err != nil {
+		return "", fmt.Errorf("error reading file: %w", err)
+	}
+
+	// Check if old_str exists and is unique
+	count := strings.Count(content, oldStr)
+	if count == 0 {
+		return "", fmt.Errorf("old_str not found in file")
+	}
+	if count > 1 {
+		return "", fmt.Errorf("old_str found %d times in file, must be unique", count)
+	}
+
+	// Perform replacement
+	newContent := strings.Replace(content, oldStr, newStr, 1)
+
+	// Write back to file
+	err = fs.WriteFile(path, newContent)
+	if err != nil {
+		return "", fmt.Errorf("error writing file: %w", err)
+	}
+
+	return fmt.Sprintf("Successfully replaced text in %s", path), nil
+}
+
+// executeCreateCommand handles the create command
+func (ac *AnthropicClient) executeCreateCommand(action Action, fs *GitHubFileSystem) (string, error) {
+	path := action.Data["path"].(string)
+	fileText, ok := action.Data["file_text"].(string)
+	if !ok {
+		return "", fmt.Errorf("file_text not specified")
+	}
+
+	// Check if file already exists
+	exists, err := fs.FileExists(path)
+	if err != nil {
+		return "", fmt.Errorf("error checking file existence: %w", err)
+	}
+	if exists {
+		return "", fmt.Errorf("file already exists: %s", path)
+	}
+
+	// Create the file
+	err = fs.WriteFile(path, fileText)
+	if err != nil {
+		return "", fmt.Errorf("error creating file: %w", err)
+	}
+
+	return fmt.Sprintf("Successfully created file %s", path), nil
+}
+
+// executeInsertCommand handles the insert command
+func (ac *AnthropicClient) executeInsertCommand(action Action, fs *GitHubFileSystem) (string, error) {
+	path := action.Data["path"].(string)
+	insertLine, ok := action.Data["insert_line"].(float64)
+	if !ok {
+		return "", fmt.Errorf("insert_line not specified")
+	}
+	newStr, ok := action.Data["new_str"].(string)
+	if !ok {
+		return "", fmt.Errorf("new_str not specified")
+	}
+
+	// Read current file content
+	content, err := fs.ReadFile(path)
+	if err != nil {
+		return "", fmt.Errorf("error reading file: %w", err)
+	}
+
+	lines := strings.Split(content, "\n")
+	lineNum := int(insertLine)
+
+	// Insert at the specified line
+	if lineNum < 0 || lineNum > len(lines) {
+		return "", fmt.Errorf("invalid insert_line: %d", lineNum)
+	}
+
+	// Insert the new text
+	newLines := strings.Split(newStr, "\n")
+	var result []string
+
+	if lineNum == 0 {
+		// Insert at beginning
+		result = append(newLines, lines...)
+	} else if lineNum >= len(lines) {
+		// Insert at end
+		result = append(lines, newLines...)
+	} else {
+		// Insert in middle
+		result = append(lines[:lineNum], newLines...)
+		result = append(result, lines[lineNum:]...)
+	}
+
+	newContent := strings.Join(result, "\n")
+
+	// Write back to file
+	err = fs.WriteFile(path, newContent)
+	if err != nil {
+		return "", fmt.Errorf("error writing file: %w", err)
+	}
+
+	return fmt.Sprintf("Successfully inserted text at line %d in %s", lineNum, path), nil
+}
+
+// executeUndoEditCommand handles the undo_edit command
+func (ac *AnthropicClient) executeUndoEditCommand(action Action, fs *GitHubFileSystem) (string, error) {
+	// This would require maintaining edit history - simplified implementation
+	return "", fmt.Errorf("undo_edit not implemented - please use version control instead")
 }

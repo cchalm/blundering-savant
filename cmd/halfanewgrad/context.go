@@ -82,6 +82,21 @@ type ReviewContext struct {
 	Comments    []ReviewCommentContext
 }
 
+// CodebaseInfo holds information about the repository structure
+type CodebaseInfo struct {
+	MainLanguage  string
+	FileTree      []string
+	ReadmeContent string
+	PackageInfo   map[string]string
+}
+
+// StyleGuide represents coding style information
+type StyleGuide struct {
+	Content   string
+	FilePath  string
+	RepoStyle map[string]string // language -> style patterns
+}
+
 // NewWorkContext creates a new work context
 func NewWorkContext(botUsername string) *WorkContext {
 	return &WorkContext{
@@ -223,9 +238,6 @@ func (ctx *WorkContext) buildConversationContext() string {
 		}
 	}
 
-	// Sort chronologically
-	// Note: In a real implementation, we'd attach timestamps to sort properly
-
 	return strings.Join(timeline, "\n")
 }
 
@@ -318,26 +330,39 @@ func (ctx *WorkContext) buildInstructions() string {
 	instructions.WriteString("\n\n## Your Task\n\n")
 
 	if ctx.IsInitialSolution {
-		instructions.WriteString(`Create a complete solution for this issue. Follow these guidelines:
+		instructions.WriteString(`Analyze this issue and create a complete solution. Follow these guidelines:
 
-1. Analyze the issue and any comments carefully
-2. Create a descriptive branch name following the pattern: fix/issue-NUMBER-brief-description
-3. Implement the actual solution code - do not use placeholders or TODOs
-4. Include complete, working file contents
-5. Write a clear commit message describing what was fixed
-6. Provide a comprehensive description of the changes
+1. Use the text editor tool to examine the codebase structure and understand the implementation
+2. View relevant files to understand how the code works
+3. Create a branch using create_branch with a descriptive name following the pattern: fix/issue-NUMBER-brief-description
+4. Implement the actual solution code using the text editor tools - do not use placeholders or TODOs
+5. Use str_replace for precise modifications to existing files
+6. Use create for new files when needed
+7. Use insert to add code at specific locations
+8. Create a pull request using create_pull_request with:
+   - A clear commit message describing what was fixed
+   - A descriptive PR title
+   - A comprehensive description of the changes
 
-Consider all comments and feedback provided on the issue when crafting your solution.`)
+Workflow for initial solutions:
+1. View files to understand the codebase
+2. Create branch with create_branch
+3. Make changes with text editor tools (view, str_replace, create, insert)
+4. Create pull request with create_pull_request
+
+Start by using the text editor tool to explore the repository structure and understand the codebase before creating your branch.`)
 	} else {
 		instructions.WriteString(`Update the solution based on the feedback provided. Follow these guidelines:
 
-1. Address all feedback points comprehensively
-2. Maintain the original intent of fixing the issue
-3. Write a commit message that explains what was changed based on the feedback
-4. Include a clear description of what updates were made
-5. Respond to specific comments that need responses
+1. Use the text editor tool to examine the current implementation
+2. Address all feedback points comprehensively using str_replace and other text editor commands
+3. Maintain the original intent of fixing the issue
+4. Create a pull request with create_pull_request that includes:
+   - A commit message explaining what was changed based on the feedback
+   - A clear description of what updates were made
+5. Respond to specific comments that need responses using post_comment
 
-Review all comments, reviews, and feedback carefully. Make sure to address each point raised.`)
+Review all comments, reviews, and feedback carefully. Make sure to address each point raised using the appropriate text editor commands.`)
 
 		// List specific comments needing responses
 		needsResponse := []string{}
@@ -354,10 +379,14 @@ Review all comments, reviews, and feedback carefully. Make sure to address each 
 
 	instructions.WriteString(`
 
-You must use the create_solution tool to provide your complete implementation. Ensure that:
-- All file contents are complete and functional
-- The solution directly addresses the issue and all feedback
-- At least one file is modified or created`)
+Remember to:
+- Use the text editor tool to understand the codebase before making changes
+- Create a branch first (for initial solutions) before making any file changes
+- Make precise edits with str_replace (old_str must match exactly)
+- Include enough context in old_str to make matches unique
+- Create new files only when necessary
+- Follow the repository's coding standards and style guide
+- Always commit your changes with create_pull_request when ready`)
 
 	return instructions.String()
 }
@@ -412,7 +441,7 @@ func (ctx *WorkContext) shouldRespondToComment(comment CommentContext) bool {
 	}
 
 	// Respond to comments with certain keywords
-	keywords := []string{"please", "could you", "can you", "would you", "fix", "change", "update"}
+	keywords := []string{"please", "could you", "can you", "would you", "fix", "change", "update", "implement"}
 	lowerBody := strings.ToLower(comment.Body)
 	for _, keyword := range keywords {
 		if strings.Contains(lowerBody, keyword) {
@@ -434,4 +463,126 @@ func (ctx *WorkContext) GetCommentResponses() map[string]string {
 	}
 
 	return responses
+}
+
+// AddConversationTurn adds a turn to the conversation history
+func (ctx *WorkContext) AddConversationTurn(turnType, content string) {
+	turn := ConversationTurn{
+		Timestamp: time.Now(),
+		Type:      turnType,
+		Content:   content,
+	}
+	ctx.ConversationHistory = append(ctx.ConversationHistory, turn)
+}
+
+// GetRecentConversationHistory returns the most recent conversation turns
+func (ctx *WorkContext) GetRecentConversationHistory(limit int) []ConversationTurn {
+	if len(ctx.ConversationHistory) <= limit {
+		return ctx.ConversationHistory
+	}
+	return ctx.ConversationHistory[len(ctx.ConversationHistory)-limit:]
+}
+
+// HasUnaddressedFeedback checks if there are unaddressed change requests or comments
+func (ctx *WorkContext) HasUnaddressedFeedback() bool {
+	// Check for change requests
+	for _, review := range ctx.PRReviews {
+		if review.State == "CHANGES_REQUESTED" && review.Author != ctx.BotUsername {
+			return true
+		}
+	}
+
+	// Check for comments needing responses
+	return len(ctx.NeedsToRespond) > 0
+}
+
+// GetMainLanguageInfo returns information about the main programming language
+func (ctx *WorkContext) GetMainLanguageInfo() (string, map[string]string) {
+	if ctx.CodebaseInfo == nil {
+		return "unknown", make(map[string]string)
+	}
+
+	lang := ctx.CodebaseInfo.MainLanguage
+	if lang == "" {
+		lang = "unknown"
+	}
+
+	styleInfo := make(map[string]string)
+	if ctx.StyleGuide != nil && ctx.StyleGuide.RepoStyle != nil {
+		if info, exists := ctx.StyleGuide.RepoStyle[strings.ToLower(lang)]; exists {
+			styleInfo[lang] = info
+		}
+	}
+
+	return lang, styleInfo
+}
+
+// GetRepositoryStructure returns a formatted view of the repository structure
+func (ctx *WorkContext) GetRepositoryStructure() string {
+	if ctx.CodebaseInfo == nil || len(ctx.CodebaseInfo.FileTree) == 0 {
+		return "Repository structure not available"
+	}
+
+	var structure strings.Builder
+	structure.WriteString("Repository Structure:\n")
+
+	for i, file := range ctx.CodebaseInfo.FileTree {
+		if i >= 30 { // Limit to first 30 files
+			structure.WriteString("  ... (and more files)\n")
+			break
+		}
+		structure.WriteString(fmt.Sprintf("  %s\n", file))
+	}
+
+	return structure.String()
+}
+
+// Utility functions
+
+// truncateString truncates a string to a maximum length
+func truncateString(s string, maxLen int) string {
+	if len(s) <= maxLen {
+		return s
+	}
+	return s[:maxLen] + "..."
+}
+
+// sanitizeForPrompt removes or replaces characters that might interfere with prompt processing
+func sanitizeForPrompt(s string) string {
+	// Remove null bytes and other control characters
+	s = strings.ReplaceAll(s, "\x00", "")
+	s = strings.ReplaceAll(s, "\r\n", "\n")
+	s = strings.ReplaceAll(s, "\r", "\n")
+
+	// Limit very long lines
+	lines := strings.Split(s, "\n")
+	for i, line := range lines {
+		if len(line) > 500 {
+			lines[i] = line[:500] + "..."
+		}
+	}
+
+	return strings.Join(lines, "\n")
+}
+
+// extractKeywords extracts potential keywords from text for analysis
+func extractKeywords(text string) []string {
+	// Simple keyword extraction - in production this could be more sophisticated
+	words := strings.Fields(strings.ToLower(text))
+	keywords := make(map[string]bool)
+
+	for _, word := range words {
+		// Remove punctuation and filter by length
+		word = strings.Trim(word, ".,!?;:\"'()[]{}*")
+		if len(word) > 3 && len(word) < 20 {
+			keywords[word] = true
+		}
+	}
+
+	var result []string
+	for keyword := range keywords {
+		result = append(result, keyword)
+	}
+
+	return result
 }
