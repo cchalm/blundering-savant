@@ -54,31 +54,6 @@ func NewGitHubFileSystem(client *github.Client, owner, repo, branch string) (*Gi
 	return gfs, nil
 }
 
-// CreateBranch creates a new branch from the default branch
-func CreateBranch(client *github.Client, owner, repo, newBranch, baseBranch string) (*GitHubFileSystem, error) {
-	ctx := context.Background()
-
-	// Get the base branch reference
-	baseRef, _, err := client.Git.GetRef(ctx, owner, repo, fmt.Sprintf("refs/heads/%s", baseBranch))
-	if err != nil {
-		return nil, fmt.Errorf("failed to get base branch ref: %w", err)
-	}
-
-	// Create new branch reference
-	newRef := &github.Reference{
-		Ref:    github.Ptr(fmt.Sprintf("refs/heads/%s", newBranch)),
-		Object: &github.GitObject{SHA: baseRef.Object.SHA},
-	}
-
-	_, _, err = client.Git.CreateRef(ctx, owner, repo, newRef)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create branch: %w", err)
-	}
-
-	// Return file system for the new branch
-	return NewGitHubFileSystem(client, owner, repo, newBranch)
-}
-
 // ReadFile reads a file from the current state (working tree or GitHub)
 func (gfs *GitHubFileSystem) ReadFile(path string) (string, error) {
 	// Check if file is deleted

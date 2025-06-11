@@ -112,11 +112,7 @@ type githubFileSystemFactory struct {
 	githubClient *github.Client
 }
 
-func (gfsf *githubFileSystemFactory) NewFileSystemForNewIssue(owner, repo, baseBranch, newBranch string) (*GitHubFileSystem, error) {
-	return CreateBranch(gfsf.githubClient, owner, repo, newBranch, baseBranch)
-}
-
-func (gfsf *githubFileSystemFactory) NewFileSystemForExistingPR(owner, repo, branch string) (*GitHubFileSystem, error) {
+func (gfsf *githubFileSystemFactory) NewFileSystem(owner, repo, branch string) (*GitHubFileSystem, error) {
 	return NewGitHubFileSystem(gfsf.githubClient, owner, repo, branch)
 }
 
@@ -213,11 +209,14 @@ func (vd *VirtualDeveloper) processNewIssue(ctx context.Context, owner, repo str
 	}
 
 	// Create branch
-	branchName, err := vd.createWorkBranch(ctx, owner, repo, issue)
-	// TODO create filesystem
+	branch, err := vd.createWorkBranch(ctx, owner, repo, issue)
+	if err != nil {
+		vd.removeLabel(ctx, owner, repo, *issue.Number, LabelInProgress)
+		return fmt.Errorf("failed to create branch: %w", err)
+	}
 
 	// Let AI decide what to do with text editor tool support
-	err = vd.processWithAI(ctx, workCtx, owner, repo)
+	err = vd.processWithAI(ctx, workCtx, owner, repo, *branch)
 	if err != nil {
 		vd.removeLabel(ctx, owner, repo, *issue.Number, LabelInProgress)
 		return fmt.Errorf("failed to process with AI: %w", err)
@@ -246,8 +245,7 @@ func (vd *VirtualDeveloper) createWorkBranch(ctx context.Context, owner, repo st
 		branchName = fmt.Sprintf("fix/issue-%d", *issue.Number)
 	}
 
-	// TODO (check CreateBranch in fs.go)
-	createBranch()
+	createBranch(vd.githubClient, owner, repo, baseBranch, branchName)
 
 	return &branchName, nil
 }
@@ -273,27 +271,41 @@ func sanitizeBranchName(title string) string {
 	return title
 }
 
+// CreateBranch creates a new branch from the default branch
+func createBranch(client *github.Client, owner, repo, baseBranch, newBranch string) error {
+	ctx := context.Background()
+
+	// Get the base branch reference
+	baseRef, _, err := client.Git.GetRef(ctx, owner, repo, fmt.Sprintf("refs/heads/%s", baseBranch))
+	if err != nil {
+		return fmt.Errorf("failed to get base branch ref: %w", err)
+	}
+
+	// Create new branch reference
+	newRef := &github.Reference{
+		Ref:    github.Ptr(fmt.Sprintf("refs/heads/%s", newBranch)),
+		Object: &github.GitObject{SHA: baseRef.Object.SHA},
+	}
+
+	_, _, err = client.Git.CreateRef(ctx, owner, repo, newRef)
+	if err != nil {
+		return fmt.Errorf("failed to create branch: %w", err)
+	}
+
+	return nil
+}
+
 // processWithAI handles the AI interaction with text editor tool support
-func (vd *VirtualDeveloper) processWithAI(ctx context.Context, workCtx *WorkContext, owner, repo string) error {
+func (vd *VirtualDeveloper) processWithAI(ctx context.Context, workCtx *WorkContext, owner, repo, branch string) error {
 	maxIterations := 15
 
 	// Create appropriate file system
-	var fs *GitHubFileSystem
-	var err error
-
-	if workCtx.IsInitialSolution {
-		// For new issues, we'll start without a file system and create it when branch is created
-		fs = nil
-	} else {
-		// For existing PRs, work on the existing branch
-		if workCtx.PullRequest == nil || workCtx.PullRequest.Head == nil || workCtx.PullRequest.Head.Ref == nil {
-			return fmt.Errorf("invalid PR head reference")
-		}
-
-		fs, err = vd.fileSystemFactory.NewFileSystemForExistingPR(owner, repo, *workCtx.PullRequest.Head.Ref)
-		if err != nil {
-			return fmt.Errorf("failed to create file system: %w", err)
-		}
+	if workCtx.PullRequest == nil || workCtx.PullRequest.Head == nil || workCtx.PullRequest.Head.Ref == nil {
+		return fmt.Errorf("invalid PR head reference")
+	}
+	fs, err := vd.fileSystemFactory.NewFileSystem(owner, repo, *workCtx.PullRequest.Head.Ref) // TODO rename this function
+	if err != nil {
+		return fmt.Errorf("failed to create file system: %w", err)
 	}
 
 	// Create tool context
@@ -458,7 +470,7 @@ func (vd *VirtualDeveloper) processExistingPR(ctx context.Context, owner, repo s
 	log.Printf("Processing PR #%d", prNumber)
 
 	// Let AI decide what to do with text editor support
-	err = vd.processWithAI(ctx, workCtx, owner, repo)
+	err = vd.processWithAI(ctx, workCtx, owner, repo, *pr.Head.Ref) // TODO check if pr.Head.Ref is correct
 	if err != nil {
 		// Post sanitized error comment
 		vd.postIssueComment(ctx, owner, repo, prNumber,
@@ -512,7 +524,7 @@ func (vd *VirtualDeveloper) processIssuesInDiscussion(ctx context.Context) {
 		log.Printf("Continuing discussion on issue #%d", *issue.Number)
 
 		// Let AI continue the discussion
-		err = vd.processWithAI(ctx, workCtx, owner, repo)
+		err = vd.processWithAI(ctx, workCtx, owner, repo, "") // TODO okay to be empty branch name?
 		if err != nil {
 			log.Printf("Error processing issue #%d: %v", *issue.Number, err)
 			continue
