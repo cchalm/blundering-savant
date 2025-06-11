@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/anthropics/anthropic-sdk-go"
+	"github.com/anthropics/anthropic-sdk-go/option"
 	"github.com/google/go-github/v72/github"
 	"github.com/joho/godotenv"
 	"golang.org/x/oauth2"
@@ -27,7 +28,7 @@ type Config struct {
 type VirtualDeveloper struct {
 	config            *Config
 	githubClient      *github.Client
-	anthropicClient   *AnthropicClient
+	anthropicClient   anthropic.Client
 	toolRegistry      *ToolRegistry
 	fileSystemFactory githubFileSystemFactory
 }
@@ -98,11 +99,12 @@ func NewVirtualDeveloper(config *Config) *VirtualDeveloper {
 	)
 	tc := oauth2.NewClient(ctx, ts)
 	githubClient := github.NewClient(tc)
+	anthropicClient := anthropic.NewClient(option.WithAPIKey(config.AnthropicAPIKey))
 
 	return &VirtualDeveloper{
 		config:            config,
 		githubClient:      githubClient,
-		anthropicClient:   NewAnthropicClient(config.AnthropicAPIKey),
+		anthropicClient:   anthropicClient,
 		toolRegistry:      NewToolRegistry(),
 		fileSystemFactory: githubFileSystemFactory{githubClient: githubClient},
 	}
@@ -320,87 +322,49 @@ func (vd *VirtualDeveloper) processWithAI(ctx context.Context, workCtx *WorkCont
 		GithubClient: vd.githubClient,
 	}
 
-	// Build conversation history
-	var messages []anthropic.MessageParam
+	// Initialize conversation
+	var conversation = vd.initConversation()
+
+	response, err := conversation.SendMessage(ctx, anthropic.NewTextBlock(workCtx.BuildPrompt()))
+	if err != nil {
+		return fmt.Errorf("failed to send initial message to AI: %w", err)
+	}
 
 	for i := 0; i < maxIterations; i++ {
-		log.Printf("AI interaction iteration %d", i+1)
+		log.Printf("Processing AI interaction, iteration: %d", i+1)
 
-		var result *InteractionResult
-
-		if i == 0 {
-			// First interaction - use ProcessWorkItem
-			result, err = vd.anthropicClient.ProcessWorkItem(ctx, workCtx, vd.toolRegistry)
-			if err != nil {
-				return fmt.Errorf("AI processing failed: %w", err)
-			}
-		} else {
-			// Continuation - use the message history
-			systemPrompt := `Continue working on the task. You have access to the text editor tools and other actions.
-
-If you've made file changes and are ready to create a pull request, use the create_pull_request tool.
-If you need to make more changes, continue using the text editor tools.
-If you want to engage in discussion, use post_comment.`
-
-			response, err := vd.anthropicClient.CreateMessageWithSystemPrompt(ctx, messages, systemPrompt)
-			if err != nil {
-				return fmt.Errorf("failed to continue conversation: %w", err)
-			}
-
-			// Process the response
-			result, err = vd.anthropicClient.processInteractionResponse(ctx, response, workCtx)
-			if err != nil {
-				return fmt.Errorf("failed to process continuation response: %w", err)
-			}
-		}
-
-		needsContinuation := false
-		var toolResults []anthropic.ContentBlockParamUnion
-
-		// Process tool uses and collect tool results
-		for _, toolUse := range result.ToolUses {
-			log.Printf("Processing tool use: %s", toolUse.Name)
-
-			// Process the tool use with the registry
-			toolResult, err := vd.toolRegistry.ProcessToolUse(toolUse, toolCtx)
-			if err != nil {
-				return fmt.Errorf("failed to process tool use: %w", err)
-			}
-
-			toolResults = append(toolResults, anthropic.ContentBlockParamUnion{
-				OfToolResult: toolResult,
-			})
-
-			// Check if this tool requires continuation
-			switch toolUse.Type {
-			case "view", "str_replace", "create", "insert", "undo_edit", "create_branch":
-				needsContinuation = true
-			}
-		}
-
-		// If we have tool results, we need to continue the conversation
-		if len(toolResults) > 0 {
-			// First, add the assistant's message with tool uses to the conversation
-			if i == 0 {
-				// For the first iteration, we need to reconstruct the assistant message from the result
-				assistantContent := []anthropic.ContentBlockParamUnion{}
-				for _, toolUse := range result.ToolUses {
-					assistantContent = append(assistantContent, anthropic.ContentBlockParamUnion{OfToolUse: github.Ptr(toolUse.ToParam())})
-				}
-				if len(assistantContent) > 0 {
-					assistantMessage := anthropic.NewAssistantMessage(assistantContent...)
-					messages = append(messages, assistantMessage)
+		switch response.StopReason {
+		case anthropic.StopReasonToolUse:
+			// Process tool uses and collect tool results
+			toolUses := []anthropic.ToolUseBlock{}
+			for _, content := range response.Content {
+				switch block := content.AsAny().(type) {
+				case anthropic.ToolUseBlock:
+					toolUses = append(toolUses, block)
 				}
 			}
 
-			// Then add the user message with tool results
-			userMessage := anthropic.NewUserMessage(toolResults...)
-			messages = append(messages, userMessage)
+			toolResults := []anthropic.ContentBlockParamUnion{}
+			for _, toolUse := range toolUses {
+				log.Printf("    Processing tool use: %s", toolUse.Name)
 
-			needsContinuation = true
-		}
-
-		if !needsContinuation {
+				// Process the tool use with the registry
+				toolResult, err := vd.toolRegistry.ProcessToolUse(toolUse, toolCtx)
+				if err != nil {
+					return fmt.Errorf("failed to process tool use: %w", err)
+				}
+				toolResults = append(toolResults, anthropic.ContentBlockParamUnion{OfToolResult: toolResult})
+			}
+			response, err = conversation.SendMessage(ctx, toolResults...)
+			if err != nil {
+				return fmt.Errorf("failed to send tool results to AI: %w", err)
+			}
+		case anthropic.StopReasonMaxTokens:
+			return fmt.Errorf("exceeded max tokens")
+		case anthropic.StopReasonRefusal:
+			return fmt.Errorf("the AI refused to generate a response due to safety concerns")
+		case anthropic.StopReasonEndTurn:
+			log.Print("AI interaction concluded")
 			return nil
 		}
 	}
@@ -955,4 +919,59 @@ func extractIssueNumber(body string) int {
 		}
 	}
 	return 0
+}
+
+func (vd *VirtualDeveloper) initConversation() *ClaudeConversation {
+	model := anthropic.ModelClaudeSonnet4_0
+	var maxTokens int64 = 4096
+
+	systemPrompt := `You are a highly skilled software developer working as a virtual assistant on GitHub.
+
+Your responsibilities include:
+1. Analyzing GitHub issues and pull requests
+2. Engaging in technical discussions professionally
+3. Creating high-quality code solutions when appropriate
+4. Following repository coding standards and style guides
+5. Providing guidance on best practices
+
+When interacting:
+- Ask clarifying questions when requirements are unclear
+- Push back professionally on suggestions that violate best practices
+- Explain your reasoning when disagreeing with suggestions
+- Only create solutions when you have enough information
+- Engage in discussion threads appropriately
+- Add reactions to acknowledge you've seen comments
+
+You have access to several tools:
+- str_replace_based_edit_tool: A text editor for viewing, creating, and editing files
+  - view: Examine file contents or list directory contents
+  - str_replace: Replace specific text in files with new text
+  - create: Create new files with specified content
+  - insert: Insert text at specific line numbers
+- create_pull_request: Create a pull request from the current branch
+- post_comment: Post comments to engage in discussion
+- add_reaction: React to existing comments
+- request_review: Ask specific users for review or input
+
+The text editor tool is your primary way to examine and modify code. Use it to:
+- View files to understand the codebase structure
+- Make precise edits using str_replace
+- Create new files when needed
+- Insert code at specific locations
+
+When working on a new issue:
+1. First explore the codebase with the text editor
+2. Make your changes using the text editor tools
+3. Create a pull request with create_pull_request
+
+When using str_replace:
+- The old_str must match EXACTLY, including whitespace
+- Include enough context to make the match unique
+- Use line numbers from view output for reference
+
+Choose the appropriate tools based on the situation. You don't always need to create a solution immediately - sometimes discussion is more valuable.`
+
+	tools := vd.toolRegistry.GetAllToolParams()
+
+	return NewClaudeConversation(vd.anthropicClient, model, maxTokens, systemPrompt, tools)
 }
