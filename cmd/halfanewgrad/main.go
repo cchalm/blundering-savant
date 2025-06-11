@@ -188,6 +188,7 @@ func (vd *VirtualDeveloper) processIssuesWithoutPRs(ctx context.Context) {
 	}
 }
 
+// TODO look into merging parts of processNewIssues, processExistingPR, and processIssuesInDiscussion
 // processNewIssue processes a new issue with AI interaction
 func (vd *VirtualDeveloper) processNewIssue(ctx context.Context, owner, repo string, issue *github.Issue) error {
 	// Add in-progress label
@@ -295,17 +296,19 @@ func createBranch(client *github.Client, owner, repo, baseBranch, newBranch stri
 	return nil
 }
 
+// TODO look into merging owner, repo, and branch into workCtx
 // processWithAI handles the AI interaction with text editor tool support
 func (vd *VirtualDeveloper) processWithAI(ctx context.Context, workCtx *WorkContext, owner, repo, branch string) error {
 	maxIterations := 15
 
-	// Create appropriate file system
-	if workCtx.PullRequest == nil || workCtx.PullRequest.Head == nil || workCtx.PullRequest.Head.Ref == nil {
-		return fmt.Errorf("invalid PR head reference")
-	}
-	fs, err := vd.fileSystemFactory.NewFileSystem(owner, repo, *workCtx.PullRequest.Head.Ref) // TODO rename this function
-	if err != nil {
-		return fmt.Errorf("failed to create file system: %w", err)
+	// fs may be nil if no branch name is given, e.g. if the issue is currently in the requirements clarification phase
+	var err error
+	var fs *GitHubFileSystem
+	if branch != "" {
+		fs, err = vd.fileSystemFactory.NewFileSystem(owner, repo, branch)
+		if err != nil {
+			return fmt.Errorf("failed to create file system: %w", err)
+		}
 	}
 
 	// Create tool context
@@ -470,7 +473,7 @@ func (vd *VirtualDeveloper) processExistingPR(ctx context.Context, owner, repo s
 	log.Printf("Processing PR #%d", prNumber)
 
 	// Let AI decide what to do with text editor support
-	err = vd.processWithAI(ctx, workCtx, owner, repo, *pr.Head.Ref) // TODO check if pr.Head.Ref is correct
+	err = vd.processWithAI(ctx, workCtx, owner, repo, *pr.Head.Ref)
 	if err != nil {
 		// Post sanitized error comment
 		vd.postIssueComment(ctx, owner, repo, prNumber,
@@ -524,7 +527,7 @@ func (vd *VirtualDeveloper) processIssuesInDiscussion(ctx context.Context) {
 		log.Printf("Continuing discussion on issue #%d", *issue.Number)
 
 		// Let AI continue the discussion
-		err = vd.processWithAI(ctx, workCtx, owner, repo, "") // TODO okay to be empty branch name?
+		err = vd.processWithAI(ctx, workCtx, owner, repo, "")
 		if err != nil {
 			log.Printf("Error processing issue #%d: %v", *issue.Number, err)
 			continue
@@ -935,19 +938,6 @@ func (vd *VirtualDeveloper) getAllPRComments(ctx context.Context, owner, repo st
 
 // Utility functions
 
-// formatFileChanges formats file changes for PR description
-func (vd *VirtualDeveloper) formatFileChanges(files map[string]FileChange) string {
-	var changes []string
-	for path, change := range files {
-		action := "Modified"
-		if change.IsNew {
-			action = "Added"
-		}
-		changes = append(changes, fmt.Sprintf("- %s `%s`", action, path))
-	}
-	return strings.Join(changes, "\n")
-}
-
 // extractIssueNumber extracts issue number from PR body
 func extractIssueNumber(body string) int {
 	lines := strings.Split(body, "\n")
@@ -965,21 +955,4 @@ func extractIssueNumber(body string) int {
 		}
 	}
 	return 0
-}
-
-// getIssueDescription safely gets issue description
-func getIssueDescription(issue *github.Issue) string {
-	if issue == nil {
-		return "No issue provided"
-	}
-
-	description := ""
-	if issue.Title != nil {
-		description += "Title: " + *issue.Title + "\n"
-	}
-	if issue.Body != nil {
-		description += "Description: " + *issue.Body
-	}
-
-	return description
 }

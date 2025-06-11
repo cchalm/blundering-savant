@@ -8,6 +8,61 @@ import (
 	"github.com/anthropics/anthropic-sdk-go/option"
 )
 
+type ClaudeConversation struct {
+	client anthropic.Client
+
+	model        anthropic.Model
+	maxTokens    int64
+	systemPrompt string
+	tools        []anthropic.ToolParam
+	messages     []anthropic.MessageParam
+}
+
+func NewClaudeConversation(apiKey string, model anthropic.Model, maxTokens int64, systemPrompt string, tools []anthropic.ToolParam) *ClaudeConversation {
+	client := anthropic.NewClient(
+		option.WithAPIKey(apiKey),
+	)
+	return &ClaudeConversation{
+		client: client,
+
+		model:        model,
+		maxTokens:    maxTokens,
+		systemPrompt: systemPrompt,
+		tools:        tools,
+	}
+}
+
+// SendMessage sends a user message with the given content and returns Claude's response
+func (cc *ClaudeConversation) SendMessage(ctx context.Context, messageContent []anthropic.ContentBlockParamUnion) (*anthropic.Message, error) {
+	params := anthropic.MessageNewParams{
+		Model:     anthropic.ModelClaudeSonnet4_0,
+		MaxTokens: 4096,
+		System: []anthropic.TextBlockParam{
+			{Text: cc.systemPrompt},
+		},
+		Messages: []anthropic.MessageParam{
+			anthropic.NewUserMessage(messageContent...),
+		},
+	}
+
+	toolsParam := []anthropic.ToolUnionParam{}
+	for i, tool := range cc.tools {
+		toolsParam[i] = anthropic.ToolUnionParam{
+			OfTool: &tool,
+		}
+	}
+	params.Tools = toolsParam
+
+	message, err := cc.client.Messages.New(ctx, params)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create message: %w", err)
+	}
+	// Append the generated message to the conversation for continuation
+	cc.messages = append(cc.messages, message.ToParam())
+
+	return message, nil
+}
+
 // AnthropicClient wraps the official Anthropic SDK client
 type AnthropicClient struct {
 	client anthropic.Client
