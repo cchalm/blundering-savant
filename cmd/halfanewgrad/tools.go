@@ -255,75 +255,6 @@ func (t *TextEditorTool) executeInsert(input *TextEditorInput, fs *GitHubFileSys
 	return fmt.Sprintf("Successfully inserted text at line %d in %s", lineNum, input.Path), nil
 }
 
-// CreateBranchTool implements the create_branch tool
-type CreateBranchTool struct {
-	BaseTool
-}
-
-// CreateBranchInput represents the input for create_branch
-type CreateBranchInput struct {
-	BranchName string `json:"branch_name"`
-}
-
-// NewCreateBranchTool creates a new create branch tool
-func NewCreateBranchTool() *CreateBranchTool {
-	return &CreateBranchTool{
-		BaseTool: BaseTool{Name: "create_branch"},
-	}
-}
-
-// GetToolParam returns the tool parameter definition
-func (t *CreateBranchTool) GetToolParam() anthropic.ToolParam {
-	return anthropic.ToolParam{
-		Name:        t.Name,
-		Description: anthropic.String("Create a new branch for working on an issue (only for initial solutions)"),
-		InputSchema: anthropic.ToolInputSchemaParam{
-			Properties: map[string]any{
-				"branch_name": map[string]any{
-					"type":        "string",
-					"description": "Name of the branch to create (e.g., fix/issue-123-description)",
-				},
-			},
-		},
-	}
-}
-
-// ParseToolUse parses the tool use block
-func (t *CreateBranchTool) ParseToolUse(block anthropic.ToolUseBlock) (*CreateBranchInput, error) {
-	if block.Name != t.Name {
-		return nil, fmt.Errorf("tool use block is for %s, not %s", block.Name, t.Name)
-	}
-
-	var input CreateBranchInput
-	if err := parseInputJSON(block, &input); err != nil {
-		return nil, err
-	}
-	return &input, nil
-}
-
-// Run executes the create branch command
-func (t *CreateBranchTool) Run(block anthropic.ToolUseBlock, ctx *ToolContext) (*string, error) {
-	input, err := t.ParseToolUse(block)
-	if err != nil {
-		return nil, fmt.Errorf("Error parsing input: %v", err)
-	}
-
-	if !ctx.WorkContext.IsInitialSolution {
-		return nil, fmt.Errorf("Error: Branch creation is only allowed for initial solutions")
-	}
-
-	if ctx.FileSystem != nil {
-		return nil, fmt.Errorf("Error: Branch already exists")
-	}
-
-	if input.BranchName == "" {
-		return nil, fmt.Errorf("Error: branch_name is required")
-	}
-
-	result := fmt.Sprintf("Branch '%s' ready to be created", input.BranchName)
-	return &result, nil
-}
-
 // CreatePullRequestTool implements the create_pull_request tool
 type CreatePullRequestTool struct {
 	BaseTool
@@ -755,7 +686,6 @@ func NewToolRegistry() *ToolRegistry {
 
 	// Register all tools
 	registry.Register(NewTextEditorTool())
-	registry.Register(NewCreateBranchTool())
 	registry.Register(NewCreatePullRequestTool())
 	registry.Register(NewPostCommentTool())
 	registry.Register(NewAddReactionTool())

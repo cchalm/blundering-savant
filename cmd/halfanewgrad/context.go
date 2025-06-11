@@ -335,20 +335,18 @@ func (ctx *WorkContext) buildInstructions() string {
 1. Use the text editor tool to examine the codebase structure and understand the implementation
 2. View relevant files to understand how the code works
 3. If the requirements are unclear, do not guess. Comment on the issue to ask clarifying questions, and then stop. Do not make code changes if requirements are unclear.
-4. If the requirements are clear, create a branch using create_branch with a descriptive name following the pattern: fix/issue-NUMBER-brief-description
-5. Implement the actual solution code using the text editor tools - do not use placeholders or TODOs
-6. Use str_replace for precise modifications to existing files
-7. Use create for new files when needed
-8. Use insert to add code at specific locations
-9. Create a pull request using create_pull_request with:
+4. If the requirements are clear, implement the actual solution code using the text editor tools - do not use placeholders or TODOs
+    - Use str_replace for precise modifications to existing files
+    - Use create for new files when needed
+    - Use insert to add code at specific locations
+8. Create a pull request using create_pull_request with:
    - A clear commit message describing what was fixed
    - A descriptive PR title
    - A comprehensive description of the changes
 
 Workflow for initial solutions:
 1. View files to understand the codebase
-2. Ask clarifying questions and then stop (optional)
-2. Create branch with create_branch
+2. Ask clarifying questions and then skip the remaining steps (optional)
 3. Make changes with text editor tools (view, str_replace, create, insert)
 4. Create pull request with create_pull_request
 

@@ -97,24 +97,6 @@ Choose the appropriate tools based on the situation. You don't always need to cr
 	// Build prompt from work context
 	prompt := workCtx.BuildPrompt()
 
-	// Add instructions about current state
-	if workCtx.IsInitialSolution && workCtx.Issue != nil {
-		prompt += "\n\nThis is a new issue. Analyze it carefully and decide whether to:\n"
-		prompt += "1. Ask clarifying questions if requirements are unclear\n"
-		prompt += "2. Use the text editor tool to examine the codebase and understand the structure\n"
-		prompt += "3. Create a branch for your work using create_branch\n"
-		prompt += "4. Make your changes using the text editor tools\n"
-		prompt += "5. Create a pull request using create_pull_request\n"
-		prompt += "6. Discuss approach or concerns before implementing\n\n"
-		prompt += "Start by using the text editor tool to view key files and understand the codebase structure."
-	} else if len(workCtx.NeedsToRespond) > 0 {
-		prompt += "\n\nThere are comments that may need your response. Consider whether to:\n"
-		prompt += "1. Answer questions or provide clarifications\n"
-		prompt += "2. Use the text editor tool to examine files and implement requested changes\n"
-		prompt += "3. Explain why certain suggestions might not be appropriate\n"
-		prompt += "4. Ask for more information"
-	}
-
 	// Create message with tools
 	message, err := ac.CreateMessage(ctx, prompt, tools, systemPrompt)
 	if err != nil {

@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"log"
 	"os"
@@ -213,6 +212,10 @@ func (vd *VirtualDeveloper) processNewIssue(ctx context.Context, owner, repo str
 		return fmt.Errorf("failed to build work context: %w", err)
 	}
 
+	// Create branch
+	branchName, err := vd.createWorkBranch(ctx, owner, repo, issue)
+	// TODO create filesystem
+
 	// Let AI decide what to do with text editor tool support
 	err = vd.processWithAI(ctx, workCtx, owner, repo)
 	if err != nil {
@@ -221,6 +224,53 @@ func (vd *VirtualDeveloper) processNewIssue(ctx context.Context, owner, repo str
 	}
 
 	return nil
+}
+
+// createWorkBranch creates a branch that the bot will make changes in while working on the given issue. It returns the
+// name of the branch
+func (vd *VirtualDeveloper) createWorkBranch(ctx context.Context, owner, repo string, issue *github.Issue) (*string, error) {
+	var baseBranch string
+	if repoInfo, _, err := vd.githubClient.Repositories.Get(ctx, owner, repo); err == nil && repoInfo.DefaultBranch != nil {
+		baseBranch = *repoInfo.DefaultBranch
+	} else {
+		// Fall back to a reasonable default
+		baseBranch = "main"
+	}
+
+	// Create a descriptive branch name
+	var branchName string
+	if issue.Title != nil {
+		sanitizedTitle := sanitizeBranchName(*issue.Title)
+		branchName = fmt.Sprintf("fix/issue-%d-%s", *issue.Number, sanitizedTitle)
+	} else {
+		branchName = fmt.Sprintf("fix/issue-%d", *issue.Number)
+	}
+
+	// TODO (check CreateBranch in fs.go)
+	createBranch()
+
+	return &branchName, nil
+}
+
+func sanitizeBranchName(title string) string {
+	// Convert to lowercase and replace invalid characters
+	title = strings.ToLower(title)
+	title = strings.ReplaceAll(title, " ", "-")
+	title = strings.ReplaceAll(title, "_", "-")
+
+	// Remove invalid characters for git branch names
+	invalidChars := []string{"~", "^", ":", "?", "*", "[", "]", "\\", "..", "@{", "/.", "//"}
+	for _, char := range invalidChars {
+		title = strings.ReplaceAll(title, char, "")
+	}
+
+	// Limit length and clean up
+	if len(title) > 50 {
+		title = title[:50]
+	}
+	title = strings.Trim(title, "-.")
+
+	return title
 }
 
 // processWithAI handles the AI interaction with text editor tool support
@@ -295,33 +345,6 @@ If you want to engage in discussion, use post_comment.`
 		// Process tool uses and collect tool results
 		for _, toolUse := range result.ToolUses {
 			log.Printf("Processing tool use: %s", toolUse.Name)
-
-			// Special handling for create_branch to update file system
-			if toolUse.Type == "create_branch" {
-				if fs != nil {
-					return fmt.Errorf("tried to create branch when filesystem has already been initialized")
-				}
-				var data map[string]any
-				err := json.Unmarshal(toolUse.Input, &data)
-				if err != nil {
-					return fmt.Errorf("failed to unmarshall 'create_branch' tool input: %w", err)
-				}
-				branchName, ok := data["branch_name"].(string)
-				if !ok {
-					return fmt.Errorf("expected string type for 'create_branch' tool input's 'branch_name' field, found: %T", data["branch_name"])
-				}
-
-				// Get default branch
-				repository, _, err := vd.githubClient.Repositories.Get(ctx, owner, repo)
-				if err == nil {
-					defaultBranch := repository.GetDefaultBranch()
-					// Create the branch and file system
-					fs, err = vd.fileSystemFactory.NewFileSystemForNewIssue(owner, repo, defaultBranch, branchName)
-					if err == nil {
-						toolCtx.FileSystem = fs
-					}
-				}
-			}
 
 			// Process the tool use with the registry
 			toolResult, err := vd.toolRegistry.ProcessToolUse(toolUse, toolCtx)
@@ -618,216 +641,6 @@ func (vd *VirtualDeveloper) ensureLabelExists(ctx context.Context, owner, repo, 
 
 	_, _, err = vd.githubClient.Issues.CreateLabel(ctx, owner, repo, label)
 	return err
-}
-
-// Pull Request management functions
-
-// createPullRequestWithSolution creates a new PR with the solution
-func (vd *VirtualDeveloper) createPullRequestWithSolution(ctx context.Context, owner, repo string, issue *github.Issue, solution *Solution) (*github.PullRequest, error) {
-	// Get default branch
-	repository, _, err := vd.githubClient.Repositories.Get(ctx, owner, repo)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get repository: %w", err)
-	}
-
-	defaultBranch := repository.GetDefaultBranch()
-
-	// Get the latest commit on the default branch
-	ref, _, err := vd.githubClient.Git.GetRef(ctx, owner, repo, fmt.Sprintf("refs/heads/%s", defaultBranch))
-	if err != nil {
-		return nil, fmt.Errorf("failed to get default branch ref: %w", err)
-	}
-
-	// Create new branch
-	newRef := &github.Reference{
-		Ref:    github.Ptr(fmt.Sprintf("refs/heads/%s", solution.Branch)),
-		Object: &github.GitObject{SHA: ref.Object.SHA},
-	}
-
-	_, _, err = vd.githubClient.Git.CreateRef(ctx, owner, repo, newRef)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create branch: %w", err)
-	}
-
-	// Apply the solution to create commits
-	if err := vd.applySolutionToNewBranch(ctx, owner, repo, solution, ref.Object.SHA); err != nil {
-		return nil, fmt.Errorf("failed to apply solution: %w", err)
-	}
-
-	// Create pull request
-	issueNumber := 0
-	if issue.Number != nil {
-		issueNumber = *issue.Number
-	}
-
-	issueTitle := "Fix issue"
-	if issue.Title != nil {
-		issueTitle = *issue.Title
-	}
-
-	prTitle := fmt.Sprintf("Fix: %s", issueTitle)
-	prBody := fmt.Sprintf(`This PR addresses issue #%d
-
-## Solution
-%s
-
-## Changes Made
-%s
-
-## Issue Details
-%s
-
----
-*This PR was created by the Virtual Developer bot.*`,
-		issueNumber,
-		solution.Description,
-		vd.formatFileChanges(solution.Files),
-		getIssueDescription(issue))
-
-	pr := &github.NewPullRequest{
-		Title:               github.Ptr(prTitle),
-		Body:                github.Ptr(prBody),
-		Head:                github.Ptr(solution.Branch),
-		Base:                github.Ptr(defaultBranch),
-		MaintainerCanModify: github.Bool(true),
-	}
-
-	createdPR, _, err := vd.githubClient.PullRequests.Create(ctx, owner, repo, pr)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create pull request: %w", err)
-	}
-
-	return createdPR, nil
-}
-
-// applySolutionToNewBranch applies solution files to a new branch
-func (vd *VirtualDeveloper) applySolutionToNewBranch(ctx context.Context, owner, repo string, solution *Solution, baseSHA *string) error {
-	// Get the base commit
-	baseCommit, _, err := vd.githubClient.Git.GetCommit(ctx, owner, repo, *baseSHA)
-	if err != nil {
-		return fmt.Errorf("failed to get base commit: %w", err)
-	}
-
-	// Create tree entries for all changes
-	var treeEntries []*github.TreeEntry
-	for path, change := range solution.Files {
-		blob := &github.Blob{
-			Content:  github.Ptr(change.Content),
-			Encoding: github.Ptr("utf-8"),
-		}
-
-		createdBlob, _, err := vd.githubClient.Git.CreateBlob(ctx, owner, repo, blob)
-		if err != nil {
-			return fmt.Errorf("failed to create blob for %s: %w", path, err)
-		}
-
-		treeEntry := &github.TreeEntry{
-			Path: github.Ptr(path),
-			Mode: github.Ptr("100644"),
-			Type: github.Ptr("blob"),
-			SHA:  createdBlob.SHA,
-		}
-		treeEntries = append(treeEntries, treeEntry)
-	}
-
-	createdTree, _, err := vd.githubClient.Git.CreateTree(ctx, owner, repo, *baseCommit.Tree.SHA, treeEntries)
-	if err != nil {
-		return fmt.Errorf("failed to create tree: %w", err)
-	}
-
-	commit := &github.Commit{
-		Message: github.Ptr(solution.CommitMessage),
-		Tree:    createdTree,
-		Parents: []*github.Commit{baseCommit},
-	}
-
-	createdCommit, _, err := vd.githubClient.Git.CreateCommit(ctx, owner, repo, commit, nil)
-	if err != nil {
-		return fmt.Errorf("failed to create commit: %w", err)
-	}
-
-	// Update branch reference
-	branchRef, _, err := vd.githubClient.Git.GetRef(ctx, owner, repo, fmt.Sprintf("refs/heads/%s", solution.Branch))
-	if err != nil {
-		return fmt.Errorf("failed to get branch ref: %w", err)
-	}
-
-	branchRef.Object.SHA = createdCommit.SHA
-	_, _, err = vd.githubClient.Git.UpdateRef(ctx, owner, repo, branchRef, false)
-	if err != nil {
-		return fmt.Errorf("failed to update branch ref: %w", err)
-	}
-
-	return nil
-}
-
-// updatePullRequest applies updates to an existing PR
-func (vd *VirtualDeveloper) updatePullRequest(ctx context.Context, owner, repo string, pr *github.PullRequest, solution *Solution) error {
-	if pr.Head == nil || pr.Head.Ref == nil {
-		return fmt.Errorf("invalid PR head reference")
-	}
-
-	branchName := *pr.Head.Ref
-
-	// Get current branch reference
-	ref, _, err := vd.githubClient.Git.GetRef(ctx, owner, repo, fmt.Sprintf("refs/heads/%s", branchName))
-	if err != nil {
-		return fmt.Errorf("failed to get branch ref: %w", err)
-	}
-
-	// Get the current commit
-	currentCommit, _, err := vd.githubClient.Git.GetCommit(ctx, owner, repo, *ref.Object.SHA)
-	if err != nil {
-		return fmt.Errorf("failed to get current commit: %w", err)
-	}
-
-	// Create tree entries for all changes
-	var treeEntries []*github.TreeEntry
-	for path, change := range solution.Files {
-		blob := &github.Blob{
-			Content:  github.Ptr(change.Content),
-			Encoding: github.Ptr("utf-8"),
-		}
-
-		createdBlob, _, err := vd.githubClient.Git.CreateBlob(ctx, owner, repo, blob)
-		if err != nil {
-			return fmt.Errorf("failed to create blob for %s: %w", path, err)
-		}
-
-		treeEntry := &github.TreeEntry{
-			Path: github.Ptr(path),
-			Mode: github.Ptr("100644"),
-			Type: github.Ptr("blob"),
-			SHA:  createdBlob.SHA,
-		}
-		treeEntries = append(treeEntries, treeEntry)
-	}
-
-	createdTree, _, err := vd.githubClient.Git.CreateTree(ctx, owner, repo, *currentCommit.Tree.SHA, treeEntries)
-	if err != nil {
-		return fmt.Errorf("failed to create tree: %w", err)
-	}
-
-	// Create new commit
-	commit := &github.Commit{
-		Message: github.Ptr(solution.CommitMessage),
-		Tree:    createdTree,
-		Parents: []*github.Commit{currentCommit},
-	}
-
-	createdCommit, _, err := vd.githubClient.Git.CreateCommit(ctx, owner, repo, commit, nil)
-	if err != nil {
-		return fmt.Errorf("failed to create commit: %w", err)
-	}
-
-	// Update branch reference
-	ref.Object.SHA = createdCommit.SHA
-	_, _, err = vd.githubClient.Git.UpdateRef(ctx, owner, repo, ref, false)
-	if err != nil {
-		return fmt.Errorf("failed to update branch ref: %w", err)
-	}
-
-	return nil
 }
 
 // Context building functions
