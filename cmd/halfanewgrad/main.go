@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"os"
@@ -28,6 +29,7 @@ type VirtualDeveloper struct {
 	config            *Config
 	githubClient      *github.Client
 	anthropicClient   *AnthropicClient
+	toolRegistry      *ToolRegistry
 	fileSystemFactory githubFileSystemFactory
 }
 
@@ -100,8 +102,9 @@ func NewVirtualDeveloper(config *Config) *VirtualDeveloper {
 
 	return &VirtualDeveloper{
 		config:            config,
-		githubClient:      github.NewClient(tc),
+		githubClient:      githubClient,
 		anthropicClient:   NewAnthropicClient(config.AnthropicAPIKey),
+		toolRegistry:      NewToolRegistry(),
 		fileSystemFactory: githubFileSystemFactory{githubClient: githubClient},
 	}
 }
@@ -243,6 +246,15 @@ func (vd *VirtualDeveloper) processWithAI(ctx context.Context, workCtx *WorkCont
 		}
 	}
 
+	// Create tool context
+	toolCtx := &ToolContext{
+		FileSystem:   fs,
+		Owner:        owner,
+		Repo:         repo,
+		WorkContext:  workCtx,
+		GithubClient: vd.githubClient,
+	}
+
 	// Build conversation history
 	var messages []anthropic.MessageParam
 
@@ -253,7 +265,7 @@ func (vd *VirtualDeveloper) processWithAI(ctx context.Context, workCtx *WorkCont
 
 		if i == 0 {
 			// First interaction - use ProcessWorkItem
-			result, err = vd.anthropicClient.ProcessWorkItem(ctx, workCtx)
+			result, err = vd.anthropicClient.ProcessWorkItem(ctx, workCtx, vd.toolRegistry)
 			if err != nil {
 				return fmt.Errorf("AI processing failed: %w", err)
 			}
@@ -280,141 +292,52 @@ If you want to engage in discussion, use post_comment.`
 		needsContinuation := false
 		var toolResults []anthropic.ContentBlockParamUnion
 
-		// Process actions and collect tool results
-		for _, action := range result.Actions {
-			log.Printf("Processing action: %s", action.Type)
+		// Process tool uses and collect tool results
+		for _, toolUse := range result.ToolUses {
+			log.Printf("Processing tool use: %s", toolUse.Name)
 
-			var toolResult string
-			var isError bool
+			// Special handling for create_branch to update file system
+			if toolUse.Type == "create_branch" {
+				if fs != nil {
+					return fmt.Errorf("tried to create branch when filesystem has already been initialized")
+				}
+				var data map[string]any
+				err := json.Unmarshal(toolUse.Input, &data)
+				if err != nil {
+					return fmt.Errorf("failed to unmarshall 'create_branch' tool input: %w", err)
+				}
+				branchName, ok := data["branch_name"].(string)
+				if !ok {
+					return fmt.Errorf("expected string type for 'create_branch' tool input's 'branch_name' field, found: %T", data["branch_name"])
+				}
 
-			switch action.Type {
-			case "create_branch":
-				if !workCtx.IsInitialSolution {
-					toolResult = "Error: Branch creation is only allowed for initial solutions"
-					isError = true
-				} else if fs != nil {
-					toolResult = "Error: Branch already exists"
-					isError = true
-				} else {
-					branchName, ok := action.Data["branch_name"].(string)
-					if !ok {
-						toolResult = "Error: branch_name is required"
-						isError = true
-					} else {
-						// Get default branch
-						repository, _, err := vd.githubClient.Repositories.Get(ctx, owner, repo)
-						if err != nil {
-							toolResult = fmt.Sprintf("Error: failed to get repository: %v", err)
-							isError = true
-						} else {
-							defaultBranch := repository.GetDefaultBranch()
-
-							// Create the branch and file system
-							fs, err = vd.fileSystemFactory.NewFileSystemForNewIssue(owner, repo, defaultBranch, branchName)
-							if err != nil {
-								toolResult = fmt.Sprintf("Error: failed to create branch: %v", err)
-								isError = true
-							} else {
-								toolResult = fmt.Sprintf("Successfully created branch '%s'", branchName)
-								isError = false
-							}
-						}
+				// Get default branch
+				repository, _, err := vd.githubClient.Repositories.Get(ctx, owner, repo)
+				if err == nil {
+					defaultBranch := repository.GetDefaultBranch()
+					// Create the branch and file system
+					fs, err = vd.fileSystemFactory.NewFileSystemForNewIssue(owner, repo, defaultBranch, branchName)
+					if err == nil {
+						toolCtx.FileSystem = fs
 					}
 				}
-				needsContinuation = true
-
-			case "view", "str_replace", "create", "insert", "undo_edit":
-				if fs == nil {
-					toolResult = "Error: No branch created yet. Use create_branch first."
-					isError = true
-				} else {
-					output, err := vd.anthropicClient.ExecuteTextEditorCommand(ctx, action, fs)
-					if err != nil {
-						log.Printf("Failed to execute text editor command %s: %v", action.Type, err)
-						toolResult = fmt.Sprintf("Error: %v", err)
-						isError = true
-					} else {
-						toolResult = output
-						isError = false
-					}
-				}
-				needsContinuation = true
-
-			case "create_pull_request":
-				if fs == nil {
-					toolResult = "Error: No branch created yet. Use create_branch first."
-					isError = true
-				} else {
-					pr, err := vd.handleCreatePullRequest(ctx, owner, repo, workCtx, action, fs)
-					if err != nil {
-						log.Printf("Failed to create pull request: %v", err)
-						toolResult = fmt.Sprintf("Error: %v", err)
-						isError = true
-					} else {
-						toolResult = fmt.Sprintf("Successfully created pull request #%d", pr.GetNumber())
-						isError = false
-
-						// Update labels and post success comment
-						if workCtx.IsInitialSolution && workCtx.Issue != nil && workCtx.Issue.Number != nil {
-							vd.addLabel(ctx, owner, repo, *workCtx.Issue.Number, LabelCompleted)
-							vd.removeLabel(ctx, owner, repo, *workCtx.Issue.Number, LabelInProgress)
-							vd.postIssueComment(ctx, owner, repo, *workCtx.Issue.Number,
-								fmt.Sprintf("I've created PR #%d with my solution. Please review and let me know if any changes are needed.", pr.GetNumber()))
-						}
-
-						return nil
-					}
-				}
-
-			case "post_comment":
-				comment := vd.extractCommentFromAction(action)
-				if err := vd.postComment(ctx, owner, repo, workCtx, comment); err != nil {
-					log.Printf("Failed to post comment: %v", err)
-					toolResult = fmt.Sprintf("Error posting comment: %v", err)
-					isError = true
-				} else {
-					toolResult = "Comment posted successfully"
-					isError = false
-				}
-
-			case "add_reaction":
-				if commentID, ok := action.Data["comment_id"].(float64); ok {
-					if reaction, ok := action.Data["reaction"].(string); ok {
-						vd.addCommentReaction(ctx, owner, repo, int64(commentID), reaction)
-						toolResult = "Reaction added successfully"
-						isError = false
-					} else {
-						toolResult = "Error: reaction is required"
-						isError = true
-					}
-				} else {
-					toolResult = "Error: comment_id is required"
-					isError = true
-				}
-
-			case "request_review":
-				if usernames, ok := action.Data["usernames"].([]interface{}); ok {
-					err := vd.requestReview(ctx, owner, repo, workCtx, usernames)
-					if err != nil {
-						toolResult = fmt.Sprintf("Error requesting review: %v", err)
-						isError = true
-					} else {
-						toolResult = "Review requested successfully"
-						isError = false
-					}
-				} else {
-					toolResult = "Error: usernames are required"
-					isError = true
-				}
-
-			default:
-				toolResult = fmt.Sprintf("Unknown action type: %s", action.Type)
-				isError = true
 			}
 
-			// Add tool result to the collection
-			toolResults = append(toolResults,
-				anthropic.NewToolResultBlock(action.ToolID, toolResult, isError))
+			// Process the tool use with the registry
+			toolResult, err := vd.toolRegistry.ProcessToolUse(toolUse, toolCtx)
+			if err != nil {
+				return fmt.Errorf("failed to process tool use: %w", err)
+			}
+
+			toolResults = append(toolResults, anthropic.ContentBlockParamUnion{
+				OfToolResult: toolResult,
+			})
+
+			// Check if this tool requires continuation
+			switch toolUse.Type {
+			case "view", "str_replace", "create", "insert", "undo_edit", "create_branch":
+				needsContinuation = true
+			}
 		}
 
 		// If we have tool results, we need to continue the conversation
@@ -423,11 +346,8 @@ If you want to engage in discussion, use post_comment.`
 			if i == 0 {
 				// For the first iteration, we need to reconstruct the assistant message from the result
 				assistantContent := []anthropic.ContentBlockParamUnion{}
-				for _, action := range result.Actions {
-					if action.ToolID != "" {
-						toolUse := anthropic.NewToolUseBlock(action.ToolID, action.Data, action.Type)
-						assistantContent = append(assistantContent, toolUse)
-					}
+				for _, toolUse := range result.ToolUses {
+					assistantContent = append(assistantContent, anthropic.ContentBlockParamUnion{OfToolUse: github.Ptr(toolUse.ToParam())})
 				}
 				if len(assistantContent) > 0 {
 					assistantMessage := anthropic.NewAssistantMessage(assistantContent...)
@@ -448,98 +368,6 @@ If you want to engage in discussion, use post_comment.`
 	}
 
 	return fmt.Errorf("exceeded maximum iterations (%d) without completion", maxIterations)
-}
-
-func (vd *VirtualDeveloper) handleCreatePullRequest(ctx context.Context, owner, repo string, workCtx *WorkContext, action Action, fs *GitHubFileSystem) (*github.PullRequest, error) {
-	// Extract PR details
-	commitMessage, ok := action.Data["commit_message"].(string)
-	if !ok {
-		return nil, fmt.Errorf("commit_message is required")
-	}
-
-	prTitle, ok := action.Data["pull_request_title"].(string)
-	if !ok {
-		return nil, fmt.Errorf("pull_request_title is required")
-	}
-
-	prBody, ok := action.Data["pull_request_body"].(string)
-	if !ok {
-		return nil, fmt.Errorf("pull_request_body is required")
-	}
-
-	// Check if there are changes to commit
-	if !fs.HasChanges() {
-		return nil, fmt.Errorf("no changes to commit")
-	}
-
-	// Commit the changes
-	_, err := fs.CommitChanges(commitMessage)
-	if err != nil {
-		return nil, fmt.Errorf("failed to commit changes: %w", err)
-	}
-
-	// Determine target branch
-	var targetBranch string
-	if workCtx.IsInitialSolution {
-		// Get default branch for new PRs
-		repository, _, err := vd.githubClient.Repositories.Get(ctx, owner, repo)
-		if err != nil {
-			return nil, fmt.Errorf("failed to get repository: %w", err)
-		}
-		targetBranch = repository.GetDefaultBranch()
-
-		// Add issue reference to PR body
-		issueNumber := 0
-		if workCtx.Issue != nil && workCtx.Issue.Number != nil {
-			issueNumber = *workCtx.Issue.Number
-		}
-
-		prBody = fmt.Sprintf(`%s
-
-Fixes #%d
-
----
-*This PR was created by the Virtual Developer bot.*`, prBody, issueNumber)
-	} else {
-		// For existing PRs, use the same target branch
-		if workCtx.PullRequest != nil && workCtx.PullRequest.Base != nil && workCtx.PullRequest.Base.Ref != nil {
-			targetBranch = *workCtx.PullRequest.Base.Ref
-		} else {
-			return nil, fmt.Errorf("could not determine target branch for existing PR")
-		}
-	}
-
-	// Create PR
-	return fs.CreatePullRequest(prTitle, prBody, targetBranch)
-}
-
-// reconstructAIMessage reconstructs an AI message from the interaction result
-func (vd *VirtualDeveloper) reconstructAIMessage(result *InteractionResult) *anthropic.MessageParam {
-	if result == nil || len(result.Actions) == 0 {
-		return nil
-	}
-
-	var content []anthropic.ContentBlockParamUnion
-
-	// Add any text content (if the AI provided explanation)
-	// Note: You might need to capture this from the original response
-	// For now, we'll just include the tool use blocks
-
-	// Add tool use blocks
-	for _, action := range result.Actions {
-		if action.ToolID != "" {
-			// Reconstruct the tool use block
-			toolUse := anthropic.NewToolUseBlock(action.ToolID, action.Data, action.Type)
-			content = append(content, toolUse)
-		}
-	}
-
-	if len(content) == 0 {
-		return nil
-	}
-
-	message := anthropic.NewAssistantMessage(content...)
-	return &message
 }
 
 // processExistingPRs handles PRs that may need updates
@@ -723,38 +551,6 @@ func (vd *VirtualDeveloper) getLastBotActivity(workCtx *WorkContext) time.Time {
 	return lastActivity
 }
 
-// extractCommentFromAction converts an action to a Comment
-func (vd *VirtualDeveloper) extractCommentFromAction(action Action) Comment {
-	comment := Comment{}
-
-	if commentType, ok := action.Data["comment_type"].(string); ok {
-		comment.Type = commentType
-	}
-
-	if body, ok := action.Data["body"].(string); ok {
-		comment.Body = body
-	}
-
-	if replyTo, ok := action.Data["in_reply_to"].(float64); ok {
-		replyToInt := int64(replyTo)
-		comment.InReplyTo = &replyToInt
-	}
-
-	if filePath, ok := action.Data["file_path"].(string); ok {
-		comment.FilePath = filePath
-	}
-
-	if line, ok := action.Data["line"].(float64); ok {
-		comment.Line = int(line)
-	}
-
-	if side, ok := action.Data["side"].(string); ok {
-		comment.Side = side
-	}
-
-	return comment
-}
-
 // GitHub API helper functions
 
 // issueHasPR checks if an issue already has an associated PR
@@ -773,102 +569,11 @@ func (vd *VirtualDeveloper) issueHasPR(ctx context.Context, owner, repo string, 
 	return false
 }
 
-// postIssueComment posts a comment on an issue or PR
 func (vd *VirtualDeveloper) postIssueComment(ctx context.Context, owner, repo string, number int, body string) error {
 	comment := &github.IssueComment{
 		Body: github.Ptr(body),
 	}
 	_, _, err := vd.githubClient.Issues.CreateComment(ctx, owner, repo, number, comment)
-	return err
-}
-
-// postComment posts a comment based on the AI's decision
-func (vd *VirtualDeveloper) postComment(ctx context.Context, owner, repo string, workCtx *WorkContext, comment Comment) error {
-	// Handle reactions separately
-	if len(comment.AddReactions) > 0 {
-		for commentID, reaction := range comment.AddReactions {
-			vd.addCommentReaction(ctx, owner, repo, commentID, reaction)
-		}
-		return nil
-	}
-
-	switch comment.Type {
-	case "issue":
-		if workCtx.Issue != nil && workCtx.Issue.Number != nil {
-			return vd.postIssueComment(ctx, owner, repo, *workCtx.Issue.Number, comment.Body)
-		}
-
-	case "pr":
-		if workCtx.PullRequest != nil && workCtx.PullRequest.Number != nil {
-			return vd.postIssueComment(ctx, owner, repo, *workCtx.PullRequest.Number, comment.Body)
-		}
-
-	case "review":
-		if workCtx.PullRequest != nil && workCtx.PullRequest.Number != nil {
-			return vd.postReviewComment(ctx, owner, repo, *workCtx.PullRequest.Number, comment)
-		}
-
-	case "review_reply":
-		if comment.InReplyTo != nil {
-			return vd.postReviewCommentReply(ctx, owner, repo, *comment.InReplyTo, comment.Body)
-		}
-	}
-
-	return fmt.Errorf("unable to post comment of type %s", comment.Type)
-}
-
-// postReviewComment posts a review comment on specific code
-func (vd *VirtualDeveloper) postReviewComment(ctx context.Context, owner, repo string, prNumber int, comment Comment) error {
-	// Get the latest commit SHA
-	pr, _, err := vd.githubClient.PullRequests.Get(ctx, owner, repo, prNumber)
-	if err != nil {
-		return err
-	}
-
-	reviewComment := &github.PullRequestComment{
-		Body:     github.String(comment.Body),
-		Path:     github.String(comment.FilePath),
-		Line:     github.Int(comment.Line),
-		Side:     github.String(comment.Side),
-		CommitID: pr.Head.SHA,
-	}
-
-	_, _, err = vd.githubClient.PullRequests.CreateComment(ctx, owner, repo, prNumber, reviewComment)
-	return err
-}
-
-// postReviewCommentReply posts a reply to an existing review comment
-func (vd *VirtualDeveloper) postReviewCommentReply(ctx context.Context, owner, repo string, commentID int64, body string) error {
-	log.Printf("Posting reply to comment %d: %s", commentID, body)
-	return fmt.Errorf("review comment reply not fully implemented - needs PR tracking")
-}
-
-// addCommentReaction adds a reaction to a comment
-func (vd *VirtualDeveloper) addCommentReaction(ctx context.Context, owner, repo string, commentID int64, reaction string) {
-	_, _, err := vd.githubClient.Reactions.CreatePullRequestCommentReaction(ctx, owner, repo, commentID, reaction)
-	if err != nil {
-		log.Printf("Warning: Failed to add reaction to comment %d: %v", commentID, err)
-	}
-}
-
-// requestReview requests review from specific users
-func (vd *VirtualDeveloper) requestReview(ctx context.Context, owner, repo string, workCtx *WorkContext, usernames []interface{}) error {
-	if workCtx.PullRequest == nil || workCtx.PullRequest.Number == nil {
-		return fmt.Errorf("no pull request to request review on")
-	}
-
-	var reviewers []string
-	for _, u := range usernames {
-		if username, ok := u.(string); ok {
-			reviewers = append(reviewers, username)
-		}
-	}
-
-	reviewRequest := github.ReviewersRequest{
-		Reviewers: reviewers,
-	}
-
-	_, _, err := vd.githubClient.PullRequests.RequestReviewers(ctx, owner, repo, *workCtx.PullRequest.Number, reviewRequest)
 	return err
 }
 

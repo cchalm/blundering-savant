@@ -334,18 +334,20 @@ func (ctx *WorkContext) buildInstructions() string {
 
 1. Use the text editor tool to examine the codebase structure and understand the implementation
 2. View relevant files to understand how the code works
-3. Create a branch using create_branch with a descriptive name following the pattern: fix/issue-NUMBER-brief-description
-4. Implement the actual solution code using the text editor tools - do not use placeholders or TODOs
-5. Use str_replace for precise modifications to existing files
-6. Use create for new files when needed
-7. Use insert to add code at specific locations
-8. Create a pull request using create_pull_request with:
+3. If the requirements are unclear, do not guess. Comment on the issue to ask clarifying questions, and then stop. Do not make code changes if requirements are unclear.
+4. If the requirements are clear, create a branch using create_branch with a descriptive name following the pattern: fix/issue-NUMBER-brief-description
+5. Implement the actual solution code using the text editor tools - do not use placeholders or TODOs
+6. Use str_replace for precise modifications to existing files
+7. Use create for new files when needed
+8. Use insert to add code at specific locations
+9. Create a pull request using create_pull_request with:
    - A clear commit message describing what was fixed
    - A descriptive PR title
    - A comprehensive description of the changes
 
 Workflow for initial solutions:
 1. View files to understand the codebase
+2. Ask clarifying questions and then stop (optional)
 2. Create branch with create_branch
 3. Make changes with text editor tools (view, str_replace, create, insert)
 4. Create pull request with create_pull_request
@@ -355,6 +357,8 @@ Start by using the text editor tool to explore the repository structure and unde
 		instructions.WriteString(`Update the solution based on the feedback provided. Follow these guidelines:
 
 1. Use the text editor tool to examine the current implementation
+2. If suggestions are unclear, ask clarifying questions. Do not guess.
+3. If suggestions are unsafe or unwise based on common best practices, or if they violate the repository's coding guidelines, politely and professionally suggest alternatives. If a reviewer insists, apply their suggestion.
 2. Address all feedback points comprehensively using str_replace and other text editor commands
 3. Maintain the original intent of fixing the issue
 4. Create a pull request with create_pull_request that includes:
@@ -376,17 +380,6 @@ Review all comments, reviews, and feedback carefully. Make sure to address each 
 			instructions.WriteString(fmt.Sprintf("\n\nComments requiring responses: %s", strings.Join(needsResponse, ", ")))
 		}
 	}
-
-	instructions.WriteString(`
-
-Remember to:
-- Use the text editor tool to understand the codebase before making changes
-- Create a branch first (for initial solutions) before making any file changes
-- Make precise edits with str_replace (old_str must match exactly)
-- Include enough context in old_str to make matches unique
-- Create new files only when necessary
-- Follow the repository's coding standards and style guide
-- Always commit your changes with create_pull_request when ready`)
 
 	return instructions.String()
 }
