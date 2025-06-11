@@ -66,7 +66,6 @@ You have access to several tools:
   - str_replace: Replace specific text in files with new text
   - create: Create new files with specified content
   - insert: Insert text at specific line numbers
-- create_branch: Create a new branch (for initial solutions)
 - create_pull_request: Create a pull request from the current branch
 - post_comment: Post comments to engage in discussion
 - add_reaction: React to existing comments
@@ -80,9 +79,8 @@ The text editor tool is your primary way to examine and modify code. Use it to:
 
 When working on a new issue:
 1. First explore the codebase with the text editor
-2. Create a branch with create_branch
-3. Make your changes using the text editor tools
-4. Create a pull request with create_pull_request
+2. Make your changes using the text editor tools
+3. Create a pull request with create_pull_request
 
 When using str_replace:
 - The old_str must match EXACTLY, including whitespace

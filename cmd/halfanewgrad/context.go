@@ -359,9 +359,7 @@ Start by using the text editor tool to explore the repository structure and unde
 3. If suggestions are unsafe or unwise based on common best practices, or if they violate the repository's coding guidelines, politely and professionally suggest alternatives. If a reviewer insists, apply their suggestion.
 2. Address all feedback points comprehensively using str_replace and other text editor commands
 3. Maintain the original intent of fixing the issue
-4. Create a pull request with create_pull_request that includes:
-   - A commit message explaining what was changed based on the feedback
-   - A clear description of what updates were made
+4. Update a pull request with create_pull_request and include a clear description of what updates were made
 5. Respond to specific comments that need responses using post_comment
 
 Review all comments, reviews, and feedback carefully. Make sure to address each point raised using the appropriate text editor commands.`)
