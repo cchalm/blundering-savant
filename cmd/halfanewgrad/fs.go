@@ -56,6 +56,8 @@ func NewGitHubFileSystem(client *github.Client, owner, repo, branch string) (*Gi
 
 // ReadFile reads a file from the current state (working tree or GitHub)
 func (gfs *GitHubFileSystem) ReadFile(path string) (string, error) {
+	path = normalizePath(path)
+
 	// Check if file is deleted
 	if gfs.deletedFiles[path] {
 		return "", fmt.Errorf("file not found: %s", path)
@@ -89,6 +91,8 @@ func (gfs *GitHubFileSystem) ReadFile(path string) (string, error) {
 
 // WriteFile stores changes in the working tree
 func (gfs *GitHubFileSystem) WriteFile(path, content string) error {
+	path = normalizePath(path)
+
 	gfs.workingTree[path] = content
 	// Remove from deleted files if it was marked as deleted
 	delete(gfs.deletedFiles, path)
@@ -97,6 +101,8 @@ func (gfs *GitHubFileSystem) WriteFile(path, content string) error {
 
 // DeleteFile marks a file as deleted in the working tree
 func (gfs *GitHubFileSystem) DeleteFile(path string) error {
+	path = normalizePath(path)
+
 	gfs.deletedFiles[path] = true
 	// Remove from working tree if it was modified
 	delete(gfs.workingTree, path)
@@ -105,6 +111,8 @@ func (gfs *GitHubFileSystem) DeleteFile(path string) error {
 
 // FileExists checks if a file exists in the current state
 func (gfs *GitHubFileSystem) FileExists(path string) (bool, error) {
+	path = normalizePath(path)
+
 	// Check if file is deleted
 	if gfs.deletedFiles[path] {
 		return false, nil
@@ -321,4 +329,9 @@ func (gfs *GitHubFileSystem) GetCommitSHA() string {
 		return *gfs.baseCommit.SHA
 	}
 	return ""
+}
+
+func normalizePath(path string) string {
+	// Paths in git are always relative, they cannot start with a slash
+	return strings.TrimPrefix(path, "/")
 }

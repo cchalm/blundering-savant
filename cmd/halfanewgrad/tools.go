@@ -3,7 +3,9 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"log"
 	"strings"
 
 	"github.com/anthropics/anthropic-sdk-go"
@@ -28,6 +30,20 @@ type ToolContext struct {
 	GithubClient *github.Client
 }
 
+// ToolInputError represents an error that could be recovered by correcting inputs to the tool. This error will be
+// uploaded to the AI, so it must not contain any sensitive information
+type ToolInputError struct {
+	cause error
+}
+
+func (tie ToolInputError) Error() string {
+	return fmt.Sprintf("tool input error: %s", tie.cause)
+}
+
+func (tie ToolInputError) Unwrap() error {
+	return tie.cause
+}
+
 // Base tool implementation helper
 type BaseTool struct {
 	Name string
@@ -35,11 +51,11 @@ type BaseTool struct {
 
 // parseInputJSON is a helper to unmarshal tool input
 func parseInputJSON(block anthropic.ToolUseBlock, target any) error {
-	inputJSON, err := json.Marshal(block.Input)
+	err := json.Unmarshal(block.Input, target)
 	if err != nil {
-		return fmt.Errorf("failed to marshal input: %w", err)
+		err = ToolInputError{cause: err}
 	}
-	return json.Unmarshal(inputJSON, target)
+	return err
 }
 
 // TextEditorTool implements the str_replace_based_edit_tool
@@ -90,11 +106,7 @@ func (t *TextEditorTool) ParseToolUse(block anthropic.ToolUseBlock) (*TextEditor
 func (t *TextEditorTool) Run(block anthropic.ToolUseBlock, ctx *ToolContext) (*string, error) {
 	input, err := t.ParseToolUse(block)
 	if err != nil {
-		return nil, fmt.Errorf("Error parsing input: %v", err)
-	}
-
-	if ctx.FileSystem == nil && input.Command != "view" {
-		return nil, fmt.Errorf("Error: No branch created yet. Use create_branch first.")
+		return nil, fmt.Errorf("error parsing input: %v", err)
 	}
 
 	var result string
@@ -109,14 +121,14 @@ func (t *TextEditorTool) Run(block anthropic.ToolUseBlock, ctx *ToolContext) (*s
 		result, err = t.executeInsert(input, ctx.FileSystem)
 	case "undo_edit":
 		result = ""
-		err = fmt.Errorf("undo_edit not implemented - please use version control instead")
+		err = ToolInputError{fmt.Errorf("undo_edit not supported")}
 	default:
 		result = ""
-		err = fmt.Errorf("unknown text editor command: %s", input.Command)
+		err = ToolInputError{fmt.Errorf("unknown text editor command: %s", input.Command)}
 	}
 
 	if err != nil {
-		return nil, fmt.Errorf("Error: %v", err)
+		return nil, fmt.Errorf("%v", err)
 	}
 	return &result, nil
 }
@@ -315,23 +327,23 @@ func (t *CreatePullRequestTool) ParseToolUse(block anthropic.ToolUseBlock) (*Cre
 func (t *CreatePullRequestTool) Run(block anthropic.ToolUseBlock, ctx *ToolContext) (*string, error) {
 	input, err := t.ParseToolUse(block)
 	if err != nil {
-		return nil, fmt.Errorf("Error parsing input: %v", err)
+		return nil, fmt.Errorf("error parsing input: %v", err)
 	}
 
 	if ctx.FileSystem == nil {
-		return nil, fmt.Errorf("Error: No branch created yet. Use create_branch first.")
+		return nil, fmt.Errorf("file system not initialized")
 	}
 
 	if input.CommitMessage == "" {
-		return nil, fmt.Errorf("Error: commit_message is required")
+		return nil, ToolInputError{fmt.Errorf("commit_message is required")}
 	}
 
 	if input.PullRequestTitle == "" {
-		return nil, fmt.Errorf("Error: pull_request_title is required")
+		return nil, ToolInputError{fmt.Errorf("pull_request_title is required")}
 	}
 
 	if input.PullRequestBody == "" {
-		return nil, fmt.Errorf("Error: pull_request_body is required")
+		return nil, ToolInputError{fmt.Errorf("pull_request_body is required")}
 	}
 
 	// Check if there are changes to commit
@@ -461,15 +473,15 @@ func (t *PostCommentTool) ParseToolUse(block anthropic.ToolUseBlock) (*PostComme
 func (t *PostCommentTool) Run(block anthropic.ToolUseBlock, ctx *ToolContext) (*string, error) {
 	input, err := t.ParseToolUse(block)
 	if err != nil {
-		return nil, fmt.Errorf("Error parsing input: %v", err)
+		return nil, fmt.Errorf("error parsing input: %v", err)
 	}
 
 	if input.Body == "" {
-		return nil, fmt.Errorf("Error: body is required")
+		return nil, ToolInputError{fmt.Errorf("body is required")}
 	}
 
 	if input.CommentType == "" {
-		return nil, fmt.Errorf("Error: comment_type is required")
+		return nil, ToolInputError{fmt.Errorf("comment_type is required")}
 	}
 
 	switch input.CommentType {
@@ -578,15 +590,15 @@ func (t *AddReactionTool) ParseToolUse(block anthropic.ToolUseBlock) (*AddReacti
 func (t *AddReactionTool) Run(block anthropic.ToolUseBlock, ctx *ToolContext) (*string, error) {
 	input, err := t.ParseToolUse(block)
 	if err != nil {
-		return nil, fmt.Errorf("Error parsing input: %v", err)
+		return nil, fmt.Errorf("error parsing input: %v", err)
 	}
 
 	if input.CommentID == 0 {
-		return nil, fmt.Errorf("Error: comment_id is required")
+		return nil, ToolInputError{fmt.Errorf("comment_id is required")}
 	}
 
 	if input.Reaction == "" {
-		return nil, fmt.Errorf("Error: reaction is required")
+		return nil, ToolInputError{fmt.Errorf("reaction is required")}
 	}
 
 	// TODO what about issue comments?
@@ -654,15 +666,15 @@ func (t *RequestReviewTool) ParseToolUse(block anthropic.ToolUseBlock) (*Request
 func (t *RequestReviewTool) Run(block anthropic.ToolUseBlock, ctx *ToolContext) (*string, error) {
 	input, err := t.ParseToolUse(block)
 	if err != nil {
-		return nil, fmt.Errorf("Error parsing input: %v", err)
+		return nil, fmt.Errorf("error parsing input: %v", err)
 	}
 
 	if len(input.Usernames) == 0 {
-		return nil, fmt.Errorf("Error: usernames are required")
+		return nil, ToolInputError{fmt.Errorf("usernames are required")}
 	}
 
 	if input.Message == "" {
-		return nil, fmt.Errorf("Error: message is required")
+		return nil, ToolInputError{fmt.Errorf("message is required")}
 	}
 
 	reviewRequest := github.ReviewersRequest{
@@ -719,13 +731,19 @@ func (r *ToolRegistry) GetAllToolParams() []anthropic.ToolParam {
 func (r *ToolRegistry) ProcessToolUse(block anthropic.ToolUseBlock, ctx *ToolContext) (*anthropic.ToolResultBlockParam, error) {
 	tool, ok := r.GetTool(block.Name)
 	if !ok {
-		return nil, fmt.Errorf("Unknown tool: %s", block.Name)
+		return nil, fmt.Errorf("unknown tool: %s", block.Name)
 	}
 
 	response, err := tool.Run(block, ctx)
+
 	var resultBlock anthropic.ToolResultBlockParam
-	if err != nil {
-		resultBlock = newToolResultBlockParam(block.ID, err.Error(), true)
+	var tie *ToolInputError
+	if errors.As(err, &tie) {
+		// Respond to with an error result block to give the AI the opportunity to correct the inputs
+		resultBlock = newToolResultBlockParam(block.ID, tie.Error(), true)
+		log.Print("Warning: recoverable tool error, reporting to the AI to give it an opportunity to retry")
+	} else if err != nil {
+		return nil, fmt.Errorf("error while running tool: %w", err)
 	} else if response != nil {
 		resultBlock = newToolResultBlockParam(block.ID, *response, false)
 	} else {

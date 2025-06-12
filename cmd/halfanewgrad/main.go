@@ -21,7 +21,6 @@ type Config struct {
 	AnthropicAPIKey string
 	GitHubUsername  string
 	CheckInterval   time.Duration
-	WorkspaceDir    string // Directory for cloning repositories
 }
 
 // VirtualDeveloper represents our bot
@@ -65,15 +64,10 @@ func main() {
 		AnthropicAPIKey: os.Getenv("ANTHROPIC_API_KEY"),
 		GitHubUsername:  os.Getenv("GITHUB_USERNAME"),
 		CheckInterval:   5 * time.Minute,
-		WorkspaceDir:    os.Getenv("WORKSPACE_DIR"),
 	}
 
 	if config.GitHubToken == "" || config.AnthropicAPIKey == "" || config.GitHubUsername == "" {
 		log.Fatal("Missing required environment variables: GITHUB_TOKEN, ANTHROPIC_API_KEY, or GITHUB_USERNAME")
-	}
-
-	if config.WorkspaceDir == "" {
-		config.WorkspaceDir = "/tmp/virtual-dev-workspace"
 	}
 
 	// Parse check interval if provided
@@ -301,7 +295,7 @@ func createBranch(client *github.Client, owner, repo, baseBranch, newBranch stri
 // TODO look into merging owner, repo, and branch into workCtx
 // processWithAI handles the AI interaction with text editor tool support
 func (vd *VirtualDeveloper) processWithAI(ctx context.Context, workCtx *WorkContext, owner, repo, branch string) error {
-	maxIterations := 15
+	maxIterations := 30
 
 	// fs may be nil if no branch name is given, e.g. if the issue is currently in the requirements clarification phase
 	var err error
@@ -325,13 +319,32 @@ func (vd *VirtualDeveloper) processWithAI(ctx context.Context, workCtx *WorkCont
 	// Initialize conversation
 	var conversation = vd.initConversation()
 
+	log.Printf("Sending initial message to AI")
 	response, err := conversation.SendMessage(ctx, anthropic.NewTextBlock(workCtx.BuildPrompt()))
 	if err != nil {
 		return fmt.Errorf("failed to send initial message to AI: %w", err)
 	}
 
 	for i := 0; i < maxIterations; i++ {
-		log.Printf("Processing AI interaction, iteration: %d", i+1)
+		log.Printf("Processing AI response, iteration: %d", i+1)
+		for _, contentBlock := range response.Content {
+			switch block := contentBlock.AsAny().(type) {
+			case anthropic.TextBlock:
+				log.Print("    <text> ", block.Text)
+			case anthropic.ToolUseBlock:
+				log.Print("    <tool use> ", block.Name)
+			case anthropic.ServerToolUseBlock:
+				log.Print("    <server tool use> ", block.Name)
+			case anthropic.WebSearchToolResultBlock:
+				log.Print("    <web search tool result>")
+			case anthropic.ThinkingBlock:
+				log.Print("    <thinking>", block.Thinking)
+			case anthropic.RedactedThinkingBlock:
+				log.Print("    <redacted thinking>")
+			default:
+				log.Print("    <unknown>")
+			}
+		}
 
 		switch response.StopReason {
 		case anthropic.StopReasonToolUse:
@@ -346,7 +359,7 @@ func (vd *VirtualDeveloper) processWithAI(ctx context.Context, workCtx *WorkCont
 
 			toolResults := []anthropic.ContentBlockParamUnion{}
 			for _, toolUse := range toolUses {
-				log.Printf("    Processing tool use: %s", toolUse.Name)
+				log.Printf("    Executing tool: %s", toolUse.Name)
 
 				// Process the tool use with the registry
 				toolResult, err := vd.toolRegistry.ProcessToolUse(toolUse, toolCtx)
@@ -355,6 +368,7 @@ func (vd *VirtualDeveloper) processWithAI(ctx context.Context, workCtx *WorkCont
 				}
 				toolResults = append(toolResults, anthropic.ContentBlockParamUnion{OfToolResult: toolResult})
 			}
+			log.Printf("    Sending tool results to AI")
 			response, err = conversation.SendMessage(ctx, toolResults...)
 			if err != nil {
 				return fmt.Errorf("failed to send tool results to AI: %w", err)
@@ -366,6 +380,8 @@ func (vd *VirtualDeveloper) processWithAI(ctx context.Context, workCtx *WorkCont
 		case anthropic.StopReasonEndTurn:
 			log.Print("AI interaction concluded")
 			return nil
+		default:
+			return fmt.Errorf("unexpected stop reason: %v", response.StopReason)
 		}
 	}
 
@@ -923,7 +939,7 @@ func extractIssueNumber(body string) int {
 
 func (vd *VirtualDeveloper) initConversation() *ClaudeConversation {
 	model := anthropic.ModelClaudeSonnet4_0
-	var maxTokens int64 = 4096
+	var maxTokens int64 = 60000
 
 	systemPrompt := `You are a highly skilled software developer working as a virtual assistant on GitHub.
 
@@ -960,7 +976,7 @@ The text editor tool is your primary way to examine and modify code. Use it to:
 - Insert code at specific locations
 
 When working on a new issue:
-1. First explore the codebase with the text editor
+1. Explore the codebase with the text editor
 2. Make your changes using the text editor tools
 3. Create a pull request with create_pull_request
 
