@@ -2,7 +2,9 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"log"
 
 	"github.com/anthropics/anthropic-sdk-go"
 )
@@ -53,14 +55,20 @@ func (cc *ClaudeConversation) SendMessage(ctx context.Context, messageContent ..
 	message := anthropic.Message{}
 	for stream.Next() {
 		event := stream.Current()
-		fmt.Println("event: ", event.Type)
 		err := message.Accumulate(event)
 		if err != nil {
 			return nil, fmt.Errorf("failed to accumulate response content stream: %w", err)
 		}
 	}
 	if stream.Err() != nil {
-		fmt.Errorf("failed to stream response: %w", stream.Err())
+		return nil, fmt.Errorf("failed to stream response: %w", stream.Err())
+	}
+	if message.StopReason == "" {
+		b, err := json.Marshal(message)
+		if err != nil {
+			log.Printf("error while marshalling corrupt message for inspection: %v", err)
+		}
+		return nil, fmt.Errorf("malformed message: %v", string(b))
 	}
 	// Append the generated message to the conversation for continuation
 	cc.messages = append(cc.messages, message.ToParam())

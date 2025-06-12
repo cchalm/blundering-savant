@@ -359,7 +359,7 @@ func (t *CreatePullRequestTool) Run(block anthropic.ToolUseBlock, ctx *ToolConte
 
 	// Determine target branch
 	var targetBranch string
-	if ctx.WorkContext.IsInitialSolution {
+	if ctx.WorkContext.PullRequest == nil {
 		// Get default branch for new PRs
 		repository, _, err := ctx.GithubClient.Repositories.Get(context.Background(), ctx.Owner, ctx.Repo)
 		if err != nil {

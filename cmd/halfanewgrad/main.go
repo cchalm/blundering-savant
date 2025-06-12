@@ -93,7 +93,10 @@ func NewVirtualDeveloper(config *Config) *VirtualDeveloper {
 	)
 	tc := oauth2.NewClient(ctx, ts)
 	githubClient := github.NewClient(tc)
-	anthropicClient := anthropic.NewClient(option.WithAPIKey(config.AnthropicAPIKey))
+	anthropicClient := anthropic.NewClient(
+		option.WithAPIKey(config.AnthropicAPIKey),
+		option.WithMaxRetries(5),
+	)
 
 	return &VirtualDeveloper{
 		config:            config,
@@ -320,7 +323,8 @@ func (vd *VirtualDeveloper) processWithAI(ctx context.Context, workCtx *WorkCont
 	var conversation = vd.initConversation()
 
 	log.Printf("Sending initial message to AI")
-	response, err := conversation.SendMessage(ctx, anthropic.NewTextBlock(workCtx.BuildPrompt()))
+	prompt := workCtx.BuildPrompt()
+	response, err := conversation.SendMessage(ctx, anthropic.NewTextBlock(prompt))
 	if err != nil {
 		return fmt.Errorf("failed to send initial message to AI: %w", err)
 	}
@@ -645,7 +649,6 @@ func (vd *VirtualDeveloper) buildWorkContext(ctx context.Context, owner, repo st
 	workCtx := NewWorkContext(vd.config.GitHubUsername)
 	workCtx.Issue = issue
 	workCtx.PullRequest = pr
-	workCtx.IsInitialSolution = (pr == nil)
 
 	// Get repository
 	repository, _, err := vd.githubClient.Repositories.Get(ctx, owner, repo)
@@ -976,14 +979,17 @@ The text editor tool is your primary way to examine and modify code. Use it to:
 - Insert code at specific locations
 
 When working on a new issue:
-1. Explore the codebase with the text editor
-2. Make your changes using the text editor tools
-3. Create a pull request with create_pull_request
+1. If needed, ask clarifying questions
+2. If needed, explore the codebase with the text editor
+3. Make your changes using the text editor tools
+4. Create a pull request with create_pull_request
 
 When using str_replace:
 - The old_str must match EXACTLY, including whitespace
 - Include enough context to make the match unique
 - Use line numbers from view output for reference
+
+When viewing or editing files or directories, only use relative paths (no leading slash). Do not use absolute paths. To inspect the root of a repository, pass an empty string for the path.
 
 Choose the appropriate tools based on the situation. You don't always need to create a solution immediately - sometimes discussion is more valuable.`
 

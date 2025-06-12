@@ -25,8 +25,7 @@ type WorkContext struct {
 	PRReviews        []ReviewContext
 
 	// Current work state
-	IsInitialSolution bool
-	NeedsToRespond    map[string]bool // Comment ID -> needs response
+	NeedsToRespond map[string]bool // Comment ID -> needs response
 
 	// Continuation context for multi-turn conversations
 	ContinuationContext string
@@ -328,53 +327,41 @@ func (ctx *WorkContext) buildInstructions() string {
 	var instructions strings.Builder
 
 	instructions.WriteString("\n\n## Your Task\n\n")
+	instructions.WriteString(`Analyze this issue, ask clarifying questions, respond or react to comments, and/or create a solution. Follow these guidelines:
 
-	if ctx.IsInitialSolution {
-		instructions.WriteString(`Analyze this issue and create a complete solution. Follow these guidelines:
-
-1. Use the text editor tool to examine the codebase structure and understand the implementation
-2. View relevant files to understand how the code works
+1. If needed to complete the task, use the text editor tool to examine the codebase structure and understand the implementation
+2. If needed to complete the task, view relevant files to understand how the code works
 3. If the requirements are unclear, do not guess. Comment on the issue to ask clarifying questions, and then stop. Do not make code changes if requirements are unclear.
+3. If other developers' suggestions are unsafe or unwise based on common best practices, or if they violate the repository's coding guidelines, politely and professionally suggest alternatives. If the other developer insists, apply their suggestion.
 4. If the requirements are clear, implement the actual solution code using the text editor tools - do not use placeholders or TODOs
     - Use str_replace for precise modifications to existing files
     - Use create for new files when needed
     - Use insert to add code at specific locations
-8. Create a pull request using create_pull_request with:
+5. If changes are made, create or update an existing pull request using create_pull_request with:
    - A clear commit message describing what was fixed
-   - A descriptive PR title
+   - A descriptive PR title (if creating a new PR)
    - A comprehensive description of the changes
+6. When updating a PR, maintain the original intent of fixing the issue
 
-Workflow for initial solutions:
-1. View files to understand the codebase
-2. Ask clarifying questions and then skip the remaining steps (optional)
-3. Make changes with text editor tools (view, str_replace, create, insert)
-4. Create pull request with create_pull_request
-
-Start by using the text editor tool to explore the repository structure and understand the codebase before creating your branch.`)
-	} else {
-		instructions.WriteString(`Update the solution based on the feedback provided. Follow these guidelines:
-
-1. Use the text editor tool to examine the current implementation
-2. If suggestions are unclear, ask clarifying questions. Do not guess.
-3. If suggestions are unsafe or unwise based on common best practices, or if they violate the repository's coding guidelines, politely and professionally suggest alternatives. If a reviewer insists, apply their suggestion.
-2. Address all feedback points comprehensively using str_replace and other text editor commands
-3. Maintain the original intent of fixing the issue
-4. Update a pull request with create_pull_request and include a clear description of what updates were made
-5. Respond to specific comments that need responses using post_comment
+Workflow:
+1. If needed, view files to understand the codebase
+2. If needed, ask clarifying questions with post_comment instead of making changes. Clarify, do not guess
+3. If needed, respond to feedback with post_comment
+4. Make changes with text editor tools (view, str_replace, create, insert)
+5. Create or update pull request with create_pull_request
 
 Review all comments, reviews, and feedback carefully. Make sure to address each point raised using the appropriate text editor commands.`)
 
-		// List specific comments needing responses
-		needsResponse := []string{}
-		for id, needs := range ctx.NeedsToRespond {
-			if needs {
-				needsResponse = append(needsResponse, id)
-			}
+	// List specific comments needing responses
+	needsResponse := []string{}
+	for id, needs := range ctx.NeedsToRespond {
+		if needs {
+			needsResponse = append(needsResponse, id)
 		}
+	}
 
-		if len(needsResponse) > 0 {
-			instructions.WriteString(fmt.Sprintf("\n\nComments requiring responses: %s", strings.Join(needsResponse, ", ")))
-		}
+	if len(needsResponse) > 0 {
+		instructions.WriteString(fmt.Sprintf("\n\nComments requiring responses: %s", strings.Join(needsResponse, ", ")))
 	}
 
 	return instructions.String()
