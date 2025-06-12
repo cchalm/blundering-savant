@@ -1,0 +1,580 @@
+# Go Style Guide
+
+This document outlines the coding standards and best practices for the Halfanewgrad Bot project. Following these guidelines ensures consistency, readability, and maintainability of the codebase.
+
+## Table of Contents
+
+- [General Principles](#general-principles)
+- [Code Formatting](#code-formatting)
+- [Naming Conventions](#naming-conventions)
+- [Package Organization](#package-organization)
+- [Error Handling](#error-handling)
+- [Context Usage](#context-usage)
+- [Concurrency](#concurrency)
+- [Testing](#testing)
+- [Documentation](#documentation)
+- [Performance](#performance)
+- [Security](#security)
+
+## General Principles
+
+### Effective Go
+Follow the official [Effective Go](https://golang.org/doc/effective_go.html) guidelines as the foundation for all Go code.
+
+### Go Proverbs
+Keep these Go proverbs in mind:
+- Don't communicate by sharing memory, share memory by communicating
+- Concurrency is not parallelism
+- Channels orchestrate; mutexes serialize
+- The bigger the interface, the weaker the abstraction
+- Make the zero value useful
+- interface{} says nothing
+- Gofmt's style is no one's favorite, yet gofmt is everyone's favorite
+- A little copying is better than a little dependency
+- Syscall must always be guarded with build tags
+- Cgo must always be guarded with build tags
+- Cgo is not Go
+- With the unsafe package there are no guarantees
+- Clear is better than clever
+- Reflection is never clear
+- Errors are values
+- Don't just check errors, handle them gracefully
+- Design the architecture, name the components, document the details
+- Documentation is for users
+
+## Code Formatting
+
+### gofmt and goimports
+- Always use `gofmt` to format your code before committing
+- Use `goimports` to automatically manage imports
+- Configure your editor to run these tools on save
+
+### Line Length
+- Keep lines under 100 characters when possible
+- Break long function signatures and calls across multiple lines for readability
+
+### Imports
+```go
+// Group imports in this order:
+// 1. Standard library
+// 2. Third-party packages
+// 3. Local packages
+
+import (
+    "context"
+    "fmt"
+    "net/http"
+
+    "github.com/google/go-github/v72/github"
+    "golang.org/x/oauth2"
+
+    "github.com/cchalm/halfanewgrad/internal/config"
+    "github.com/cchalm/halfanewgrad/internal/github"
+)
+```
+
+## Naming Conventions
+
+### General Rules
+- Use camelCase for local variables and functions
+- Use PascalCase for exported functions, types, and constants
+- Use ALL_CAPS for constants (exported or not)
+- Avoid stuttering (e.g., `http.HTTPServer` should be `http.Server`)
+
+### Variables
+```go
+// Good
+var userCount int
+var maxRetries = 3
+var ErrNotFound = errors.New("not found")
+
+// Bad  
+var user_count int
+var MaxRetries = 3
+var errNotFound = errors.New("not found") // Should be exported
+```
+
+### Functions
+```go
+// Good
+func processGitHubEvent(event *github.Event) error { ... }
+func NewClient(token string) *Client { ... }
+
+// Bad
+func ProcessGithubEvent(event *github.Event) error { ... } // Shouldn't be exported
+func newclient(token string) *Client { ... } // Should be exported
+```
+
+### Types
+```go
+// Good
+type GitHubClient struct { ... }
+type EventHandler interface { ... }
+
+// Bad
+type githubClient struct { ... } // Should be exported if used across packages
+type eventhandler interface { ... } // Should use PascalCase
+```
+
+### Interfaces
+- Use `-er` suffix for single-method interfaces
+- Keep interfaces small and focused
+
+```go
+// Good
+type Reader interface {
+    Read([]byte) (int, error)
+}
+
+type GitHubProcessor interface {
+    ProcessIssue(ctx context.Context, issue *github.Issue) error
+    ProcessPullRequest(ctx context.Context, pr *github.PullRequest) error
+}
+
+// Bad
+type GitHubHandler interface {
+    ProcessIssue(ctx context.Context, issue *github.Issue) error
+    ProcessPullRequest(ctx context.Context, pr *github.PullRequest) error
+    ValidateWebhook(payload []byte) error
+    HandleError(err error)
+    LogActivity(message string)
+    // Too many responsibilities
+}
+```
+
+## Package Organization
+
+### Package Structure
+```
+cmd/
+  halfanewgrad/          # Main application entry point
+    main.go
+internal/                # Private application code
+  config/               # Configuration management
+  github/               # GitHub API interactions
+  anthropic/            # Anthropic API interactions
+  webhook/              # Webhook handling
+  bot/                  # Core bot logic
+pkg/                    # Public library code (if any)
+```
+
+### Package Naming
+- Use short, lowercase package names
+- Avoid underscores, hyphens, or mixed caps
+- Use singular nouns (e.g., `user`, not `users`)
+
+### Internal vs External Packages
+- Use `internal/` for code that shouldn't be imported by other projects
+- Use `pkg/` for reusable library code
+- Keep the main business logic in `internal/`
+
+## Error Handling
+
+### Error Creation
+```go
+// Good - Use fmt.Errorf for simple errors
+func validateToken(token string) error {
+    if token == "" {
+        return fmt.Errorf("token cannot be empty")
+    }
+    return nil
+}
+
+// Good - Use custom error types for complex errors
+type ValidationError struct {
+    Field   string
+    Message string
+}
+
+func (e ValidationError) Error() string {
+    return fmt.Sprintf("validation failed for %s: %s", e.Field, e.Message)
+}
+```
+
+### Error Wrapping
+```go
+// Good - Wrap errors to provide context
+func processIssue(ctx context.Context, issueNumber int) error {
+    issue, err := githubClient.GetIssue(ctx, issueNumber)
+    if err != nil {
+        return fmt.Errorf("failed to fetch issue %d: %w", issueNumber, err)
+    }
+    
+    if err := validateIssue(issue); err != nil {
+        return fmt.Errorf("issue validation failed: %w", err)
+    }
+    
+    return nil
+}
+```
+
+### Error Handling Best Practices
+- Always handle errors explicitly
+- Don't ignore errors with `_` unless absolutely necessary
+- Use `errors.Is()` and `errors.As()` for error checking
+- Return errors as the last return value
+- Don't panic in library code
+
+## Context Usage
+
+### Context Propagation
+```go
+// Good - Always accept context as first parameter
+func processWebhook(ctx context.Context, payload []byte) error {
+    // Pass context down the call chain
+    event, err := parseEvent(ctx, payload)
+    if err != nil {
+        return err
+    }
+    
+    return handleEvent(ctx, event)
+}
+
+// Good - Use context for cancellation and timeouts
+func makeAPICall(ctx context.Context, url string) (*Response, error) {
+    req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+    if err != nil {
+        return nil, err
+    }
+    
+    client := &http.Client{Timeout: 30 * time.Second}
+    resp, err := client.Do(req)
+    if err != nil {
+        return nil, err
+    }
+    defer resp.Body.Close()
+    
+    // ... process response
+}
+```
+
+### Context Values
+- Use context values sparingly
+- Create typed keys to avoid collisions
+- Document context keys clearly
+
+```go
+type contextKey string
+
+const (
+    RequestIDKey contextKey = "request_id"
+    UserIDKey    contextKey = "user_id"
+)
+
+func withRequestID(ctx context.Context, requestID string) context.Context {
+    return context.WithValue(ctx, RequestIDKey, requestID)
+}
+
+func getRequestID(ctx context.Context) string {
+    if id, ok := ctx.Value(RequestIDKey).(string); ok {
+        return id
+    }
+    return ""
+}
+```
+
+## Concurrency
+
+### Goroutines
+```go
+// Good - Use goroutines for concurrent operations
+func processIssues(ctx context.Context, issues []*github.Issue) error {
+    const maxWorkers = 10
+    semaphore := make(chan struct{}, maxWorkers)
+    
+    var wg sync.WaitGroup
+    errChan := make(chan error, len(issues))
+    
+    for _, issue := range issues {
+        wg.Add(1)
+        go func(issue *github.Issue) {
+            defer wg.Done()
+            
+            semaphore <- struct{}{} // Acquire
+            defer func() { <-semaphore }() // Release
+            
+            if err := processSingleIssue(ctx, issue); err != nil {
+                errChan <- err
+            }
+        }(issue)
+    }
+    
+    wg.Wait()
+    close(errChan)
+    
+    // Collect any errors
+    for err := range errChan {
+        if err != nil {
+            return err // Return first error
+        }
+    }
+    
+    return nil
+}
+```
+
+### Channels
+- Use channels to communicate between goroutines
+- Close channels when done sending
+- Use `select` for non-blocking operations
+
+```go
+// Good - Channel patterns
+func worker(ctx context.Context, jobs <-chan Job, results chan<- Result) {
+    for {
+        select {
+        case job, ok := <-jobs:
+            if !ok {
+                return // Channel closed
+            }
+            result := processJob(job)
+            select {
+            case results <- result:
+            case <-ctx.Done():
+                return
+            }
+        case <-ctx.Done():
+            return
+        }
+    }
+}
+```
+
+## Testing
+
+### Test Structure
+```go
+func TestProcessIssue(t *testing.T) {
+    tests := []struct {
+        name        string
+        issue       *github.Issue
+        wantErr     bool
+        expectedMsg string
+    }{
+        {
+            name: "valid issue",
+            issue: &github.Issue{
+                Number: github.Int(1),
+                Title:  github.String("Test issue"),
+            },
+            wantErr: false,
+        },
+        {
+            name:    "nil issue",
+            issue:   nil,
+            wantErr: true,
+        },
+    }
+    
+    for _, tt := range tests {
+        t.Run(tt.name, func(t *testing.T) {
+            err := processIssue(context.Background(), tt.issue)
+            if (err != nil) != tt.wantErr {
+                t.Errorf("processIssue() error = %v, wantErr %v", err, tt.wantErr)
+            }
+        })
+    }
+}
+```
+
+### Test Naming
+- Use `Test` prefix for test functions
+- Use descriptive names that explain what is being tested
+- Use table-driven tests for multiple test cases
+
+### Mocking
+```go
+// Use interfaces for dependencies to enable mocking
+type GitHubClient interface {
+    GetIssue(ctx context.Context, number int) (*github.Issue, error)
+    CreateComment(ctx context.Context, number int, comment string) error
+}
+
+// Mock implementation for testing
+type mockGitHubClient struct {
+    issues   map[int]*github.Issue
+    comments []string
+}
+
+func (m *mockGitHubClient) GetIssue(ctx context.Context, number int) (*github.Issue, error) {
+    if issue, ok := m.issues[number]; ok {
+        return issue, nil
+    }
+    return nil, fmt.Errorf("issue not found")
+}
+```
+
+## Documentation
+
+### Package Documentation
+```go
+// Package github provides GitHub API integration for the Halfanewgrad Bot.
+// It handles authentication, webhook processing, and API interactions.
+package github
+```
+
+### Function Documentation
+```go
+// ProcessIssue analyzes a GitHub issue and creates an appropriate response.
+// It validates the issue, determines the required action, and executes it.
+// Returns an error if the issue cannot be processed.
+func ProcessIssue(ctx context.Context, issue *github.Issue) error {
+    // Implementation
+}
+```
+
+### Type Documentation
+```go
+// Client represents a GitHub API client with authentication.
+type Client struct {
+    client *github.Client
+    token  string
+}
+
+// Config holds the configuration for GitHub integration.
+type Config struct {
+    // Token is the GitHub personal access token
+    Token string `json:"token"`
+    
+    // Org is the GitHub organization name
+    Org string `json:"org"`
+    
+    // Repo is the GitHub repository name  
+    Repo string `json:"repo"`
+}
+```
+
+## Performance
+
+### Memory Management
+- Avoid memory leaks by properly closing resources
+- Use object pools for frequently allocated objects
+- Be mindful of slice capacity vs length
+
+```go
+// Good - Proper resource cleanup
+func processFile(filename string) error {
+    file, err := os.Open(filename)
+    if err != nil {
+        return err
+    }
+    defer file.Close() // Always close resources
+    
+    // Process file
+    return nil
+}
+
+// Good - Reuse slices efficiently
+func processItems(items []Item) []Result {
+    results := make([]Result, 0, len(items)) // Pre-allocate capacity
+    for _, item := range items {
+        if result := processItem(item); result != nil {
+            results = append(results, *result)
+        }
+    }
+    return results
+}
+```
+
+### Profiling
+- Use `go tool pprof` for performance analysis
+- Add profiling endpoints in development builds
+- Monitor memory usage and CPU performance
+
+## Security
+
+### Input Validation
+```go
+// Good - Validate all external inputs
+func validateWebhookPayload(payload []byte, signature string) error {
+    if len(payload) == 0 {
+        return fmt.Errorf("empty payload")
+    }
+    
+    if len(payload) > maxPayloadSize {
+        return fmt.Errorf("payload too large: %d bytes", len(payload))
+    }
+    
+    if !validateSignature(payload, signature) {
+        return fmt.Errorf("invalid signature")
+    }
+    
+    return nil
+}
+```
+
+### Secrets Management
+- Never commit secrets to version control
+- Use environment variables for configuration
+- Implement proper secret rotation
+
+```go
+// Good - Load secrets from environment
+func loadConfig() (*Config, error) {
+    config := &Config{
+        GitHubToken:    os.Getenv("GITHUB_TOKEN"),
+        AnthropicToken: os.Getenv("ANTHROPIC_API_KEY"),
+        WebhookSecret:  os.Getenv("WEBHOOK_SECRET"),
+    }
+    
+    if config.GitHubToken == "" {
+        return nil, fmt.Errorf("GITHUB_TOKEN environment variable is required")
+    }
+    
+    return config, nil
+}
+```
+
+### Rate Limiting
+```go
+// Good - Implement rate limiting for API calls
+type RateLimiter struct {
+    limiter *rate.Limiter
+}
+
+func NewRateLimiter(requestsPerSecond int) *RateLimiter {
+    return &RateLimiter{
+        limiter: rate.NewLimiter(rate.Limit(requestsPerSecond), requestsPerSecond),
+    }
+}
+
+func (rl *RateLimiter) Wait(ctx context.Context) error {
+    return rl.limiter.Wait(ctx)
+}
+```
+
+## Tools and Linters
+
+### Required Tools
+- `gofmt` - Code formatting
+- `goimports` - Import management
+- `go vet` - Static analysis
+- `golangci-lint` - Comprehensive linting
+
+### Recommended IDE Setup
+- Configure your editor to run `gofmt` and `goimports` on save
+- Enable `go vet` integration
+- Set up `golangci-lint` for real-time feedback
+
+### Pre-commit Hooks
+Consider setting up pre-commit hooks to run:
+```bash
+go fmt ./...
+go vet ./...
+golangci-lint run
+go test ./...
+```
+
+## Conclusion
+
+This style guide should be treated as a living document that evolves with the project and Go ecosystem. When in doubt, prioritize:
+
+1. Readability over cleverness
+2. Simplicity over complexity  
+3. Explicit over implicit
+4. Standard library over third-party dependencies
+
+For questions not covered in this guide, refer to:
+- [Effective Go](https://golang.org/doc/effective_go.html)
+- [Go Code Review Comments](https://github.com/golang/go/wiki/CodeReviewComments)
+- [Uber Go Style Guide](https://github.com/uber-go/guide/blob/master/style.md)
