@@ -32,25 +32,10 @@ type VirtualDeveloper struct {
 	fileSystemFactory githubFileSystemFactory
 }
 
-// Solution represents the generated code solution
-type Solution struct {
-	Branch        string
-	CommitMessage string
-	Files         map[string]FileChange
-	Description   string
-}
-
-// FileChange represents a change to a file
-type FileChange struct {
-	Path       string
-	Content    string
-	IsNew      bool
-	OldContent string
-}
-
 const (
-	LabelInProgress = "virtual-dev-in-progress"
-	LabelCompleted  = "virtual-dev-completed"
+	LabelWorking = "bot-working"
+	LabelBlocked = "bot-blocked"
+	LabelBotTurn = "bot-turn"
 )
 
 func main() {
@@ -117,29 +102,54 @@ func (gfsf *githubFileSystemFactory) NewFileSystem(owner, repo, branch string) (
 
 // Run starts the main loop
 func (vd *VirtualDeveloper) Run() {
+	ctx := context.Background()
 	ticker := time.NewTicker(vd.config.CheckInterval)
 	defer ticker.Stop()
 
 	// Initial check
-	vd.checkAndProcessWorkItems()
+	vd.checkAndProcessWorkItems(ctx)
 
 	for range ticker.C {
-		vd.checkAndProcessWorkItems()
+		vd.checkAndProcessWorkItems(ctx)
 	}
 }
 
 // checkAndProcessWorkItems checks for work items that need attention
-func (vd *VirtualDeveloper) checkAndProcessWorkItems() {
-	ctx := context.Background()
+func (vd *VirtualDeveloper) checkAndProcessWorkItems(ctx context.Context) {
+	// Search for issues assigned to the bot that are not being worked on and are not blocked
+	query := fmt.Sprintf("assignee:%s is:issue is:open -label:%s -label:%s", vd.config.GitHubUsername, LabelWorking, LabelBlocked)
+	issues, _, err := vd.githubClient.Search.Issues(ctx, query, nil)
+	if err != nil {
+		log.Printf("Error searching issues: %v", err)
+		return
+	}
 
-	// First, handle new issues
-	vd.processIssuesWithoutPRs(ctx)
+	for _, issue := range issues.Issues {
+		if issue == nil || issue.RepositoryURL == nil || issue.Number == nil {
+			log.Print("Warning: unexpected nil")
+			continue
+		}
 
-	// Then, handle issues in discussion (no PR yet but already engaged)
-	vd.processIssuesInDiscussion(ctx)
+		// Extract owner and repo
+		parts := strings.Split(*issue.RepositoryURL, "/")
+		if len(parts) < 2 {
+			continue
+		}
+		owner := parts[len(parts)-2]
+		repo := parts[len(parts)-1]
 
-	// Finally, process existing PRs
-	vd.processExistingPRs(ctx)
+		issueTitle := "untitled"
+		if issue.Title != nil {
+			issueTitle = *issue.Title
+		}
+
+		log.Printf("Processing issue #%d in %s/%s: %s", *issue.Number, owner, repo, issueTitle)
+
+		// Process this issue
+		if err := vd.processIssue(ctx, owner, repo, issue); err != nil {
+			log.Printf("Error processing issue #%d: %v", *issue.Number, err)
+		}
+	}
 }
 
 // processIssuesWithoutPRs handles issues that don't have PRs yet
@@ -182,43 +192,73 @@ func (vd *VirtualDeveloper) processIssuesWithoutPRs(ctx context.Context) {
 			log.Printf("Error processing issue #%d: %v", *issue.Number, err)
 			// Post sanitized error comment
 			vd.postIssueComment(ctx, owner, repo, *issue.Number,
-				"I encountered an error while working on this issue. I'll retry on the next check cycle.")
+				"🆘 I encountered an error while working on this issue.")
 		}
 	}
 }
 
-// TODO look into merging parts of processNewIssues, processExistingPR, and processIssuesInDiscussion
-// processNewIssue processes a new issue with AI interaction
-func (vd *VirtualDeveloper) processNewIssue(ctx context.Context, owner, repo string, issue *github.Issue) error {
+// processIssue processes a single issue
+func (vd *VirtualDeveloper) processIssue(ctx context.Context, owner, repo string, issue *github.Issue) (err error) {
 	// Add in-progress label
-	if err := vd.addLabel(ctx, owner, repo, *issue.Number, LabelInProgress); err != nil {
+	if err := vd.addLabel(ctx, owner, repo, *issue.Number, LabelWorking); err != nil {
 		return fmt.Errorf("failed to add in-progress label: %w", err)
 	}
+	// Remove in-progress label when done
+	defer func() {
+		vd.removeLabel(ctx, owner, repo, *issue.Number, LabelWorking)
+		if err != nil {
+			// Add blocked label if there is an error, to tell the bot not to pick up this item again
+			vd.addLabel(ctx, owner, repo, *issue.Number, LabelBlocked)
+			// Post sanitized error comment
+			vd.postIssueComment(ctx, owner, repo, *issue.Number,
+				"❌ I encountered an error while working on this issue.")
+		}
+	}()
 
-	// Post initial comment
-	if err := vd.postIssueComment(ctx, owner, repo, *issue.Number,
-		"👋 I'm analyzing this issue and will assist you shortly."); err != nil {
-		log.Printf("Warning: failed to post initial comment: %v", err)
+	// TODO get PR somehow?
+	// Check if this issue has a PR
+	// Modify this to get the PR
+	if vd.issueHasPR(ctx, owner, repo, *issue.Number) {
 	}
 
 	// Build work context
 	workCtx, err := vd.buildWorkContext(ctx, owner, repo, issue, nil)
 	if err != nil {
-		vd.removeLabel(ctx, owner, repo, *issue.Number, LabelInProgress)
 		return fmt.Errorf("failed to build work context: %w", err)
 	}
 
-	// Create branch
-	branch, err := vd.createWorkBranch(ctx, owner, repo, issue)
-	if err != nil {
-		vd.removeLabel(ctx, owner, repo, *issue.Number, LabelInProgress)
-		return fmt.Errorf("failed to create branch: %w", err)
+	// Check if we need to do anything
+	if !vd.needsAttention(workCtx) {
+		return nil
+	}
+
+	var branch string
+	if workCtx.PullRequest == nil {
+		if anyCommentsFromBotOnIssue() {
+			// TODO
+		} else {
+			// This is a new issue, post initial comment and create branch
+
+			// Post initial comment
+			if err := vd.postIssueComment(ctx, owner, repo, *issue.Number,
+				"👋 I'm analyzing this issue and will assist you shortly."); err != nil {
+				return fmt.Errorf("failed to post initial comment: %v", err)
+			}
+
+			// Create branch
+			branchPtr, err := vd.createWorkBranch(ctx, owner, repo, issue)
+			if err != nil {
+				return fmt.Errorf("failed to create branch: %w", err)
+			}
+			branch = *branchPtr
+		}
+	} else {
+		branch = *workCtx.PullRequest.Head.Ref
 	}
 
 	// Let AI decide what to do with text editor tool support
-	err = vd.processWithAI(ctx, workCtx, owner, repo, *branch)
+	err = vd.processWithAI(ctx, workCtx, owner, repo, branch)
 	if err != nil {
-		vd.removeLabel(ctx, owner, repo, *issue.Number, LabelInProgress)
 		return fmt.Errorf("failed to process with AI: %w", err)
 	}
 
@@ -390,133 +430,6 @@ func (vd *VirtualDeveloper) processWithAI(ctx context.Context, workCtx *WorkCont
 	}
 
 	return fmt.Errorf("exceeded maximum iterations (%d) without completion", maxIterations)
-}
-
-// processExistingPRs handles PRs that may need updates
-func (vd *VirtualDeveloper) processExistingPRs(ctx context.Context) {
-	// Search for open PRs created by the bot
-	query := fmt.Sprintf("author:%s is:pr is:open", vd.config.GitHubUsername)
-	prs, _, err := vd.githubClient.Search.Issues(ctx, query, nil)
-	if err != nil {
-		log.Printf("Error searching PRs: %v", err)
-		return
-	}
-
-	for _, pr := range prs.Issues {
-		if pr == nil || pr.RepositoryURL == nil || pr.Number == nil {
-			continue
-		}
-
-		// Extract owner and repo
-		parts := strings.Split(*pr.RepositoryURL, "/")
-		if len(parts) < 2 {
-			continue
-		}
-		owner := parts[len(parts)-2]
-		repo := parts[len(parts)-1]
-
-		// Process this PR for updates
-		if err := vd.processExistingPR(ctx, owner, repo, *pr.Number); err != nil {
-			log.Printf("Error processing PR #%d: %v", *pr.Number, err)
-		}
-	}
-}
-
-// processExistingPR checks if a PR needs updates and processes them
-func (vd *VirtualDeveloper) processExistingPR(ctx context.Context, owner, repo string, prNumber int) error {
-	// Get PR details
-	pr, _, err := vd.githubClient.PullRequests.Get(ctx, owner, repo, prNumber)
-	if err != nil {
-		return fmt.Errorf("failed to get PR details: %w", err)
-	}
-
-	// Get associated issue
-	var issue *github.Issue
-	if pr.Body != nil {
-		if issueNum := extractIssueNumber(*pr.Body); issueNum > 0 {
-			issue, _, _ = vd.githubClient.Issues.Get(ctx, owner, repo, issueNum)
-		}
-	}
-
-	if issue == nil {
-		log.Printf("Warning: Could not find associated issue for PR #%d", prNumber)
-		return nil
-	}
-
-	// Build work context with PR
-	workCtx, err := vd.buildWorkContext(ctx, owner, repo, issue, pr)
-	if err != nil {
-		return fmt.Errorf("failed to build work context: %w", err)
-	}
-
-	// Check if we need to do anything
-	if !vd.needsAttention(workCtx) {
-		return nil
-	}
-
-	log.Printf("Processing PR #%d", prNumber)
-
-	// Let AI decide what to do with text editor support
-	err = vd.processWithAI(ctx, workCtx, owner, repo, *pr.Head.Ref)
-	if err != nil {
-		// Post sanitized error comment
-		vd.postIssueComment(ctx, owner, repo, prNumber,
-			"I encountered an error while processing this. I'll retry on the next check cycle.")
-		return fmt.Errorf("failed to process with AI: %w", err)
-	}
-
-	return nil
-}
-
-// processIssuesInDiscussion handles issues where AI is engaged in discussion
-func (vd *VirtualDeveloper) processIssuesInDiscussion(ctx context.Context) {
-	// Search for issues with in-progress label but no PR
-	query := fmt.Sprintf("assignee:%s is:issue is:open label:\"%s\"", vd.config.GitHubUsername, LabelInProgress)
-	issues, _, err := vd.githubClient.Search.Issues(ctx, query, nil)
-	if err != nil {
-		log.Printf("Error searching issues in discussion: %v", err)
-		return
-	}
-
-	for _, issue := range issues.Issues {
-		if issue == nil || issue.RepositoryURL == nil || issue.Number == nil {
-			continue
-		}
-
-		// Extract owner and repo
-		parts := strings.Split(*issue.RepositoryURL, "/")
-		if len(parts) < 2 {
-			continue
-		}
-		owner := parts[len(parts)-2]
-		repo := parts[len(parts)-1]
-
-		// Check if this issue has a PR
-		if vd.issueHasPR(ctx, owner, repo, *issue.Number) {
-			continue
-		}
-
-		// Build context and check if there's new activity
-		workCtx, err := vd.buildWorkContext(ctx, owner, repo, issue, nil)
-		if err != nil {
-			log.Printf("Error building context for issue #%d: %v", *issue.Number, err)
-			continue
-		}
-
-		// Check if there's new activity since last bot comment
-		if !vd.needsAttention(workCtx) {
-			continue
-		}
-
-		log.Printf("Continuing discussion on issue #%d", *issue.Number)
-
-		// Let AI continue the discussion
-		err = vd.processWithAI(ctx, workCtx, owner, repo, "")
-		if err != nil {
-			log.Printf("Error processing issue #%d: %v", *issue.Number, err)
-			continue
-		}
-	}
 }
 
 // Helper functions
