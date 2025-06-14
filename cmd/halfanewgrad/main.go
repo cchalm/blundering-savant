@@ -1,6 +1,7 @@
 package main
 
 import (
+	"container/list"
 	"context"
 	"fmt"
 	"log"
@@ -30,12 +31,25 @@ type VirtualDeveloper struct {
 	anthropicClient   anthropic.Client
 	toolRegistry      *ToolRegistry
 	fileSystemFactory githubFileSystemFactory
+	botUser           *github.User
 }
 
 var (
-	LabelWorking = github.Label{Name: github.Ptr("bot-working"), Color: github.Ptr("fbca04")}
-	LabelBlocked = github.Label{Name: github.Ptr("bot-blocked"), Color: github.Ptr("f03010")}
-	LabelBotTurn = github.Label{Name: github.Ptr("bot-turn"), Color: github.Ptr("2020f0")}
+	LabelWorking = github.Label{
+		Name:        github.Ptr("bot-working"),
+		Description: github.Ptr("the bot is actively working on this issue"),
+		Color:       github.Ptr("fbca04"),
+	}
+	LabelBlocked = github.Label{
+		Name:        github.Ptr("bot-blocked"),
+		Description: github.Ptr("the bot encountered an unrecoverable problem and needs human intervention to continue working on this issue"),
+		Color:       github.Ptr("f03010"),
+	}
+	LabelBotTurn = github.Label{
+		Name:        github.Ptr("bot-turn"),
+		Description: github.Ptr("it is the bot's turn to take action on this issue"),
+		Color:       github.Ptr("2020f0"),
+	}
 )
 
 func main() {
@@ -117,14 +131,15 @@ func (vd *VirtualDeveloper) Run() {
 // checkAndProcessWorkItems checks for work items that need attention
 func (vd *VirtualDeveloper) checkAndProcessWorkItems(ctx context.Context) {
 	// Search for issues assigned to the bot that are not being worked on and are not blocked
-	query := fmt.Sprintf("assignee:%s is:issue is:open -label:%s -label:%s", vd.config.GitHubUsername, LabelWorking, LabelBlocked)
-	issues, _, err := vd.githubClient.Search.Issues(ctx, query, nil)
+	query := fmt.Sprintf("assignee:%s is:issue is:open -label:%s -label:%s", vd.config.GitHubUsername, *LabelWorking.Name, *LabelBlocked.Name)
+	result, _, err := vd.githubClient.Search.Issues(ctx, query, nil)
 	if err != nil {
 		log.Printf("Error searching issues: %v", err)
 		return
 	}
+	log.Printf("Found %d issue(s)", len(result.Issues))
 
-	for _, issue := range issues.Issues {
+	for _, issue := range result.Issues {
 		if issue == nil || issue.RepositoryURL == nil || issue.Number == nil {
 			log.Print("Warning: unexpected nil")
 			continue
@@ -133,17 +148,13 @@ func (vd *VirtualDeveloper) checkAndProcessWorkItems(ctx context.Context) {
 		// Extract owner and repo
 		parts := strings.Split(*issue.RepositoryURL, "/")
 		if len(parts) < 2 {
+			log.Print("Warning: failed to parse repo URL")
 			continue
 		}
 		owner := parts[len(parts)-2]
 		repo := parts[len(parts)-1]
 
-		issueTitle := "untitled"
-		if issue.Title != nil {
-			issueTitle = *issue.Title
-		}
-
-		log.Printf("Processing issue #%d in %s/%s: %s", *issue.Number, owner, repo, issueTitle)
+		log.Printf("Processing issue #%d in %s/%s: %v (%v)", *issue.Number, owner, repo, issue.Title, issue.URL)
 
 		// Process this issue
 		if err := vd.processIssue(ctx, owner, repo, issue); err != nil {
@@ -171,7 +182,7 @@ func (vd *VirtualDeveloper) processIssue(ctx context.Context, owner, repo string
 	}()
 
 	// Build work context
-	workCtx, err := vd.buildWorkContext(ctx, owner, repo, issue)
+	workCtx, err := vd.buildWorkContext(ctx, owner, repo, issue, vd.botUser)
 	if err != nil {
 		return fmt.Errorf("failed to build work context: %w", err)
 	}
@@ -181,6 +192,7 @@ func (vd *VirtualDeveloper) processIssue(ctx context.Context, owner, repo string
 
 	// Check if we need to do anything
 	if !vd.needsAttention(*workCtx) {
+		log.Printf("issue does not require attention")
 		return nil
 	}
 
@@ -256,7 +268,7 @@ func createBranch(client *github.Client, owner, repo, baseBranch, newBranch stri
 
 // TODO look into merging owner, repo, and branch into workCtx
 // processWithAI handles the AI interaction with text editor tool support
-func (vd *VirtualDeveloper) processWithAI(ctx context.Context, workCtx WorkContext, owner, repo string) error {
+func (vd *VirtualDeveloper) processWithAI(ctx context.Context, workCtx workContext, owner, repo string) error {
 	maxIterations := 30
 
 	// fs may be nil if no branch name is given, e.g. if the issue is currently in the requirements clarification phase
@@ -350,76 +362,121 @@ func (vd *VirtualDeveloper) processWithAI(ctx context.Context, workCtx WorkConte
 // Helper functions
 
 // needsAttention checks if a work item needs AI attention
-func (vd *VirtualDeveloper) needsAttention(workCtx WorkContext) bool {
+func (vd *VirtualDeveloper) needsAttention(workCtx workContext) bool {
 	// Check if there are comments needing responses
-	if len(workCtx.NeedsToRespond) > 0 {
+	if len(workCtx.IssueCommentsRequiringResponses) > 0 ||
+		len(workCtx.PRCommentsRequiringResponses) > 0 ||
+		len(workCtx.PRReviewCommentsRequiringResponses) > 0 {
+
 		return true
-	}
-
-	// Check for unaddressed change requests
-	for _, review := range workCtx.PRReviews {
-		if review.State == "CHANGES_REQUESTED" && review.Author != workCtx.BotUsername {
-			return true
-		}
-	}
-
-	// Check for new comments since last bot activity
-	lastBotActivity := vd.getLastBotActivity(workCtx)
-	for _, comment := range workCtx.IssueComments {
-		if comment.Author != workCtx.BotUsername && comment.CreatedAt.After(lastBotActivity) {
-			return true
-		}
-	}
-
-	for _, comment := range workCtx.PRReviewComments {
-		if comment.Author != workCtx.BotUsername && comment.CreatedAt.After(lastBotActivity) {
-			return true
-		}
 	}
 
 	return false
 }
 
-// getLastBotActivity finds the timestamp of the last bot activity
-func (vd *VirtualDeveloper) getLastBotActivity(workCtx WorkContext) time.Time {
-	var lastActivity time.Time
-
-	// Check issue comments
-	for _, comment := range workCtx.IssueComments {
-		if comment.Author == workCtx.BotUsername && comment.CreatedAt.After(lastActivity) {
-			lastActivity = comment.CreatedAt
-		}
-	}
-
-	// Check PR comments
-	for _, comment := range workCtx.PRReviewComments {
-		if comment.Author == workCtx.BotUsername && comment.CreatedAt.After(lastActivity) {
-			lastActivity = comment.CreatedAt
-		}
-	}
-
-	return lastActivity
-}
-
 // GitHub API helper functions
 
-// issueHasPR checks if an issue already has an associated PR
-func (vd *VirtualDeveloper) getPRForBranch(ctx context.Context, owner, repo string, githubUsername string, branch string) (*github.PullRequest, error) {
-	results, _, err := vd.githubClient.PullRequests.List(ctx, owner, repo, &github.PullRequestListOptions{
-		Head: fmt.Sprintf("%s:%s", githubUsername, branch), // TODO check if this is the right format
-	})
+// pickIssueCommentsRequiringResponse gets regular issue/PR comments that haven't been reacted to by the bot
+func (vd *VirtualDeveloper) pickIssueCommentsRequiringResponse(ctx context.Context, owner, repo string, comments []*github.IssueComment, botUser *github.User) ([]*github.IssueComment, error) {
+	var commentsRequiringResponse []*github.IssueComment
+
+	for _, comment := range comments {
+		// Skip if this is the bot's own comment
+		if vd.isBotComment(comment.User, botUser) {
+			continue
+		}
+
+		// Check if bot has reacted to this comment
+		hasReacted, err := vd.hasBotReactedToIssueComment(ctx, owner, repo, *comment.ID, botUser)
+		if err != nil {
+			return nil, fmt.Errorf("failed to check reactions for comment %d: %w", *comment.ID, err)
+		}
+		if hasReacted {
+			continue
+		}
+
+		commentsRequiringResponse = append(commentsRequiringResponse, comment)
+	}
+
+	return commentsRequiringResponse, nil
+}
+
+// getReviewComments gets PR review comments that haven't been replied to or reacted to by the bot
+func (vd *VirtualDeveloper) pickPRReviewCommentsRequiringResponse(ctx context.Context, owner, repo string, commentThreads [][]*github.PullRequestComment, botUser *github.User) ([]*github.PullRequestComment, error) {
+	var commentsRequiringResponse []*github.PullRequestComment
+
+	for _, thread := range commentThreads {
+		// Look at every comment, not just the last comment in each thread. Multiple replies may have been added to a
+		// chain since the bot last looked at it, and for other contributors' peace of mind the bot should explicitly
+		// acknolwedge that it has seen every comment in the chain, even if it only replied to the last one
+		for _, comment := range thread {
+			// Skip if this is the bot's own comment
+			if vd.isBotComment(comment.User, botUser) {
+				continue
+			}
+
+			// Check if bot has reacted to this comment
+			hasReacted, err := vd.hasBotReactedToReviewComment(ctx, owner, repo, *comment.ID, botUser)
+			if err != nil {
+				return nil, fmt.Errorf("failed to check reactions for review comment %d: %w", *comment.ID, err)
+			}
+			if hasReacted {
+				continue
+			}
+
+			commentsRequiringResponse = append(commentsRequiringResponse, comment)
+		}
+	}
+
+	return commentsRequiringResponse, nil
+}
+
+// isBotComment checks if a comment was made by the bot
+func (vd *VirtualDeveloper) isBotComment(commentUser, botUser *github.User) bool {
+	return commentUser != nil && botUser.Login != nil &&
+		commentUser.Login != nil && *commentUser.Login == *botUser.Login
+}
+
+// hasBotReactedToIssueComment checks if the bot has reacted to an issue comment
+func (vd *VirtualDeveloper) hasBotReactedToIssueComment(ctx context.Context, owner, repo string, commentID int64, botUser *github.User) (bool, error) {
+	if botUser.Login == nil {
+		return false, nil
+	}
+
+	reactions, _, err := vd.githubClient.Reactions.ListIssueCommentReactions(ctx, owner, repo, commentID, nil)
 	if err != nil {
-		return nil, fmt.Errorf("failed to list pull requests: %w", err)
+		return false, fmt.Errorf("failed to list reactions: %w", err)
 	}
 
-	if len(results) == 0 {
-		return nil, nil
-	} else if len(results) > 1 {
-		log.Printf("Warning: multiple pull requests found matching branch")
-
+	for _, reaction := range reactions {
+		if reaction.User != nil && reaction.User.Login != nil &&
+			*reaction.User.Login == *botUser.Login {
+			return true, nil
+		}
 	}
 
-	return results[0], nil
+	return false, nil
+}
+
+// hasBotReactedToReviewComment checks if the bot has reacted to a review comment
+func (vd *VirtualDeveloper) hasBotReactedToReviewComment(ctx context.Context, owner, repo string, commentID int64, botUser *github.User) (bool, error) {
+	if botUser.Login == nil {
+		return false, nil
+	}
+
+	reactions, _, err := vd.githubClient.Reactions.ListPullRequestCommentReactions(ctx, owner, repo, commentID, nil)
+	if err != nil {
+		return false, fmt.Errorf("failed to list reactions: %w", err)
+	}
+
+	for _, reaction := range reactions {
+		if reaction.User != nil && reaction.User.Login != nil &&
+			*reaction.User.Login == *botUser.Login {
+			return true, nil
+		}
+	}
+
+	return false, nil
 }
 
 func (vd *VirtualDeveloper) postIssueComment(ctx context.Context, owner, repo string, number int, body string) error {
@@ -472,8 +529,8 @@ func (vd *VirtualDeveloper) ensureLabelExists(ctx context.Context, owner, repo s
 // Context building functions
 
 // buildWorkContext creates a complete work context
-func (vd *VirtualDeveloper) buildWorkContext(ctx context.Context, owner, repo string, issue *github.Issue) (*WorkContext, error) {
-	workCtx := WorkContext{
+func (vd *VirtualDeveloper) buildWorkContext(ctx context.Context, owner, repo string, issue *github.Issue, botUser *github.User) (*workContext, error) {
+	workCtx := workContext{
 		BotUsername: vd.config.GitHubUsername,
 		Issue:       issue,
 	}
@@ -519,7 +576,7 @@ func (vd *VirtualDeveloper) buildWorkContext(ctx context.Context, owner, repo st
 	workCtx.CodebaseInfo = codebaseInfo
 
 	// Get issue comments
-	if issue != nil && issue.Number != nil {
+	if issue.Number != nil {
 		comments, err := vd.getAllIssueComments(ctx, owner, repo, *issue.Number)
 		if err != nil {
 			log.Printf("Warning: Could not get issue comments: %v", err)
@@ -527,22 +584,53 @@ func (vd *VirtualDeveloper) buildWorkContext(ctx context.Context, owner, repo st
 		workCtx.IssueComments = comments
 	}
 
-	// Get PR comments and reviews if PR exists
+	// If there is a PR, get PR comments, reviews, and review comments
 	if pr != nil && pr.Number != nil {
+		// Get PR comments
+		comments, err := vd.getAllIssueComments(ctx, owner, repo, *issue.Number)
+		if err != nil {
+			return nil, fmt.Errorf("could not get pull request comments: %w", err)
+		}
+		workCtx.PRComments = comments
+
+		// Get reviews
 		reviews, err := vd.getAllPRReviews(ctx, owner, repo, *pr.Number)
 		if err != nil {
-			log.Printf("Warning: Could not get PR reviews: %v", err)
+			return nil, fmt.Errorf("could not get PR reviews: %w", err)
 		}
 		workCtx.PRReviews = reviews
 
-		comments, err := vd.getAllPRComments(ctx, owner, repo, *pr.Number)
+		// Get PR review comment threads
+		reviewComments, err := vd.getAllPRReviewComments(ctx, owner, repo, *pr.Number)
 		if err != nil {
-			log.Printf("Warning: Could not get PR comments: %v", err)
+			return nil, fmt.Errorf("could not get PR comments: %w", err)
 		}
-		workCtx.PRReviewComments = comments
+		reviewCommentThreads, err := organizePRReviewCommentsIntoThreads(reviewComments)
+		if err != nil {
+			return nil, fmt.Errorf("could not organize review comments into threads: %w", err)
+		}
+
+		workCtx.PRReviewCommentThreads = reviewCommentThreads
 	}
 
-	workCtx.AnalyzeComments()
+	// Get comments requiring responses
+	commentsReq, err := vd.pickIssueCommentsRequiringResponse(ctx, owner, repo, workCtx.IssueComments, botUser)
+	if err != nil {
+		return nil, fmt.Errorf("could not get issue comments requiring response: %w")
+	}
+	prCommentsReq, err := vd.pickIssueCommentsRequiringResponse(ctx, owner, repo, workCtx.PRComments, botUser)
+	if err != nil {
+		return nil, fmt.Errorf("could not get PR comments requiring response: %w")
+	}
+	prReviewCommentsReq, err := vd.pickPRReviewCommentsRequiringResponse(ctx, owner, repo, workCtx.PRReviewCommentThreads, botUser)
+	if err != nil {
+		return nil, fmt.Errorf("could not get PR review comments requiring response: %w")
+	}
+	workCtx.IssueCommentsRequiringResponses = commentsReq
+	workCtx.PRCommentsRequiringResponses = prCommentsReq
+	workCtx.PRReviewCommentsRequiringResponses = prReviewCommentsReq
+	// TODO get comments requiring replies
+
 	return &workCtx, nil
 }
 
@@ -661,8 +749,8 @@ func (vd *VirtualDeveloper) analyzeCodebase(ctx context.Context, owner, repo str
 // Comment retrieval functions
 
 // getAllIssueComments retrieves all comments on an issue
-func (vd *VirtualDeveloper) getAllIssueComments(ctx context.Context, owner, repo string, issueNumber int) ([]CommentContext, error) {
-	var allComments []CommentContext
+func (vd *VirtualDeveloper) getAllIssueComments(ctx context.Context, owner, repo string, issueNumber int) ([]*github.IssueComment, error) {
+	var allComments []*github.IssueComment
 
 	opts := &github.IssueListCommentsOptions{
 		Sort:      github.Ptr("created"),
@@ -678,41 +766,20 @@ func (vd *VirtualDeveloper) getAllIssueComments(ctx context.Context, owner, repo
 			return nil, err
 		}
 
-		for _, comment := range comments {
-			if comment == nil {
-				continue
-			}
-
-			commentCtx := CommentContext{
-				ID:          comment.GetID(),
-				Author:      comment.User.GetLogin(),
-				Body:        comment.GetBody(),
-				CreatedAt:   comment.GetCreatedAt().Time,
-				UpdatedAt:   comment.GetUpdatedAt().Time,
-				IsEdited:    comment.CreatedAt != comment.UpdatedAt,
-				CommentType: "issue",
-				Reactions:   make(map[string]int),
-			}
-
-			if comment.AuthorAssociation != nil {
-				commentCtx.AuthorType = *comment.AuthorAssociation
-			}
-
-			allComments = append(allComments, commentCtx)
-		}
-
 		if resp.NextPage == 0 {
 			break
 		}
 		opts.Page = resp.NextPage
+
+		allComments = append(allComments, comments...)
 	}
 
 	return allComments, nil
 }
 
 // getAllPRReviews retrieves all reviews on a PR
-func (vd *VirtualDeveloper) getAllPRReviews(ctx context.Context, owner, repo string, prNumber int) ([]ReviewContext, error) {
-	var allReviews []ReviewContext
+func (vd *VirtualDeveloper) getAllPRReviews(ctx context.Context, owner, repo string, prNumber int) ([]*github.PullRequestReview, error) {
+	var allReviews []*github.PullRequestReview
 
 	reviews, _, err := vd.githubClient.PullRequests.ListReviews(ctx, owner, repo, prNumber, nil)
 	if err != nil {
@@ -724,27 +791,15 @@ func (vd *VirtualDeveloper) getAllPRReviews(ctx context.Context, owner, repo str
 			continue
 		}
 
-		reviewCtx := ReviewContext{
-			ID:          review.GetID(),
-			Author:      review.User.GetLogin(),
-			State:       review.GetState(),
-			Body:        review.GetBody(),
-			SubmittedAt: review.GetSubmittedAt().Time,
-		}
-
-		if review.AuthorAssociation != nil {
-			reviewCtx.AuthorType = *review.AuthorAssociation
-		}
-
-		allReviews = append(allReviews, reviewCtx)
+		allReviews = append(allReviews, review)
 	}
 
 	return allReviews, nil
 }
 
 // getAllPRComments retrieves all review comments on a PR
-func (vd *VirtualDeveloper) getAllPRComments(ctx context.Context, owner, repo string, prNumber int) ([]ReviewCommentContext, error) {
-	var allComments []ReviewCommentContext
+func (vd *VirtualDeveloper) getAllPRReviewComments(ctx context.Context, owner, repo string, prNumber int) ([]*github.PullRequestComment, error) {
+	var allComments []*github.PullRequestComment
 
 	opts := &github.PullRequestListCommentsOptions{
 		Sort:      "created",
@@ -761,33 +816,12 @@ func (vd *VirtualDeveloper) getAllPRComments(ctx context.Context, owner, repo st
 		}
 
 		for _, comment := range comments {
-			if comment == nil {
+			if comment == nil || comment.ID == nil {
+				fmt.Println("Warning: comment or comment.ID unexpectedly nil")
 				continue
 			}
 
-			commentCtx := ReviewCommentContext{
-				CommentContext: CommentContext{
-					ID:          comment.GetID(),
-					Author:      comment.User.GetLogin(),
-					Body:        comment.GetBody(),
-					CreatedAt:   comment.GetCreatedAt().Time,
-					UpdatedAt:   comment.GetUpdatedAt().Time,
-					IsEdited:    comment.CreatedAt != comment.UpdatedAt,
-					CommentType: "pr",
-					Reactions:   make(map[string]int),
-				},
-				FilePath: comment.GetPath(),
-				Line:     comment.GetLine(),
-				Side:     comment.GetSide(),
-				DiffHunk: comment.GetDiffHunk(),
-				CommitID: comment.GetCommitID(),
-			}
-
-			if comment.AuthorAssociation != nil {
-				commentCtx.AuthorType = *comment.AuthorAssociation
-			}
-
-			allComments = append(allComments, commentCtx)
+			allComments = append(allComments, comment)
 		}
 
 		if resp.NextPage == 0 {
@@ -797,6 +831,94 @@ func (vd *VirtualDeveloper) getAllPRComments(ctx context.Context, owner, repo st
 	}
 
 	return allComments, nil
+}
+
+// organizePRReviewCommentsIntoThreads takes a list of pull request review comments and returns a list of comment
+// threads, where each thread is a list of comments that reply to the next
+// TODO test
+func organizePRReviewCommentsIntoThreads(comments []*github.PullRequestComment) ([][]*github.PullRequestComment, error) {
+	// Lookup of comment threads by the id that the _first_ comment in the thread replies to
+	commentThreadsByHeadRepliesTo := map[int64]*list.List{}
+	// Lookup of comment threads by the id of the _last_ comment in the thread
+	commentThreadsByTail := map[int64]*list.List{}
+
+	for _, comment := range comments {
+		if comment == nil || comment.ID == nil {
+			fmt.Println("Warning: comment or comment.ID unexpectedly nil")
+			continue
+		}
+
+		var threadByHead, threadByTail *list.List
+		var okHead, okTail bool
+
+		// Get the thread whose head is a reply to this comment
+		threadByHead, okHead = commentThreadsByHeadRepliesTo[*comment.ID]
+		// Get the thead that this comment replies to the tail of, if any
+		if comment.InReplyTo != nil {
+			threadByTail, okTail = commentThreadsByTail[*comment.InReplyTo]
+		}
+
+		if okHead {
+			// The head of an existing list replies to this comment, so this comment becomes the head of that list
+			delete(commentThreadsByHeadRepliesTo, *comment.ID)
+			threadByHead.PushFront(comment)
+			if !okTail && comment.InReplyTo != nil {
+				// If this comment does not reply to the tail of another list, then the list has a new head
+				// Skip if the comment doesn't reply to anything, as it won't be included in the head list
+				commentThreadsByHeadRepliesTo[*comment.InReplyTo] = threadByHead
+			}
+		}
+
+		if okTail {
+			// This comment replies to the tail of an existing list, so this comment becomes the tail of that list
+			delete(commentThreadsByTail, *comment.InReplyTo)
+			threadByTail.PushBack(comment)
+			if !okHead {
+				// If this comment is not also replied-to by the head of another list, then the list has a new tail
+				commentThreadsByTail[*comment.ID] = threadByTail
+			}
+		}
+
+		if !okHead && !okTail {
+			// This comment is not linked to any existing thread, so it's a new thread
+
+			// Add this comment as the first element of a new list
+			ls := list.New()
+			ls.PushBack(comment)
+			// Push the same list to both maps. IMPORTANT: the same list is referenced by both maps, so modifying
+			// the list in one map will modify it in both
+			if comment.InReplyTo != nil {
+				// If this is the top comment of a thread, there's no need to track it by head
+				commentThreadsByHeadRepliesTo[*comment.InReplyTo] = ls
+			}
+			commentThreadsByTail[*comment.ID] = ls
+		}
+	}
+
+	if len(commentThreadsByHeadRepliesTo) != 0 {
+		return nil, fmt.Errorf("found comments that reply to unknown comments")
+	}
+
+	checksum := 0
+	commentThreads := [][]*github.PullRequestComment{}
+	for _, thread := range commentThreadsByTail {
+		threadArray := []*github.PullRequestComment{}
+		node := thread.Front()
+		for node != nil {
+			threadArray = append(threadArray, node.Value.(*github.PullRequestComment))
+			node = node.Next()
+		}
+		checksum += len(threadArray)
+		commentThreads = append(commentThreads, threadArray)
+	}
+
+	// Sanity check
+	if checksum != len(commentThreads) {
+		return nil, fmt.Errorf("number of comments in threads (%d) did not match number of comments given (%d)",
+			len(commentThreads), checksum)
+	}
+
+	return commentThreads, nil
 }
 
 // Utility functions
@@ -839,7 +961,15 @@ When interacting:
 - Explain your reasoning when disagreeing with suggestions
 - Only create solutions when you have enough information
 - Engage in discussion threads appropriately
-- Add reactions to acknowledge you've seen comments
+- Reply to comments if and only if
+  - You need to ask a question to clarify a suggestion, or
+  - You would like to announce details of your intended implementation
+- Reply to comments directly for PR review comments, and reply to other comments by tagging the commenter and, if needed for clarity, quoting relevant parts of their comment
+- Always add reactions to acknowledge you've seen comments, even if you also reply
+- Use the following reactions:
+  - 💯 when you strongly agree with a comment and intend to act on it
+  - 💭 when you disagree with a comment
+  - 👍 when you neither strongly agree nor disagree with a comment but will act on it
 
 You have access to several tools:
 - str_replace_based_edit_tool: A text editor for viewing, creating, and editing files

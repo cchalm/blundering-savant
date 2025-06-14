@@ -2,14 +2,14 @@ package main
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
-	"time"
 
 	"github.com/google/go-github/v72/github"
 )
 
-// WorkContext represents all the context needed for the bot to generate solutions
-type WorkContext struct {
+// workContext represents all the context needed for the bot to generate solutions
+type workContext struct {
 	// Core entities
 	Issue       *github.Issue
 	Repository  *github.Repository
@@ -24,65 +24,18 @@ type WorkContext struct {
 	CodebaseInfo *CodebaseInfo
 
 	// Conversation context
-	IssueComments    []CommentContext
-	PRReviewComments []ReviewCommentContext
-	PRReviews        []ReviewContext
+	IssueComments          []*github.IssueComment
+	PRComments             []*github.IssueComment         // PRs are issues under the hood, so PR comments are issue comments
+	PRReviewCommentThreads [][]*github.PullRequestComment // List of comment threads
+	PRReviews              []*github.PullRequestReview
 
 	// Current work state
-	NeedsToRespond map[string]bool // Comment ID -> needs response
-
-	// Continuation context for multi-turn conversations
-	ContinuationContext string
-	ConversationHistory []ConversationTurn
+	IssueCommentsRequiringResponses    []*github.IssueComment
+	PRCommentsRequiringResponses       []*github.IssueComment
+	PRReviewCommentsRequiringResponses []*github.PullRequestComment
 
 	// Configuration
 	BotUsername string
-}
-
-// ConversationTurn represents a turn in the conversation with the AI
-type ConversationTurn struct {
-	Timestamp time.Time
-	Type      string // "user_action", "ai_decision", "tool_result"
-	Content   string
-}
-
-// CommentContext represents a comment with full context
-type CommentContext struct {
-	ID            int64
-	Author        string
-	AuthorType    string // "bot", "owner", "member", "contributor", "none"
-	Body          string
-	CreatedAt     time.Time
-	UpdatedAt     time.Time
-	IsEdited      bool
-	Reactions     map[string]int // emoji -> count
-	InReplyTo     *int64         // ID of parent comment if this is a reply
-	CommentType   string         // "issue", "pr"
-	NeedsResponse bool
-}
-
-// ReviewCommentContext represents a code review comment with context
-type ReviewCommentContext struct {
-	CommentContext
-	FilePath   string
-	Line       int
-	StartLine  *int   // For multi-line comments
-	Side       string // "LEFT" or "RIGHT"
-	DiffHunk   string
-	CommitID   string
-	ReviewID   *int64
-	ReplyChain []CommentContext // Replies to this comment
-}
-
-// ReviewContext represents a full PR review
-type ReviewContext struct {
-	ID          int64
-	Author      string
-	AuthorType  string
-	State       string // "APPROVED", "CHANGES_REQUESTED", "COMMENTED", "PENDING"
-	Body        string
-	SubmittedAt time.Time
-	Comments    []ReviewCommentContext
 }
 
 // CodebaseInfo holds information about the repository structure
@@ -101,7 +54,7 @@ type StyleGuide struct {
 }
 
 // BuildPrompt generates the complete prompt for Claude based on the context
-func (ctx WorkContext) BuildPrompt() string {
+func (ctx workContext) BuildPrompt() string {
 	var prompt strings.Builder
 
 	// Basic information
@@ -117,7 +70,7 @@ func (ctx WorkContext) BuildPrompt() string {
 	}
 
 	// Conversation context
-	if len(ctx.IssueComments) > 0 || len(ctx.PRReviewComments) > 0 || len(ctx.PRReviews) > 0 {
+	if len(ctx.IssueComments) > 0 || len(ctx.PRComments) > 0 || len(ctx.PRReviewCommentThreads) > 0 || len(ctx.PRReviews) > 0 {
 		prompt.WriteString("\n\n## Conversation History\n")
 		prompt.WriteString(ctx.buildConversationContext())
 	}
@@ -129,7 +82,7 @@ func (ctx WorkContext) BuildPrompt() string {
 }
 
 // buildBasicInfo creates the basic issue/PR information section
-func (ctx WorkContext) buildBasicInfo() string {
+func (ctx workContext) buildBasicInfo() string {
 	var info strings.Builder
 
 	repoName := "unknown"
@@ -172,7 +125,7 @@ Issue Description:
 }
 
 // buildCodebaseContext creates the codebase information section
-func (ctx WorkContext) buildCodebaseContext() string {
+func (ctx workContext) buildCodebaseContext() string {
 	var info strings.Builder
 
 	if ctx.CodebaseInfo.ReadmeContent != "" {
@@ -194,7 +147,7 @@ func (ctx WorkContext) buildCodebaseContext() string {
 }
 
 // buildConversationContext creates a chronological view of all comments
-func (ctx WorkContext) buildConversationContext() string {
+func (ctx workContext) buildConversationContext() string {
 	var timeline []string
 
 	// Add issue comments
@@ -206,120 +159,102 @@ func (ctx WorkContext) buildConversationContext() string {
 	for _, review := range ctx.PRReviews {
 		// Add the main review
 		reviewStr := fmt.Sprintf("\n### PR Review by @%s (%s) - %s\n",
-			review.Author,
-			review.AuthorType,
+			review.User,
+			*review.AuthorAssociation,
 			review.SubmittedAt.Format("2006-01-02 15:04"))
 
-		if review.State != "" {
-			reviewStr += fmt.Sprintf("**Status: %s**\n", review.State)
+		if review.State != nil {
+			reviewStr += fmt.Sprintf("**Status: %s**\n", *review.State)
 		}
 
-		if review.Body != "" {
-			reviewStr += fmt.Sprintf("\n%s\n", review.Body)
+		if review.Body != nil {
+			reviewStr += fmt.Sprintf("\n%s\n", *review.Body)
 		}
 
 		timeline = append(timeline, reviewStr)
-
-		// Add review comments
-		for _, comment := range review.Comments {
-			timeline = append(timeline, ctx.formatReviewComment(comment))
-		}
 	}
 
-	// Add standalone PR comments
-	for _, comment := range ctx.PRReviewComments {
-		if comment.ReviewID == nil {
-			timeline = append(timeline, ctx.formatReviewComment(comment))
-		}
+	for _, prComment := range ctx.PRComments {
+		timeline = append(timeline, ctx.formatComment(prComment, "Issue"))
+	}
+
+	// TODO consider grouping comments with their reviews
+
+	// Add PR review comment threads
+	for _, thread := range ctx.PRReviewCommentThreads {
+		timeline = append(timeline, ctx.formatReviewCommentThread(thread))
 	}
 
 	return strings.Join(timeline, "\n")
 }
 
 // formatComment formats a regular comment
-func (ctx WorkContext) formatComment(comment CommentContext, commentType string) string {
+func (ctx workContext) formatComment(comment *github.IssueComment, commentType string) string {
 	var formatted strings.Builder
 
-	formatted.WriteString(fmt.Sprintf("\n### %s Comment by @%s", commentType, comment.Author))
+	formatted.WriteString(fmt.Sprintf("\n### %s Comment %d by @%s", commentType, *comment.ID, *comment.User.Login))
 
-	if comment.AuthorType != "" && comment.AuthorType != "none" {
-		formatted.WriteString(fmt.Sprintf(" (%s)", comment.AuthorType))
+	if comment.AuthorAssociation != nil && *comment.AuthorAssociation != "" && *comment.AuthorAssociation != "none" {
+		formatted.WriteString(fmt.Sprintf(" (%s)", *comment.AuthorAssociation))
 	}
 
 	formatted.WriteString(fmt.Sprintf(" - %s\n", comment.CreatedAt.Format("2006-01-02 15:04")))
 
-	if comment.IsEdited {
+	if comment.UpdatedAt != nil && comment.CreatedAt != comment.UpdatedAt {
 		formatted.WriteString("*(edited)*\n")
 	}
 
-	if comment.InReplyTo != nil {
-		formatted.WriteString(fmt.Sprintf("*In reply to comment #%d*\n", *comment.InReplyTo))
-	}
+	formatted.WriteString(fmt.Sprintf("\n%s\n", *comment.Body))
 
-	formatted.WriteString(fmt.Sprintf("\n%s\n", comment.Body))
+	return formatted.String()
+}
 
-	// Add reactions if any
-	if len(comment.Reactions) > 0 {
-		formatted.WriteString("\nReactions: ")
-		var reactions []string
-		for emoji, count := range comment.Reactions {
-			reactions = append(reactions, fmt.Sprintf("%s (%d)", emoji, count))
+func (ctx workContext) formatReviewCommentThread(thread []*github.PullRequestComment) string {
+	var formatted strings.Builder
+
+	if len(thread) != 0 {
+		topComment := thread[0]
+
+		formatted.WriteString(fmt.Sprintf("\n### PR Review Comment Thread on `%s`", *topComment.Path))
+		if topComment.Line != nil && *topComment.Line > 0 {
+			formatted.WriteString(fmt.Sprintf(" (line %d", *topComment.Line))
+			if topComment.StartLine != nil && *topComment.StartLine != *topComment.Line {
+				formatted.WriteString(fmt.Sprintf("-%d", *topComment.Line))
+			}
+			formatted.WriteString(")")
 		}
-		formatted.WriteString(strings.Join(reactions, ", "))
-		formatted.WriteString("\n")
-	}
 
-	if comment.NeedsResponse && comment.Author != ctx.BotUsername {
-		formatted.WriteString("\n**[Needs Response]**\n")
+		if topComment.DiffHunk != nil && *topComment.DiffHunk != "" {
+			formatted.WriteString(fmt.Sprintf("\n```diff\n%s\n```\n", *topComment.DiffHunk))
+		}
+
+		for _, comment := range thread {
+			formatted.WriteString(ctx.formatReviewComment(comment))
+		}
 	}
 
 	return formatted.String()
 }
 
 // formatReviewComment formats a code review comment
-func (ctx WorkContext) formatReviewComment(comment ReviewCommentContext) string {
+func (ctx workContext) formatReviewComment(comment *github.PullRequestComment) string {
 	var formatted strings.Builder
 
-	formatted.WriteString(fmt.Sprintf("\n### Code Comment on `%s`", comment.FilePath))
-	if comment.Line > 0 {
-		formatted.WriteString(fmt.Sprintf(" (line %d", comment.Line))
-		if comment.StartLine != nil && *comment.StartLine != comment.Line {
-			formatted.WriteString(fmt.Sprintf("-%d", comment.Line))
-		}
-		formatted.WriteString(")")
-	}
+	formatted.WriteString(fmt.Sprintf("PR Review Comment %d by @%s", *comment.ID, *comment.User.Login))
 
-	formatted.WriteString(fmt.Sprintf(" by @%s", comment.Author))
-
-	if comment.AuthorType != "" && comment.AuthorType != "none" {
-		formatted.WriteString(fmt.Sprintf(" (%s)", comment.AuthorType))
+	if comment.AuthorAssociation != nil && *comment.AuthorAssociation != "" && *comment.AuthorAssociation != "none" {
+		formatted.WriteString(fmt.Sprintf(" (%s)", *comment.AuthorAssociation))
 	}
 
 	formatted.WriteString(fmt.Sprintf(" - %s\n", comment.CreatedAt.Format("2006-01-02 15:04")))
 
-	if comment.DiffHunk != "" {
-		formatted.WriteString(fmt.Sprintf("\n```diff\n%s\n```\n", comment.DiffHunk))
-	}
-
-	formatted.WriteString(fmt.Sprintf("\n%s\n", comment.Body))
-
-	// Add reply chain if exists
-	if len(comment.ReplyChain) > 0 {
-		formatted.WriteString("\n**Replies:**\n")
-		for _, reply := range comment.ReplyChain {
-			formatted.WriteString(ctx.formatComment(reply, "Reply"))
-		}
-	}
-
-	if comment.NeedsResponse && comment.Author != ctx.BotUsername {
-		formatted.WriteString("\n**[Needs Response]**\n")
-	}
+	formatted.WriteString(fmt.Sprintf("\n%s\n", *comment.Body))
 
 	return formatted.String()
 }
 
 // buildInstructions creates task-specific instructions
-func (ctx WorkContext) buildInstructions() string {
+func (ctx workContext) buildInstructions() string {
 	var instructions strings.Builder
 
 	instructions.WriteString("\n\n## Your Task\n\n")
@@ -349,127 +284,34 @@ Workflow:
 Review all comments, reviews, and feedback carefully. Make sure to address each point raised using the appropriate text editor commands.`)
 
 	// List specific comments needing responses
-	needsResponse := []string{}
-	for id, needs := range ctx.NeedsToRespond {
-		if needs {
-			needsResponse = append(needsResponse, id)
-		}
+	needsResponseIssueCommentIDs := []string{}
+	for _, comment := range ctx.IssueCommentsRequiringResponses {
+		needsResponseIssueCommentIDs = append(needsResponseIssueCommentIDs, strconv.FormatInt(*comment.ID, 10))
+	}
+	needsResponsePRCommentIDs := []string{}
+	for _, comment := range ctx.PRCommentsRequiringResponses {
+		needsResponsePRCommentIDs = append(needsResponsePRCommentIDs, strconv.FormatInt(*comment.ID, 10))
+	}
+	needsResponsePRReviewCommentIDs := []string{}
+	for _, comment := range ctx.PRReviewCommentsRequiringResponses {
+		needsResponsePRReviewCommentIDs = append(needsResponsePRReviewCommentIDs, strconv.FormatInt(*comment.ID, 10))
 	}
 
-	if len(needsResponse) > 0 {
-		instructions.WriteString(fmt.Sprintf("\n\nComments requiring responses: %s", strings.Join(needsResponse, ", ")))
+	if len(needsResponseIssueCommentIDs) > 0 {
+		instructions.WriteString(fmt.Sprintf("\n\nIssue comments requiring responses: %s", strings.Join(needsResponseIssueCommentIDs, ", ")))
+	}
+	if len(needsResponsePRCommentIDs) > 0 {
+		instructions.WriteString(fmt.Sprintf("\n\nPR comments requiring responses: %s", strings.Join(needsResponsePRCommentIDs, ", ")))
+	}
+	if len(needsResponsePRReviewCommentIDs) > 0 {
+		instructions.WriteString(fmt.Sprintf("\n\nPR review comments requiring responses: %s", strings.Join(needsResponsePRReviewCommentIDs, ", ")))
 	}
 
 	return instructions.String()
 }
 
-// AnalyzeComments determines which comments need responses
-func (ctx WorkContext) AnalyzeComments() {
-	// Reset the map
-	ctx.NeedsToRespond = make(map[string]bool)
-
-	// Check issue comments
-	for i, comment := range ctx.IssueComments {
-		if ctx.shouldRespondToComment(comment) {
-			commentID := fmt.Sprintf("issue-comment-%d", comment.ID)
-			ctx.NeedsToRespond[commentID] = true
-			ctx.IssueComments[i].NeedsResponse = true
-		}
-	}
-
-	// Check PR review comments
-	for i, comment := range ctx.PRReviewComments {
-		if ctx.shouldRespondToComment(comment.CommentContext) {
-			commentID := fmt.Sprintf("review-comment-%d", comment.ID)
-			ctx.NeedsToRespond[commentID] = true
-			ctx.PRReviewComments[i].NeedsResponse = true
-		}
-	}
-
-	// Check PR reviews
-	for _, review := range ctx.PRReviews {
-		if review.State == "CHANGES_REQUESTED" && review.Author != ctx.BotUsername {
-			reviewID := fmt.Sprintf("review-%d", review.ID)
-			ctx.NeedsToRespond[reviewID] = true
-		}
-	}
-}
-
-// shouldRespondToComment determines if a comment needs a response
-func (ctx WorkContext) shouldRespondToComment(comment CommentContext) bool {
-	// Don't respond to our own comments
-	if comment.Author == ctx.BotUsername {
-		return false
-	}
-
-	// Respond to direct questions (simple heuristic)
-	if strings.Contains(comment.Body, "?") {
-		return true
-	}
-
-	// Respond to comments mentioning the bot
-	if strings.Contains(comment.Body, "@"+ctx.BotUsername) {
-		return true
-	}
-
-	// Respond to comments with certain keywords
-	keywords := []string{"please", "could you", "can you", "would you", "fix", "change", "update", "implement"}
-	lowerBody := strings.ToLower(comment.Body)
-	for _, keyword := range keywords {
-		if strings.Contains(lowerBody, keyword) {
-			return true
-		}
-	}
-
-	return false
-}
-
-// GetCommentResponses generates responses for comments that need them
-func (ctx WorkContext) GetCommentResponses() map[string]string {
-	responses := make(map[string]string)
-
-	// This would be enhanced with AI-generated responses
-	// For now, return a placeholder
-	for commentID := range ctx.NeedsToRespond {
-		responses[commentID] = "I'll address this in my solution update."
-	}
-
-	return responses
-}
-
-// AddConversationTurn adds a turn to the conversation history
-func (ctx WorkContext) AddConversationTurn(turnType, content string) {
-	turn := ConversationTurn{
-		Timestamp: time.Now(),
-		Type:      turnType,
-		Content:   content,
-	}
-	ctx.ConversationHistory = append(ctx.ConversationHistory, turn)
-}
-
-// GetRecentConversationHistory returns the most recent conversation turns
-func (ctx WorkContext) GetRecentConversationHistory(limit int) []ConversationTurn {
-	if len(ctx.ConversationHistory) <= limit {
-		return ctx.ConversationHistory
-	}
-	return ctx.ConversationHistory[len(ctx.ConversationHistory)-limit:]
-}
-
-// HasUnaddressedFeedback checks if there are unaddressed change requests or comments
-func (ctx WorkContext) HasUnaddressedFeedback() bool {
-	// Check for change requests
-	for _, review := range ctx.PRReviews {
-		if review.State == "CHANGES_REQUESTED" && review.Author != ctx.BotUsername {
-			return true
-		}
-	}
-
-	// Check for comments needing responses
-	return len(ctx.NeedsToRespond) > 0
-}
-
 // GetMainLanguageInfo returns information about the main programming language
-func (ctx WorkContext) GetMainLanguageInfo() (string, map[string]string) {
+func (ctx workContext) GetMainLanguageInfo() (string, map[string]string) {
 	if ctx.CodebaseInfo == nil {
 		return "unknown", make(map[string]string)
 	}
@@ -490,7 +332,7 @@ func (ctx WorkContext) GetMainLanguageInfo() (string, map[string]string) {
 }
 
 // GetRepositoryStructure returns a formatted view of the repository structure
-func (ctx WorkContext) GetRepositoryStructure() string {
+func (ctx workContext) GetRepositoryStructure() string {
 	if ctx.CodebaseInfo == nil || len(ctx.CodebaseInfo.FileTree) == 0 {
 		return "Repository structure not available"
 	}
