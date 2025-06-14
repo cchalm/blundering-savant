@@ -13,7 +13,11 @@ type WorkContext struct {
 	// Core entities
 	Issue       *github.Issue
 	Repository  *github.Repository
-	PullRequest *github.PullRequest // May be nil for initial solution
+	PullRequest *github.PullRequest // May be nil if no pull request has yet been created
+
+	// Branches
+	TargetBranch string // The branch that changes will be merged into after review
+	WorkBranch   string // The branch that work will be done in
 
 	// Code context
 	StyleGuide   *StyleGuide
@@ -96,16 +100,8 @@ type StyleGuide struct {
 	RepoStyle map[string]string // language -> style patterns
 }
 
-// NewWorkContext creates a new work context
-func NewWorkContext(botUsername string) *WorkContext {
-	return &WorkContext{
-		BotUsername:    botUsername,
-		NeedsToRespond: make(map[string]bool),
-	}
-}
-
 // BuildPrompt generates the complete prompt for Claude based on the context
-func (ctx *WorkContext) BuildPrompt() string {
+func (ctx WorkContext) BuildPrompt() string {
 	var prompt strings.Builder
 
 	// Basic information
@@ -133,7 +129,7 @@ func (ctx *WorkContext) BuildPrompt() string {
 }
 
 // buildBasicInfo creates the basic issue/PR information section
-func (ctx *WorkContext) buildBasicInfo() string {
+func (ctx WorkContext) buildBasicInfo() string {
 	var info strings.Builder
 
 	repoName := "unknown"
@@ -176,7 +172,7 @@ Issue Description:
 }
 
 // buildCodebaseContext creates the codebase information section
-func (ctx *WorkContext) buildCodebaseContext() string {
+func (ctx WorkContext) buildCodebaseContext() string {
 	var info strings.Builder
 
 	if ctx.CodebaseInfo.ReadmeContent != "" {
@@ -198,7 +194,7 @@ func (ctx *WorkContext) buildCodebaseContext() string {
 }
 
 // buildConversationContext creates a chronological view of all comments
-func (ctx *WorkContext) buildConversationContext() string {
+func (ctx WorkContext) buildConversationContext() string {
 	var timeline []string
 
 	// Add issue comments
@@ -241,7 +237,7 @@ func (ctx *WorkContext) buildConversationContext() string {
 }
 
 // formatComment formats a regular comment
-func (ctx *WorkContext) formatComment(comment CommentContext, commentType string) string {
+func (ctx WorkContext) formatComment(comment CommentContext, commentType string) string {
 	var formatted strings.Builder
 
 	formatted.WriteString(fmt.Sprintf("\n### %s Comment by @%s", commentType, comment.Author))
@@ -281,7 +277,7 @@ func (ctx *WorkContext) formatComment(comment CommentContext, commentType string
 }
 
 // formatReviewComment formats a code review comment
-func (ctx *WorkContext) formatReviewComment(comment ReviewCommentContext) string {
+func (ctx WorkContext) formatReviewComment(comment ReviewCommentContext) string {
 	var formatted strings.Builder
 
 	formatted.WriteString(fmt.Sprintf("\n### Code Comment on `%s`", comment.FilePath))
@@ -323,7 +319,7 @@ func (ctx *WorkContext) formatReviewComment(comment ReviewCommentContext) string
 }
 
 // buildInstructions creates task-specific instructions
-func (ctx *WorkContext) buildInstructions() string {
+func (ctx WorkContext) buildInstructions() string {
 	var instructions strings.Builder
 
 	instructions.WriteString("\n\n## Your Task\n\n")
@@ -368,7 +364,7 @@ Review all comments, reviews, and feedback carefully. Make sure to address each 
 }
 
 // AnalyzeComments determines which comments need responses
-func (ctx *WorkContext) AnalyzeComments() {
+func (ctx WorkContext) AnalyzeComments() {
 	// Reset the map
 	ctx.NeedsToRespond = make(map[string]bool)
 
@@ -400,7 +396,7 @@ func (ctx *WorkContext) AnalyzeComments() {
 }
 
 // shouldRespondToComment determines if a comment needs a response
-func (ctx *WorkContext) shouldRespondToComment(comment CommentContext) bool {
+func (ctx WorkContext) shouldRespondToComment(comment CommentContext) bool {
 	// Don't respond to our own comments
 	if comment.Author == ctx.BotUsername {
 		return false
@@ -429,7 +425,7 @@ func (ctx *WorkContext) shouldRespondToComment(comment CommentContext) bool {
 }
 
 // GetCommentResponses generates responses for comments that need them
-func (ctx *WorkContext) GetCommentResponses() map[string]string {
+func (ctx WorkContext) GetCommentResponses() map[string]string {
 	responses := make(map[string]string)
 
 	// This would be enhanced with AI-generated responses
@@ -442,7 +438,7 @@ func (ctx *WorkContext) GetCommentResponses() map[string]string {
 }
 
 // AddConversationTurn adds a turn to the conversation history
-func (ctx *WorkContext) AddConversationTurn(turnType, content string) {
+func (ctx WorkContext) AddConversationTurn(turnType, content string) {
 	turn := ConversationTurn{
 		Timestamp: time.Now(),
 		Type:      turnType,
@@ -452,7 +448,7 @@ func (ctx *WorkContext) AddConversationTurn(turnType, content string) {
 }
 
 // GetRecentConversationHistory returns the most recent conversation turns
-func (ctx *WorkContext) GetRecentConversationHistory(limit int) []ConversationTurn {
+func (ctx WorkContext) GetRecentConversationHistory(limit int) []ConversationTurn {
 	if len(ctx.ConversationHistory) <= limit {
 		return ctx.ConversationHistory
 	}
@@ -460,7 +456,7 @@ func (ctx *WorkContext) GetRecentConversationHistory(limit int) []ConversationTu
 }
 
 // HasUnaddressedFeedback checks if there are unaddressed change requests or comments
-func (ctx *WorkContext) HasUnaddressedFeedback() bool {
+func (ctx WorkContext) HasUnaddressedFeedback() bool {
 	// Check for change requests
 	for _, review := range ctx.PRReviews {
 		if review.State == "CHANGES_REQUESTED" && review.Author != ctx.BotUsername {
@@ -473,7 +469,7 @@ func (ctx *WorkContext) HasUnaddressedFeedback() bool {
 }
 
 // GetMainLanguageInfo returns information about the main programming language
-func (ctx *WorkContext) GetMainLanguageInfo() (string, map[string]string) {
+func (ctx WorkContext) GetMainLanguageInfo() (string, map[string]string) {
 	if ctx.CodebaseInfo == nil {
 		return "unknown", make(map[string]string)
 	}
@@ -494,7 +490,7 @@ func (ctx *WorkContext) GetMainLanguageInfo() (string, map[string]string) {
 }
 
 // GetRepositoryStructure returns a formatted view of the repository structure
-func (ctx *WorkContext) GetRepositoryStructure() string {
+func (ctx WorkContext) GetRepositoryStructure() string {
 	if ctx.CodebaseInfo == nil || len(ctx.CodebaseInfo.FileTree) == 0 {
 		return "Repository structure not available"
 	}

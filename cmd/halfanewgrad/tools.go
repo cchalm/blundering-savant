@@ -26,7 +26,7 @@ type ToolContext struct {
 	FileSystem   *GitHubFileSystem
 	Owner        string
 	Repo         string
-	WorkContext  *WorkContext
+	WorkContext  WorkContext
 	GithubClient *github.Client
 }
 

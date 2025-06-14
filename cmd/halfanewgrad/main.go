@@ -32,10 +32,10 @@ type VirtualDeveloper struct {
 	fileSystemFactory githubFileSystemFactory
 }
 
-const (
-	LabelWorking = "bot-working"
-	LabelBlocked = "bot-blocked"
-	LabelBotTurn = "bot-turn"
+var (
+	LabelWorking = github.Label{Name: github.Ptr("bot-working"), Color: github.Ptr("fbca04")}
+	LabelBlocked = github.Label{Name: github.Ptr("bot-blocked"), Color: github.Ptr("f03010")}
+	LabelBotTurn = github.Label{Name: github.Ptr("bot-turn"), Color: github.Ptr("2020f0")}
 )
 
 func main() {
@@ -48,7 +48,7 @@ func main() {
 		GitHubToken:     os.Getenv("GITHUB_TOKEN"),
 		AnthropicAPIKey: os.Getenv("ANTHROPIC_API_KEY"),
 		GitHubUsername:  os.Getenv("GITHUB_USERNAME"),
-		CheckInterval:   5 * time.Minute,
+		CheckInterval:   5 * time.Minute, // Default
 	}
 
 	if config.GitHubToken == "" || config.AnthropicAPIKey == "" || config.GitHubUsername == "" {
@@ -152,51 +152,6 @@ func (vd *VirtualDeveloper) checkAndProcessWorkItems(ctx context.Context) {
 	}
 }
 
-// processIssuesWithoutPRs handles issues that don't have PRs yet
-func (vd *VirtualDeveloper) processIssuesWithoutPRs(ctx context.Context) {
-	// Search for issues assigned to bot without PRs
-	query := fmt.Sprintf("assignee:%s is:issue is:open", vd.config.GitHubUsername)
-	issues, _, err := vd.githubClient.Search.Issues(ctx, query, nil)
-	if err != nil {
-		log.Printf("Error searching issues: %v", err)
-		return
-	}
-
-	for _, issue := range issues.Issues {
-		if issue == nil || issue.RepositoryURL == nil || issue.Number == nil {
-			continue
-		}
-
-		// Extract owner and repo
-		parts := strings.Split(*issue.RepositoryURL, "/")
-		if len(parts) < 2 {
-			continue
-		}
-		owner := parts[len(parts)-2]
-		repo := parts[len(parts)-1]
-
-		// Check if this issue already has a PR
-		if vd.issueHasPR(ctx, owner, repo, *issue.Number) {
-			continue
-		}
-
-		issueTitle := "untitled"
-		if issue.Title != nil {
-			issueTitle = *issue.Title
-		}
-
-		log.Printf("Processing issue #%d in %s/%s: %s", *issue.Number, owner, repo, issueTitle)
-
-		// Process this issue (generate solution and create PR)
-		if err := vd.processNewIssue(ctx, owner, repo, issue); err != nil {
-			log.Printf("Error processing issue #%d: %v", *issue.Number, err)
-			// Post sanitized error comment
-			vd.postIssueComment(ctx, owner, repo, *issue.Number,
-				"🆘 I encountered an error while working on this issue.")
-		}
-	}
-}
-
 // processIssue processes a single issue
 func (vd *VirtualDeveloper) processIssue(ctx context.Context, owner, repo string, issue *github.Issue) (err error) {
 	// Add in-progress label
@@ -215,49 +170,22 @@ func (vd *VirtualDeveloper) processIssue(ctx context.Context, owner, repo string
 		}
 	}()
 
-	// TODO get PR somehow?
-	// Check if this issue has a PR
-	// Modify this to get the PR
-	if vd.issueHasPR(ctx, owner, repo, *issue.Number) {
-	}
-
 	// Build work context
-	workCtx, err := vd.buildWorkContext(ctx, owner, repo, issue, nil)
+	workCtx, err := vd.buildWorkContext(ctx, owner, repo, issue)
 	if err != nil {
 		return fmt.Errorf("failed to build work context: %w", err)
 	}
 
+	// Create work branch, if it doesn't already exist
+	err = createBranch(vd.githubClient, owner, repo, workCtx.TargetBranch, workCtx.WorkBranch)
+
 	// Check if we need to do anything
-	if !vd.needsAttention(workCtx) {
+	if !vd.needsAttention(*workCtx) {
 		return nil
 	}
 
-	var branch string
-	if workCtx.PullRequest == nil {
-		if anyCommentsFromBotOnIssue() {
-			// TODO
-		} else {
-			// This is a new issue, post initial comment and create branch
-
-			// Post initial comment
-			if err := vd.postIssueComment(ctx, owner, repo, *issue.Number,
-				"👋 I'm analyzing this issue and will assist you shortly."); err != nil {
-				return fmt.Errorf("failed to post initial comment: %v", err)
-			}
-
-			// Create branch
-			branchPtr, err := vd.createWorkBranch(ctx, owner, repo, issue)
-			if err != nil {
-				return fmt.Errorf("failed to create branch: %w", err)
-			}
-			branch = *branchPtr
-		}
-	} else {
-		branch = *workCtx.PullRequest.Head.Ref
-	}
-
 	// Let AI decide what to do with text editor tool support
-	err = vd.processWithAI(ctx, workCtx, owner, repo, branch)
+	err = vd.processWithAI(ctx, *workCtx, owner, repo)
 	if err != nil {
 		return fmt.Errorf("failed to process with AI: %w", err)
 	}
@@ -265,50 +193,41 @@ func (vd *VirtualDeveloper) processIssue(ctx context.Context, owner, repo string
 	return nil
 }
 
-// createWorkBranch creates a branch that the bot will make changes in while working on the given issue. It returns the
-// name of the branch
-func (vd *VirtualDeveloper) createWorkBranch(ctx context.Context, owner, repo string, issue *github.Issue) (*string, error) {
-	var baseBranch string
-	if repoInfo, _, err := vd.githubClient.Repositories.Get(ctx, owner, repo); err == nil && repoInfo.DefaultBranch != nil {
-		baseBranch = *repoInfo.DefaultBranch
-	} else {
-		// Fall back to a reasonable default
-		baseBranch = "main"
-	}
-
-	// Create a descriptive branch name
+func getWorkBranchName(issue *github.Issue) string {
 	var branchName string
 	if issue.Title != nil {
-		sanitizedTitle := sanitizeBranchName(*issue.Title)
-		branchName = fmt.Sprintf("fix/issue-%d-%s", *issue.Number, sanitizedTitle)
+		branchName = fmt.Sprintf("fix/issue-%d-%s", *issue.Number, sanitizeForBranchName(*issue.Title))
 	} else {
 		branchName = fmt.Sprintf("fix/issue-%d", *issue.Number)
 	}
 
-	createBranch(vd.githubClient, owner, repo, baseBranch, branchName)
-
-	return &branchName, nil
+	return normalizeBranchName(branchName)
 }
 
-func sanitizeBranchName(title string) string {
+func sanitizeForBranchName(s string) string {
 	// Convert to lowercase and replace invalid characters
-	title = strings.ToLower(title)
-	title = strings.ReplaceAll(title, " ", "-")
-	title = strings.ReplaceAll(title, "_", "-")
+	s = strings.ToLower(s)
+	s = strings.ReplaceAll(s, " ", "-")
+	s = strings.ReplaceAll(s, "_", "-")
 
 	// Remove invalid characters for git branch names
 	invalidChars := []string{"~", "^", ":", "?", "*", "[", "]", "\\", "..", "@{", "/.", "//"}
 	for _, char := range invalidChars {
-		title = strings.ReplaceAll(title, char, "")
+		s = strings.ReplaceAll(s, char, "")
 	}
 
-	// Limit length and clean up
-	if len(title) > 50 {
-		title = title[:50]
-	}
-	title = strings.Trim(title, "-.")
+	return s
+}
 
-	return title
+func normalizeBranchName(s string) string {
+	// Limit length
+	if len(s) > 70 {
+		s = s[:70]
+	}
+	// Clean up trailing separators
+	s = strings.Trim(s, "-.")
+
+	return s
 }
 
 // CreateBranch creates a new branch from the default branch
@@ -337,17 +256,13 @@ func createBranch(client *github.Client, owner, repo, baseBranch, newBranch stri
 
 // TODO look into merging owner, repo, and branch into workCtx
 // processWithAI handles the AI interaction with text editor tool support
-func (vd *VirtualDeveloper) processWithAI(ctx context.Context, workCtx *WorkContext, owner, repo, branch string) error {
+func (vd *VirtualDeveloper) processWithAI(ctx context.Context, workCtx WorkContext, owner, repo string) error {
 	maxIterations := 30
 
 	// fs may be nil if no branch name is given, e.g. if the issue is currently in the requirements clarification phase
-	var err error
-	var fs *GitHubFileSystem
-	if branch != "" {
-		fs, err = vd.fileSystemFactory.NewFileSystem(owner, repo, branch)
-		if err != nil {
-			return fmt.Errorf("failed to create file system: %w", err)
-		}
+	fs, err := vd.fileSystemFactory.NewFileSystem(owner, repo, workCtx.WorkBranch)
+	if err != nil {
+		return fmt.Errorf("failed to create file system: %w", err)
 	}
 
 	// Create tool context
@@ -435,7 +350,7 @@ func (vd *VirtualDeveloper) processWithAI(ctx context.Context, workCtx *WorkCont
 // Helper functions
 
 // needsAttention checks if a work item needs AI attention
-func (vd *VirtualDeveloper) needsAttention(workCtx *WorkContext) bool {
+func (vd *VirtualDeveloper) needsAttention(workCtx WorkContext) bool {
 	// Check if there are comments needing responses
 	if len(workCtx.NeedsToRespond) > 0 {
 		return true
@@ -466,7 +381,7 @@ func (vd *VirtualDeveloper) needsAttention(workCtx *WorkContext) bool {
 }
 
 // getLastBotActivity finds the timestamp of the last bot activity
-func (vd *VirtualDeveloper) getLastBotActivity(workCtx *WorkContext) time.Time {
+func (vd *VirtualDeveloper) getLastBotActivity(workCtx WorkContext) time.Time {
 	var lastActivity time.Time
 
 	// Check issue comments
@@ -489,19 +404,22 @@ func (vd *VirtualDeveloper) getLastBotActivity(workCtx *WorkContext) time.Time {
 // GitHub API helper functions
 
 // issueHasPR checks if an issue already has an associated PR
-func (vd *VirtualDeveloper) issueHasPR(ctx context.Context, owner, repo string, issueNumber int) bool {
-	query := fmt.Sprintf("repo:%s/%s is:pr is:open %d", owner, repo, issueNumber)
-	results, _, err := vd.githubClient.Search.Issues(ctx, query, nil)
-	if err != nil || results == nil {
-		return false
+func (vd *VirtualDeveloper) getPRForBranch(ctx context.Context, owner, repo string, githubUsername string, branch string) (*github.PullRequest, error) {
+	results, _, err := vd.githubClient.PullRequests.List(ctx, owner, repo, &github.PullRequestListOptions{
+		Head: fmt.Sprintf("%s:%s", githubUsername, branch), // TODO check if this is the right format
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to list pull requests: %w", err)
 	}
 
-	for _, pr := range results.Issues {
-		if pr.User != nil && pr.User.GetLogin() == vd.config.GitHubUsername {
-			return true
-		}
+	if len(results) == 0 {
+		return nil, nil
+	} else if len(results) > 1 {
+		log.Printf("Warning: multiple pull requests found matching branch")
+
 	}
-	return false
+
+	return results[0], nil
 }
 
 func (vd *VirtualDeveloper) postIssueComment(ctx context.Context, owner, repo string, number int, body string) error {
@@ -515,52 +433,68 @@ func (vd *VirtualDeveloper) postIssueComment(ctx context.Context, owner, repo st
 // Label management functions
 
 // addLabel adds a label to an issue
-func (vd *VirtualDeveloper) addLabel(ctx context.Context, owner, repo string, issueNumber int, label string) error {
+func (vd *VirtualDeveloper) addLabel(ctx context.Context, owner, repo string, issueNumber int, label github.Label) error {
+	if label.Name == nil {
+		return fmt.Errorf("cannot add label with nil name")
+	}
 	if err := vd.ensureLabelExists(ctx, owner, repo, label); err != nil {
 		log.Printf("Warning: Could not ensure label exists: %v", err)
 	}
 
-	labels := []string{label}
+	labels := []string{*label.Name}
 	_, _, err := vd.githubClient.Issues.AddLabelsToIssue(ctx, owner, repo, issueNumber, labels)
 	return err
 }
 
 // removeLabel removes a label from an issue
-func (vd *VirtualDeveloper) removeLabel(ctx context.Context, owner, repo string, issueNumber int, label string) error {
-	_, err := vd.githubClient.Issues.RemoveLabelForIssue(ctx, owner, repo, issueNumber, label)
+func (vd *VirtualDeveloper) removeLabel(ctx context.Context, owner, repo string, issueNumber int, label github.Label) error {
+	if label.Name == nil {
+		return fmt.Errorf("cannot remove label with nil name")
+	}
+	_, err := vd.githubClient.Issues.RemoveLabelForIssue(ctx, owner, repo, issueNumber, *label.Name)
 	return err
 }
 
 // ensureLabelExists creates a label if it doesn't exist
-func (vd *VirtualDeveloper) ensureLabelExists(ctx context.Context, owner, repo, labelName string) error {
-	_, _, err := vd.githubClient.Issues.GetLabel(ctx, owner, repo, labelName)
+func (vd *VirtualDeveloper) ensureLabelExists(ctx context.Context, owner, repo string, label github.Label) error {
+	if label.Name == nil {
+		return fmt.Errorf("nil label name")
+	}
+	_, _, err := vd.githubClient.Issues.GetLabel(ctx, owner, repo, *label.Name)
 	if err == nil {
 		return nil
 	}
 
-	label := &github.Label{
-		Name:  github.Ptr(labelName),
-		Color: github.Ptr("0366d6"),
-	}
-
-	if labelName == LabelInProgress {
-		label.Color = github.Ptr("fbca04")
-		label.Description = github.Ptr("Issue is being worked on by the virtual developer")
-	} else if labelName == LabelCompleted {
-		label.Color = github.Ptr("28a745")
-		label.Description = github.Ptr("Issue has been addressed by the virtual developer")
-	}
-
-	_, _, err = vd.githubClient.Issues.CreateLabel(ctx, owner, repo, label)
+	_, _, err = vd.githubClient.Issues.CreateLabel(ctx, owner, repo, &label)
 	return err
 }
 
 // Context building functions
 
 // buildWorkContext creates a complete work context
-func (vd *VirtualDeveloper) buildWorkContext(ctx context.Context, owner, repo string, issue *github.Issue, pr *github.PullRequest) (*WorkContext, error) {
-	workCtx := NewWorkContext(vd.config.GitHubUsername)
-	workCtx.Issue = issue
+func (vd *VirtualDeveloper) buildWorkContext(ctx context.Context, owner, repo string, issue *github.Issue) (*WorkContext, error) {
+	workCtx := WorkContext{
+		BotUsername: vd.config.GitHubUsername,
+		Issue:       issue,
+	}
+
+	repoInfo, _, err := vd.githubClient.Repositories.Get(ctx, owner, repo)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch repo info: %w", err)
+	}
+	if repoInfo.DefaultBranch == nil {
+		return nil, fmt.Errorf("nil default branch")
+	}
+
+	workCtx.TargetBranch = *repoInfo.DefaultBranch
+	// We'll use this branch name to implicitly link the issue and the pull request 1-1
+	workCtx.WorkBranch = getWorkBranchName(issue)
+
+	// Get the existing pull request, if any
+	pr, err := getPullRequest(ctx, vd.githubClient, owner, repo, workCtx.WorkBranch, workCtx.BotUsername)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get pull request for branch: %w", err)
+	}
 	workCtx.PullRequest = pr
 
 	// Get repository
@@ -609,7 +543,40 @@ func (vd *VirtualDeveloper) buildWorkContext(ctx context.Context, owner, repo st
 	}
 
 	workCtx.AnalyzeComments()
-	return workCtx, nil
+	return &workCtx, nil
+}
+
+// getPullRequest returns a pull request by source branch and owner, if exactly one such pull request exists. If no such
+// pull request exists, returns (nil, nil). If more than one such pull request exists, returns an error
+func getPullRequest(ctx context.Context, githubClient *github.Client, owner, repo, branch, author string) (*github.PullRequest, error) {
+	query := fmt.Sprintf("type:pr repo:%s/%s head:%s author:%s", owner, repo, branch, author)
+
+	opts := &github.SearchOptions{
+		Sort:        "created",
+		Order:       "desc",
+		ListOptions: github.ListOptions{PerPage: 50},
+	}
+
+	result, _, err := githubClient.Search.Issues(ctx, query, opts)
+	if err != nil {
+		return nil, fmt.Errorf("failed to search issues: %w", err)
+	}
+	if len(result.Issues) > 1 {
+		return nil, fmt.Errorf("found %d pull requests, expected 0 or 1", len(result.Issues))
+	}
+
+	if len(result.Issues) == 0 {
+		// Expected, return nil
+		return nil, nil
+	}
+
+	issue := result.Issues[0]
+	pr, _, err := githubClient.PullRequests.Get(ctx, owner, repo, *issue.Number)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch pull request: %w", err)
+	}
+
+	return pr, nil
 }
 
 // Repository analysis functions
