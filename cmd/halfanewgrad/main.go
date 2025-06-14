@@ -31,7 +31,7 @@ type VirtualDeveloper struct {
 	anthropicClient   anthropic.Client
 	toolRegistry      *ToolRegistry
 	fileSystemFactory githubFileSystemFactory
-	botUser           *github.User
+	botName           string
 }
 
 var (
@@ -42,7 +42,7 @@ var (
 	}
 	LabelBlocked = github.Label{
 		Name:        github.Ptr("bot-blocked"),
-		Description: github.Ptr("the bot encountered an unrecoverable problem and needs human intervention to continue working on this issue"),
+		Description: github.Ptr("the bot encountered a problem and needs human intervention to continue working on this issue"),
 		Color:       github.Ptr("f03010"),
 	}
 	LabelBotTurn = github.Label{
@@ -78,7 +78,7 @@ func main() {
 
 	vd := NewVirtualDeveloper(config)
 
-	log.Printf("Virtual Developer started. Monitoring issues for @%s every %v", config.GitHubUsername, config.CheckInterval)
+	log.Printf("Virtual Developer started. Monitoring issues for @%s every %s", config.GitHubUsername, config.CheckInterval)
 
 	// Start the main loop
 	vd.Run()
@@ -103,6 +103,7 @@ func NewVirtualDeveloper(config *Config) *VirtualDeveloper {
 		anthropicClient:   anthropicClient,
 		toolRegistry:      NewToolRegistry(),
 		fileSystemFactory: githubFileSystemFactory{githubClient: githubClient},
+		botName:           config.GitHubUsername,
 	}
 }
 
@@ -123,6 +124,7 @@ func (vd *VirtualDeveloper) Run() {
 	// Initial check
 	vd.checkAndProcessWorkItems(ctx)
 
+	log.Printf("Sleeping for %s", vd.config.CheckInterval)
 	for range ticker.C {
 		vd.checkAndProcessWorkItems(ctx)
 	}
@@ -154,7 +156,7 @@ func (vd *VirtualDeveloper) checkAndProcessWorkItems(ctx context.Context) {
 		owner := parts[len(parts)-2]
 		repo := parts[len(parts)-1]
 
-		log.Printf("Processing issue #%d in %s/%s: %v (%v)", *issue.Number, owner, repo, issue.Title, issue.URL)
+		log.Printf("Processing issue #%d in %s/%s: %s (%s)", *issue.Number, owner, repo, *issue.Title, *issue.URL)
 
 		// Process this issue
 		if err := vd.processIssue(ctx, owner, repo, issue); err != nil {
@@ -181,8 +183,13 @@ func (vd *VirtualDeveloper) processIssue(ctx context.Context, owner, repo string
 		}
 	}()
 
+	botUser, _, err := vd.githubClient.Users.Get(ctx, vd.botName)
+	if err != nil {
+		return fmt.Errorf("failed to get bot user: %w", err)
+	}
+
 	// Build work context
-	workCtx, err := vd.buildWorkContext(ctx, owner, repo, issue, vd.botUser)
+	workCtx, err := vd.buildWorkContext(ctx, owner, repo, issue, botUser)
 	if err != nil {
 		return fmt.Errorf("failed to build work context: %w", err)
 	}
@@ -587,7 +594,7 @@ func (vd *VirtualDeveloper) buildWorkContext(ctx context.Context, owner, repo st
 	// If there is a PR, get PR comments, reviews, and review comments
 	if pr != nil && pr.Number != nil {
 		// Get PR comments
-		comments, err := vd.getAllIssueComments(ctx, owner, repo, *issue.Number)
+		comments, err := vd.getAllIssueComments(ctx, owner, repo, *pr.Number)
 		if err != nil {
 			return nil, fmt.Errorf("could not get pull request comments: %w", err)
 		}
@@ -616,20 +623,19 @@ func (vd *VirtualDeveloper) buildWorkContext(ctx context.Context, owner, repo st
 	// Get comments requiring responses
 	commentsReq, err := vd.pickIssueCommentsRequiringResponse(ctx, owner, repo, workCtx.IssueComments, botUser)
 	if err != nil {
-		return nil, fmt.Errorf("could not get issue comments requiring response: %w")
+		return nil, fmt.Errorf("could not get issue comments requiring response: %w", err)
 	}
 	prCommentsReq, err := vd.pickIssueCommentsRequiringResponse(ctx, owner, repo, workCtx.PRComments, botUser)
 	if err != nil {
-		return nil, fmt.Errorf("could not get PR comments requiring response: %w")
+		return nil, fmt.Errorf("could not get PR comments requiring response: %w", err)
 	}
 	prReviewCommentsReq, err := vd.pickPRReviewCommentsRequiringResponse(ctx, owner, repo, workCtx.PRReviewCommentThreads, botUser)
 	if err != nil {
-		return nil, fmt.Errorf("could not get PR review comments requiring response: %w")
+		return nil, fmt.Errorf("could not get PR review comments requiring response: %w", err)
 	}
 	workCtx.IssueCommentsRequiringResponses = commentsReq
 	workCtx.PRCommentsRequiringResponses = prCommentsReq
 	workCtx.PRReviewCommentsRequiringResponses = prReviewCommentsReq
-	// TODO get comments requiring replies
 
 	return &workCtx, nil
 }
@@ -765,13 +771,12 @@ func (vd *VirtualDeveloper) getAllIssueComments(ctx context.Context, owner, repo
 		if err != nil {
 			return nil, err
 		}
+		allComments = append(allComments, comments...)
 
 		if resp.NextPage == 0 {
 			break
 		}
 		opts.Page = resp.NextPage
-
-		allComments = append(allComments, comments...)
 	}
 
 	return allComments, nil
@@ -922,25 +927,6 @@ func organizePRReviewCommentsIntoThreads(comments []*github.PullRequestComment) 
 }
 
 // Utility functions
-
-// extractIssueNumber extracts issue number from PR body
-func extractIssueNumber(body string) int {
-	lines := strings.Split(body, "\n")
-	for _, line := range lines {
-		if strings.Contains(line, "#") {
-			parts := strings.Fields(line)
-			for _, part := range parts {
-				if strings.HasPrefix(part, "#") {
-					var num int
-					if _, err := fmt.Sscanf(part, "#%d", &num); err == nil {
-						return num
-					}
-				}
-			}
-		}
-	}
-	return 0
-}
 
 func (vd *VirtualDeveloper) initConversation() *ClaudeConversation {
 	model := anthropic.ModelClaudeSonnet4_0
