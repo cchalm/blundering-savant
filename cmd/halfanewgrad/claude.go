@@ -46,14 +46,23 @@ func (cc *ClaudeConversation) SendMessage(ctx context.Context, messageContent ..
 	return cc.sendMessage(ctx, false, messageContent...)
 }
 
-// SendMessage sends a user message with the given content and returns Claude's response, and sets a cache breakpoint in
-// the response, which will cause the cache to be written on the next message
+// SendMessage creates a user message with the given content, sets a cache point on that message, sends it, and returns
+// Claude's response
 func (cc *ClaudeConversation) SendMessageAndSetCachePoint(ctx context.Context, messageContent ...anthropic.ContentBlockParamUnion) (*anthropic.Message, error) {
 	return cc.sendMessage(ctx, true, messageContent...)
 }
 
 // sendMessage is the internal implementation with a boolean parameter to specify caching
 func (cc *ClaudeConversation) sendMessage(ctx context.Context, setCachePoint bool, messageContent ...anthropic.ContentBlockParamUnion) (*anthropic.Message, error) {
+	if setCachePoint {
+		if cc.cachePointsRemaining == 0 {
+			log.Printf("Warning: cannot set cache point, no remaining cache points")
+		} else {
+			cc.cachePointsRemaining--
+			setCachePointOnLastTextBlockInContent(messageContent)
+		}
+	}
+
 	cc.messages = append(cc.messages, anthropic.NewUserMessage(messageContent...))
 
 	params := anthropic.MessageNewParams{
@@ -64,7 +73,8 @@ func (cc *ClaudeConversation) sendMessage(ctx context.Context, setCachePoint boo
 				Text: cc.systemPrompt,
 				// Always cache the system prompt, which will be the same for each iteration of this conversation _and_
 				// will be the same for other conversations by this bot
-				CacheControl: anthropic.NewCacheControlEphemeralParam(),
+				// Actually, currently the system prompt is relatively small, so let's save the cache points for later
+				// CacheControl: anthropic.NewCacheControlEphemeralParam(),
 			},
 		},
 		Messages: cc.messages,
@@ -105,20 +115,10 @@ func (cc *ClaudeConversation) sendMessage(ctx context.Context, setCachePoint boo
 	)
 
 	messageParam := message.ToParam()
-	if setCachePoint && cc.cachePointsRemaining == 0 {
-		log.Printf("Warning: cannot set cache point, no cache points remaining")
-	}
-	if (setCachePoint || message.Usage.InputTokens > cc.autoCacheThreshold) && cc.cachePointsRemaining != 0 {
-		// Set the cache point at the last text block in the content
-		for i := len(messageParam.Content) - 1; i >= 0; i-- {
-			if text := messageParam.Content[i].OfText; text != nil {
-				text.CacheControl = anthropic.NewCacheControlEphemeralParam()
-				break
-			}
-			if setCachePoint && i == 0 {
-				fmt.Printf("Warning: unable to set cache point, no text blocks in message")
-			}
-		}
+	if (message.Usage.InputTokens > cc.autoCacheThreshold) && cc.cachePointsRemaining != 0 {
+		fmt.Println("Auto-caching")
+		cc.cachePointsRemaining--
+		setCachePointOnLastTextBlockInContent(messageParam.Content)
 	}
 
 	// Append the generated message to the conversation for continuation
@@ -131,6 +131,19 @@ func (cc *ClaudeConversation) sendMessage(ctx context.Context, setCachePoint boo
 	}
 
 	return &message, nil
+}
+
+func setCachePointOnLastTextBlockInContent(content []anthropic.ContentBlockParamUnion) {
+	// Set the cache point at the last text block in the content
+	for i := len(content) - 1; i >= 0; i-- {
+		if text := content[i].OfText; text != nil {
+			text.CacheControl = anthropic.NewCacheControlEphemeralParam()
+			break
+		}
+		if i == 0 {
+			fmt.Printf("Warning: unable to set cache point, no text blocks in content")
+		}
+	}
 }
 
 type RateLimitedTransport struct {

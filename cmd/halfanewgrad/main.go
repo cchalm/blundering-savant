@@ -923,7 +923,7 @@ You have access to several tools:
   - create: Create new files with specified content
   - insert: Insert text at specific line numbers
 - commit_changes: Commit file changes in preparation for a new pull request or to update an existing pull request
-- create_pull_request: Create a pull request for committed changes
+- create_pull_request: Create a pull request for committed changes. Only do this if there is no pull request yet
 - post_comment: Post comments to engage in discussion
 - add_reaction: React to existing comments
 - request_review: Ask specific users for review or input
@@ -942,7 +942,7 @@ When working on a new issue:
 1. If needed, ask clarifying questions
 2. If needed, explore the codebase with the text editor
 3. Make your changes using the text editor tools
-4. Create a pull request with create_pull_request
+4. Create a pull request with create_pull_request (only if there is no pull request yet)
 
 When viewing or editing files or directories, only use relative paths (no leading slash). Do not use absolute paths. To inspect the root of a repository, pass an empty string for the path.
 
