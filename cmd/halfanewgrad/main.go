@@ -861,8 +861,7 @@ func organizePRReviewCommentsIntoThreads(comments []*github.PullRequestComment) 
 
 	for _, comment := range comments {
 		if comment == nil || comment.ID == nil {
-			fmt.Println("Warning: comment or comment.ID unexpectedly nil")
-			continue
+			return nil, fmt.Errorf("comment or comment.ID unexpectedly nil")
 		}
 
 		var threadByHead, threadByTail *list.List
@@ -875,28 +874,38 @@ func organizePRReviewCommentsIntoThreads(comments []*github.PullRequestComment) 
 			threadByTail, okTail = commentThreadsByTail[*comment.InReplyTo]
 		}
 
-		if okHead {
-			// The head of an existing list replies to this comment, so this comment becomes the head of that list
+		if okHead && okTail {
+			// This comment merges two threads
+
+			// Push the comment to the tail of the thread that it replies to
+			threadByTail.PushBack(comment)
+			// Push the entire thread that replies to this new comment onto the back of that same list
+			threadByTail.PushBackList(threadByHead)
+			// Remove the map entries for the head and tail that are now in the middle of the merged thread
 			delete(commentThreadsByHeadRepliesTo, *comment.ID)
+			delete(commentThreadsByTail, *comment.InReplyTo)
+
+			// The list that we pushed to the back of threadByTail was previously in the threadByTail map. That list is
+			// now included in our merged list, so we need to replace that map entry with our merged list
+			newTail := threadByTail.Back().Value.(*github.PullRequestComment)
+			commentThreadsByTail[*newTail.ID] = threadByTail
+
+		} else if okHead {
+			// The head of an existing list replies to this comment, so this comment becomes the head of that list
 			threadByHead.PushFront(comment)
-			if !okTail && comment.InReplyTo != nil {
-				// If this comment does not reply to the tail of another list, then the list has a new head
-				// Skip if the comment doesn't reply to anything, as it won't be included in the head list
+			// Move the thread in the map, since its head has changed
+			delete(commentThreadsByHeadRepliesTo, *comment.ID)
+			if comment.InReplyTo != nil {
+				// Only add the thread back back into the map if the new head replies to something
 				commentThreadsByHeadRepliesTo[*comment.InReplyTo] = threadByHead
 			}
-		}
-
-		if okTail {
+		} else if okTail {
 			// This comment replies to the tail of an existing list, so this comment becomes the tail of that list
-			delete(commentThreadsByTail, *comment.InReplyTo)
 			threadByTail.PushBack(comment)
-			if !okHead {
-				// If this comment is not also replied-to by the head of another list, then the list has a new tail
-				commentThreadsByTail[*comment.ID] = threadByTail
-			}
-		}
-
-		if !okHead && !okTail {
+			// Move the thread in the map, since its tail has changed
+			delete(commentThreadsByTail, *comment.InReplyTo)
+			commentThreadsByTail[*comment.ID] = threadByTail
+		} else {
 			// This comment is not linked to any existing thread, so it's a new thread
 
 			// Add this comment as the first element of a new list
@@ -932,7 +941,7 @@ func organizePRReviewCommentsIntoThreads(comments []*github.PullRequestComment) 
 	// Sanity check
 	if checksum != len(comments) {
 		return nil, fmt.Errorf("number of comments in threads (%d) did not match number of comments given (%d)",
-			len(commentThreads), checksum)
+			checksum, len(comments))
 	}
 
 	return commentThreads, nil
@@ -942,7 +951,7 @@ func organizePRReviewCommentsIntoThreads(comments []*github.PullRequestComment) 
 
 func (vd *VirtualDeveloper) initConversation() *ClaudeConversation {
 	model := anthropic.ModelClaudeSonnet4_0
-	var maxTokens int64 = 60000
+	var maxTokens int64 = 64000
 
 	systemPrompt := `You are a highly skilled software developer working as a virtual assistant on GitHub.
 
@@ -996,11 +1005,6 @@ When working on a new issue:
 2. If needed, explore the codebase with the text editor
 3. Make your changes using the text editor tools
 4. Create a pull request with create_pull_request
-
-When using str_replace:
-- The old_str must match EXACTLY, including whitespace
-- Include enough context to make the match unique
-- Use line numbers from view output for reference
 
 When viewing or editing files or directories, only use relative paths (no leading slash). Do not use absolute paths. To inspect the root of a repository, pass an empty string for the path.
 
