@@ -998,7 +998,9 @@ When using str_replace:
 
 When viewing or editing files or directories, only use relative paths (no leading slash). Do not use absolute paths. To inspect the root of a repository, pass an empty string for the path.
 
-Choose the appropriate tools based on the situation. You don't always need to create a solution immediately - sometimes discussion is more valuable.`
+Choose the appropriate tools based on the situation. You don't always need to create a solution immediately - sometimes discussion is more valuable.
+
+Remember: you MUST perform tool calls in parallel whenever possible`
 
 	tools := vd.toolRegistry.GetAllToolParams()
 

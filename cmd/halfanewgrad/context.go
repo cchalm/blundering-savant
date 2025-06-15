@@ -281,7 +281,9 @@ Workflow:
 4. Make changes with text editor tools (view, str_replace, create, insert)
 5. Create or update pull request with create_pull_request
 
-Review all comments, reviews, and feedback carefully. Make sure to address each point raised using the appropriate text editor commands.`)
+Review all comments, reviews, and feedback carefully. Make sure to address each point raised using the appropriate text editor commands.
+
+Use tools in parallel whenever possible.`)
 
 	// List specific comments needing responses
 	needsResponseIssueCommentIDs := []string{}
