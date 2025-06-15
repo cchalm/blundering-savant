@@ -1,9 +1,11 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -143,7 +145,23 @@ func WithRateLimiting(base http.RoundTripper) *RateLimitedTransport {
 }
 
 func (t *RateLimitedTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	// Preserve the original request body for retries
+	var bodyBytes []byte
+	if req.Body != nil {
+		var err error
+		bodyBytes, err = io.ReadAll(req.Body)
+		if err != nil {
+			return nil, fmt.Errorf("failed to read request body: %w", err)
+		}
+		req.Body.Close()
+	}
+
 	for {
+		// Restore the request body for each attempt
+		if bodyBytes != nil {
+			req.Body = io.NopCloser(bytes.NewReader(bodyBytes))
+		}
+
 		resp, err := t.base.RoundTrip(req)
 		if err != nil {
 			return resp, err
