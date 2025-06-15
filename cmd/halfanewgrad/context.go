@@ -159,7 +159,7 @@ func (ctx workContext) buildConversationContext() string {
 	for _, review := range ctx.PRReviews {
 		// Add the main review
 		reviewStr := fmt.Sprintf("\n### PR Review by @%s (%s) - %s\n",
-			review.User,
+			*review.User.Login,
 			*review.AuthorAssociation,
 			review.SubmittedAt.Format("2006-01-02 15:04"))
 

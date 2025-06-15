@@ -304,7 +304,9 @@ func (vd *VirtualDeveloper) processWithAI(ctx context.Context, workCtx workConte
 
 	log.Printf("Sending initial message to AI")
 	prompt := workCtx.BuildPrompt()
-	response, err := conversation.SendMessage(ctx, anthropic.NewTextBlock(prompt))
+	// Send initial message with a cache breakpoint, because the initial message tends to be very large and we are
+	// likely to need several back-and-forths after this
+	response, err := conversation.SendMessageAndSetCachePoint(ctx, anthropic.NewTextBlock(prompt))
 	if err != nil {
 		return fmt.Errorf("failed to send initial message to AI: %w", err)
 	}
