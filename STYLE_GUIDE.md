@@ -13,8 +13,8 @@ This document outlines the coding standards and best practices for the Halfanewg
 - [Concurrency](#concurrency)
 - [Testing](#testing)
 - [Documentation](#documentation)
-- [Performance](#performance)
 - [Security](#security)
+- [Tools and Linters](#tools-and-linters)
 
 ## General Principles
 
@@ -76,9 +76,9 @@ import (
 ## Naming Conventions
 
 ### General Rules
-- Use camelCase for local variables and functions
+- Use camelCase for local variables and unexported functions
 - Use PascalCase for exported functions, types, and constants
-- Use ALL_CAPS for constants (exported or not)
+- Use MixedCaps instead of underscores (Go convention)
 - Avoid stuttering (e.g., `http.HTTPServer` should be `http.Server`)
 
 ### Variables
@@ -97,12 +97,12 @@ var errNotFound = errors.New("not found") // Should be exported
 ### Functions
 ```go
 // Good
-func processGitHubEvent(event *github.Event) error { ... }
-func NewClient(token string) *Client { ... }
+func processGitHubEvent(event *github.Event) error { ... } // Private helper function
+func NewClient(token string) *Client { ... } // Public constructor
 
 // Bad
-func ProcessGithubEvent(event *github.Event) error { ... } // Shouldn't be exported
-func newclient(token string) *Client { ... } // Should be exported
+func InternalHelper(data []byte) error { ... } // Internal function shouldn't be exported
+func newclient(token string) *Client { ... } // Constructor should be exported
 ```
 
 ### Types
@@ -117,8 +117,10 @@ type eventhandler interface { ... } // Should use PascalCase
 ```
 
 ### Interfaces
-- Use `-er` suffix for single-method interfaces
-- Keep interfaces small and focused
+- Use `-er` suffix for single-method interfaces (Go convention)
+- Keep interfaces small and focused ("The bigger the interface, the weaker the abstraction")
+- Define interfaces at the point of use, not the point of definition
+- Accept interfaces, return concrete types
 
 ```go
 // Good
@@ -217,6 +219,9 @@ func processIssue(ctx context.Context, issueNumber int) error {
 
 ## Context Usage
 
+### Context as First Parameter
+In Go, context should always be the first parameter in function signatures (when used):
+
 ### Context Propagation
 ```go
 // Good - Always accept context as first parameter
@@ -275,48 +280,13 @@ func getRequestID(ctx context.Context) string {
 
 ## Concurrency
 
-### Goroutines
-```go
-// Good - Use goroutines for concurrent operations
-func processIssues(ctx context.Context, issues []*github.Issue) error {
-    const maxWorkers = 10
-    semaphore := make(chan struct{}, maxWorkers)
-    
-    var wg sync.WaitGroup
-    errChan := make(chan error, len(issues))
-    
-    for _, issue := range issues {
-        wg.Add(1)
-        go func(issue *github.Issue) {
-            defer wg.Done()
-            
-            semaphore <- struct{}{} // Acquire
-            defer func() { <-semaphore }() // Release
-            
-            if err := processSingleIssue(ctx, issue); err != nil {
-                errChan <- err
-            }
-        }(issue)
-    }
-    
-    wg.Wait()
-    close(errChan)
-    
-    // Collect any errors
-    for err := range errChan {
-        if err != nil {
-            return err // Return first error
-        }
-    }
-    
-    return nil
-}
-```
-
 ### Channels
+Go's channels provide a way to implement "Don't communicate by sharing memory; share memory by communicating":
+
 - Use channels to communicate between goroutines
-- Close channels when done sending
-- Use `select` for non-blocking operations
+- Close channels when done sending (sender's responsibility)
+- Use `select` for non-blocking operations and timeouts
+- Prefer buffered channels for producer-consumer patterns
 
 ```go
 // Good - Channel patterns
@@ -343,36 +313,30 @@ func worker(ctx context.Context, jobs <-chan Job, results chan<- Result) {
 ## Testing
 
 ### Test Structure
+Use the test harness approach for better tooling support:
+
 ```go
-func TestProcessIssue(t *testing.T) {
-    tests := []struct {
-        name        string
-        issue       *github.Issue
-        wantErr     bool
-        expectedMsg string
-    }{
-        {
-            name: "valid issue",
-            issue: &github.Issue{
-                Number: github.Int(1),
-                Title:  github.String("Test issue"),
-            },
-            wantErr: false,
+func TestProcessIssue_Valid(t *testing.T) {
+    testProcessIssue(t,
+        &github.Issue{
+            Number: github.Int(1),
+            Title:  github.String("Test issue"),
         },
-        {
-            name:    "nil issue",
-            issue:   nil,
-            wantErr: true,
-        },
-    }
-    
-    for _, tt := range tests {
-        t.Run(tt.name, func(t *testing.T) {
-            err := processIssue(context.Background(), tt.issue)
-            if (err != nil) != tt.wantErr {
-                t.Errorf("processIssue() error = %v, wantErr %v", err, tt.wantErr)
-            }
-        })
+        false, // wantErr
+    )
+}
+
+func TestProcessIssue_Nil(t *testing.T) {
+    testProcessIssue(t,
+        nil,
+        true, // wantErr
+    )
+}
+
+func testProcessIssue(t *testing.T, issue *github.Issue, wantErr bool) {
+    err := processIssue(context.Background(), issue)
+    if (err != nil) != wantErr {
+        t.Errorf("processIssue() error = %v, wantErr %v", err, wantErr)
     }
 }
 ```
@@ -380,14 +344,21 @@ func TestProcessIssue(t *testing.T) {
 ### Test Naming
 - Use `Test` prefix for test functions
 - Use descriptive names that explain what is being tested
-- Use table-driven tests for multiple test cases
+- Prefer test harness approach over table-driven tests for better IDE support
 
-### Mocking
+### Mocking with Interfaces
+Go's interfaces enable easy mocking for testing. Define interfaces for dependencies:
+
 ```go
-// Use interfaces for dependencies to enable mocking
+// Define interface for external dependencies
 type GitHubClient interface {
     GetIssue(ctx context.Context, number int) (*github.Issue, error)
     CreateComment(ctx context.Context, number int, comment string) error
+}
+
+// Concrete implementation
+type githubClient struct {
+    client *github.Client
 }
 
 // Mock implementation for testing
@@ -402,9 +373,16 @@ func (m *mockGitHubClient) GetIssue(ctx context.Context, number int) (*github.Is
     }
     return nil, fmt.Errorf("issue not found")
 }
+
+func (m *mockGitHubClient) CreateComment(ctx context.Context, number int, comment string) error {
+    m.comments = append(m.comments, comment)
+    return nil
+}
 ```
 
 ## Documentation
+
+Go has specific documentation conventions that work with `go doc` and `godoc`:
 
 ### Package Documentation
 ```go
@@ -422,6 +400,12 @@ func ProcessIssue(ctx context.Context, issue *github.Issue) error {
     // Implementation
 }
 ```
+
+### Documentation Best Practices
+- Start comments with the name of the thing being described
+- Use complete sentences
+- Don't start comments with "This function..." or "This method..."
+- Document exported functions, types, constants, and variables
 
 ### Type Documentation
 ```go
@@ -444,64 +428,7 @@ type Config struct {
 }
 ```
 
-## Performance
-
-### Memory Management
-- Avoid memory leaks by properly closing resources
-- Use object pools for frequently allocated objects
-- Be mindful of slice capacity vs length
-
-```go
-// Good - Proper resource cleanup
-func processFile(filename string) error {
-    file, err := os.Open(filename)
-    if err != nil {
-        return err
-    }
-    defer file.Close() // Always close resources
-    
-    // Process file
-    return nil
-}
-
-// Good - Reuse slices efficiently
-func processItems(items []Item) []Result {
-    results := make([]Result, 0, len(items)) // Pre-allocate capacity
-    for _, item := range items {
-        if result := processItem(item); result != nil {
-            results = append(results, *result)
-        }
-    }
-    return results
-}
-```
-
-### Profiling
-- Use `go tool pprof` for performance analysis
-- Add profiling endpoints in development builds
-- Monitor memory usage and CPU performance
-
 ## Security
-
-### Input Validation
-```go
-// Good - Validate all external inputs
-func validateWebhookPayload(payload []byte, signature string) error {
-    if len(payload) == 0 {
-        return fmt.Errorf("empty payload")
-    }
-    
-    if len(payload) > maxPayloadSize {
-        return fmt.Errorf("payload too large: %d bytes", len(payload))
-    }
-    
-    if !validateSignature(payload, signature) {
-        return fmt.Errorf("invalid signature")
-    }
-    
-    return nil
-}
-```
 
 ### Secrets Management
 - Never commit secrets to version control
