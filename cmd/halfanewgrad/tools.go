@@ -267,6 +267,81 @@ func (t *TextEditorTool) executeInsert(input *TextEditorInput, fs *GitHubFileSys
 	return fmt.Sprintf("Successfully inserted text at line %d in %s", lineNum, input.Path), nil
 }
 
+// CommitChangesTool implements the commit_changes tool
+type CommitChangesTool struct {
+	BaseTool
+}
+
+// CommitChangesInput represents the input for commit_changes
+type CommitChangesInput struct {
+	CommitMessage string `json:"commit_message"`
+}
+
+// NewCommitChangesTool creates a new create pull request tool
+func NewCommitChangesTool() *CommitChangesTool {
+	return &CommitChangesTool{
+		BaseTool: BaseTool{Name: "commit_changes"},
+	}
+}
+
+// GetToolParam returns the tool parameter definition
+func (t *CommitChangesTool) GetToolParam() anthropic.ToolParam {
+	return anthropic.ToolParam{
+		Name:        t.Name,
+		Description: anthropic.String("Commit all previous file changes"),
+		InputSchema: anthropic.ToolInputSchemaParam{
+			Properties: map[string]any{
+				"commit_message": map[string]any{
+					"type":        "string",
+					"description": "Commit message for the changes",
+				},
+			},
+		},
+	}
+}
+
+// ParseToolUse parses the tool use block
+func (t *CommitChangesTool) ParseToolUse(block anthropic.ToolUseBlock) (*CommitChangesInput, error) {
+	if block.Name != t.Name {
+		return nil, fmt.Errorf("tool use block is for %s, not %s", block.Name, t.Name)
+	}
+
+	var input CommitChangesInput
+	if err := parseInputJSON(block, &input); err != nil {
+		return nil, err
+	}
+	return &input, nil
+}
+
+// Run executes the create pull request command
+func (t *CommitChangesTool) Run(block anthropic.ToolUseBlock, ctx *ToolContext) (*string, error) {
+	input, err := t.ParseToolUse(block)
+	if err != nil {
+		return nil, fmt.Errorf("error parsing input: %v", err)
+	}
+
+	if ctx.FileSystem == nil {
+		return nil, fmt.Errorf("file system not initialized")
+	}
+
+	if input.CommitMessage == "" {
+		return nil, ToolInputError{fmt.Errorf("commit_message is required")}
+	}
+
+	// Check if there are changes to commit
+	if !ctx.FileSystem.HasChanges() {
+		return nil, fmt.Errorf("no changes to commit")
+	}
+
+	// Commit the changes
+	_, err = ctx.FileSystem.CommitChanges(input.CommitMessage)
+	if err != nil {
+		return nil, fmt.Errorf("failed to commit changes: %w", err)
+	}
+
+	return nil, nil
+}
+
 // CreatePullRequestTool implements the create_pull_request tool
 type CreatePullRequestTool struct {
 	BaseTool
@@ -274,7 +349,6 @@ type CreatePullRequestTool struct {
 
 // CreatePullRequestInput represents the input for create_pull_request
 type CreatePullRequestInput struct {
-	CommitMessage    string `json:"commit_message"`
 	PullRequestTitle string `json:"pull_request_title"`
 	PullRequestBody  string `json:"pull_request_body"`
 }
@@ -290,13 +364,9 @@ func NewCreatePullRequestTool() *CreatePullRequestTool {
 func (t *CreatePullRequestTool) GetToolParam() anthropic.ToolParam {
 	return anthropic.ToolParam{
 		Name:        t.Name,
-		Description: anthropic.String("Create a pull request with all current changes"),
+		Description: anthropic.String("Create a pull request for committed changes"),
 		InputSchema: anthropic.ToolInputSchemaParam{
 			Properties: map[string]any{
-				"commit_message": map[string]any{
-					"type":        "string",
-					"description": "Commit message for the changes",
-				},
 				"pull_request_title": map[string]any{
 					"type":        "string",
 					"description": "Title for the pull request",
@@ -334,27 +404,12 @@ func (t *CreatePullRequestTool) Run(block anthropic.ToolUseBlock, ctx *ToolConte
 		return nil, fmt.Errorf("file system not initialized")
 	}
 
-	if input.CommitMessage == "" {
-		return nil, ToolInputError{fmt.Errorf("commit_message is required")}
-	}
-
 	if input.PullRequestTitle == "" {
 		return nil, ToolInputError{fmt.Errorf("pull_request_title is required")}
 	}
 
 	if input.PullRequestBody == "" {
 		return nil, ToolInputError{fmt.Errorf("pull_request_body is required")}
-	}
-
-	// Check if there are changes to commit
-	if !ctx.FileSystem.HasChanges() {
-		return nil, fmt.Errorf("no changes to commit")
-	}
-
-	// Commit the changes
-	_, err = ctx.FileSystem.CommitChanges(input.CommitMessage)
-	if err != nil {
-		return nil, fmt.Errorf("failed to commit changes: %w", err)
 	}
 
 	// Determine target branch
@@ -541,8 +596,9 @@ type AddReactionTool struct {
 
 // AddReactionInput represents the input for add_reaction
 type AddReactionInput struct {
-	CommentID int64  `json:"comment_id"`
-	Reaction  string `json:"reaction"`
+	CommentID   int64  `json:"comment_id"`
+	CommentType string `json:"comment_type"`
+	Reaction    string `json:"reaction"`
 }
 
 // NewAddReactionTool creates a new add reaction tool
@@ -559,6 +615,11 @@ func (t *AddReactionTool) GetToolParam() anthropic.ToolParam {
 		Description: anthropic.String("Add a reaction to acknowledge or respond to a comment"),
 		InputSchema: anthropic.ToolInputSchemaParam{
 			Properties: map[string]any{
+				"comment_type": map[string]any{
+					"type":        "string",
+					"enum":        []any{"issue", "PR", "PR review"},
+					"description": "Whether this is a comment on an issue, a comment on a PR, or a comment that is part of a PR review",
+				},
 				"comment_id": map[string]any{
 					"type":        "integer",
 					"description": "ID of the comment to react to",
@@ -601,10 +662,17 @@ func (t *AddReactionTool) Run(block anthropic.ToolUseBlock, ctx *ToolContext) (*
 		return nil, ToolInputError{fmt.Errorf("reaction is required")}
 	}
 
-	// TODO what about issue comments?
-	_, _, err = ctx.GithubClient.Reactions.CreatePullRequestCommentReaction(context.Background(), ctx.Owner, ctx.Repo, input.CommentID, input.Reaction)
-	if err != nil {
-		return nil, err
+	switch input.CommentType {
+	case "issue", "PR":
+		_, _, err = ctx.GithubClient.Reactions.CreateIssueCommentReaction(context.Background(), ctx.Owner, ctx.Repo, input.CommentID, input.Reaction)
+		if err != nil {
+			return nil, err
+		}
+	case "PR review":
+		_, _, err = ctx.GithubClient.Reactions.CreatePullRequestCommentReaction(context.Background(), ctx.Owner, ctx.Repo, input.CommentID, input.Reaction)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	return nil, nil

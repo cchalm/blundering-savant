@@ -276,7 +276,7 @@ func createBranch(client *github.Client, owner, repo, baseBranch, newBranch stri
 // TODO look into merging owner, repo, and branch into workCtx
 // processWithAI handles the AI interaction with text editor tool support
 func (vd *VirtualDeveloper) processWithAI(ctx context.Context, workCtx workContext, owner, repo string) error {
-	maxIterations := 30
+	maxIterations := 50
 
 	// fs may be nil if no branch name is given, e.g. if the issue is currently in the requirements clarification phase
 	fs, err := vd.fileSystemFactory.NewFileSystem(owner, repo, workCtx.WorkBranch)
@@ -346,7 +346,7 @@ func (vd *VirtualDeveloper) processWithAI(ctx context.Context, workCtx workConte
 				}
 				toolResults = append(toolResults, anthropic.ContentBlockParamUnion{OfToolResult: toolResult})
 			}
-			log.Printf("    Sending tool results to AI")
+			log.Printf("    Sending tool results to AI and streaming response")
 			response, err = conversation.SendMessage(ctx, toolResults...)
 			if err != nil {
 				return fmt.Errorf("failed to send tool results to AI: %w", err)
@@ -553,6 +553,12 @@ func (vd *VirtualDeveloper) buildWorkContext(ctx context.Context, owner, repo st
 	workCtx.TargetBranch = *repoInfo.DefaultBranch
 	// We'll use this branch name to implicitly link the issue and the pull request 1-1
 	workCtx.WorkBranch = getWorkBranchName(issue)
+
+	// TODO remove this
+	if *issue.Number == 1 && repo == "halfanewgrad" {
+		// temporarily override branch name for testing
+		workCtx.WorkBranch = "fix/issue-1-add-a-style-guide-at-the-root-of-the-repo-containi"
+	}
 
 	// Get the existing pull request, if any
 	pr, err := getPullRequest(ctx, vd.githubClient, owner, repo, workCtx.WorkBranch, workCtx.BotUsername)
@@ -963,10 +969,15 @@ You have access to several tools:
   - str_replace: Replace specific text in files with new text
   - create: Create new files with specified content
   - insert: Insert text at specific line numbers
-- create_pull_request: Create a pull request from the current branch
+- commit_changes: Commit file changes in preparation for a new pull request or to update an existing pull request
+- create_pull_request: Create a pull request for committed changes
 - post_comment: Post comments to engage in discussion
 - add_reaction: React to existing comments
 - request_review: Ask specific users for review or input
+
+You must use tools in parallel whenever possible. For example:
+- Add all comments and reactions with a single response containing multiple tool calls
+- When making multiple small changes to one or more files, do them all with a single response containing multiple tool calls
 
 The text editor tool is your primary way to examine and modify code. Use it to:
 - View files to understand the codebase structure
