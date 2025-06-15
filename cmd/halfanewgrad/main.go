@@ -1,12 +1,12 @@
 package main
 
 import (
-	"container/list"
 	"context"
 	"fmt"
 	"log"
 	"net/http"
 	"os"
+	"slices"
 	"strings"
 	"time"
 
@@ -852,99 +852,35 @@ func (vd *VirtualDeveloper) getAllPRReviewComments(ctx context.Context, owner, r
 
 // organizePRReviewCommentsIntoThreads takes a list of pull request review comments and returns a list of comment
 // threads, where each thread is a list of comments that reply to the next
-// TODO test
 func organizePRReviewCommentsIntoThreads(comments []*github.PullRequestComment) ([][]*github.PullRequestComment, error) {
-	// Lookup of comment threads by the id that the _first_ comment in the thread replies to
-	commentThreadsByHeadRepliesTo := map[int64]*list.List{}
-	// Lookup of comment threads by the id of the _last_ comment in the thread
-	commentThreadsByTail := map[int64]*list.List{}
+	// In github, it appears that all comments in a thread are replies to the top comment, rather than replies to each
+	// other in a chain. Therefore we will simply collect all replies to a comment and sort them by date to form a chain
+
+	// threadsMap maps a comment ID to that comment and all of its replies
+	threadsMap := map[int64][]*github.PullRequestComment{}
 
 	for _, comment := range comments {
 		if comment == nil || comment.ID == nil {
-			return nil, fmt.Errorf("comment or comment.ID unexpectedly nil")
+			return nil, fmt.Errorf("unexpected nil comment or comment.ID")
 		}
-
-		var threadByHead, threadByTail *list.List
-		var okHead, okTail bool
-
-		// Get the thread whose head is a reply to this comment
-		threadByHead, okHead = commentThreadsByHeadRepliesTo[*comment.ID]
-		// Get the thead that this comment replies to the tail of, if any
-		if comment.InReplyTo != nil {
-			threadByTail, okTail = commentThreadsByTail[*comment.InReplyTo]
-		}
-
-		if okHead && okTail {
-			// This comment merges two threads
-
-			// Push the comment to the tail of the thread that it replies to
-			threadByTail.PushBack(comment)
-			// Push the entire thread that replies to this new comment onto the back of that same list
-			threadByTail.PushBackList(threadByHead)
-			// Remove the map entries for the head and tail that are now in the middle of the merged thread
-			delete(commentThreadsByHeadRepliesTo, *comment.ID)
-			delete(commentThreadsByTail, *comment.InReplyTo)
-
-			// The list that we pushed to the back of threadByTail was previously in the threadByTail map. That list is
-			// now included in our merged list, so we need to replace that map entry with our merged list
-			newTail := threadByTail.Back().Value.(*github.PullRequestComment)
-			commentThreadsByTail[*newTail.ID] = threadByTail
-
-		} else if okHead {
-			// The head of an existing list replies to this comment, so this comment becomes the head of that list
-			threadByHead.PushFront(comment)
-			// Move the thread in the map, since its head has changed
-			delete(commentThreadsByHeadRepliesTo, *comment.ID)
-			if comment.InReplyTo != nil {
-				// Only add the thread back back into the map if the new head replies to something
-				commentThreadsByHeadRepliesTo[*comment.InReplyTo] = threadByHead
-			}
-		} else if okTail {
-			// This comment replies to the tail of an existing list, so this comment becomes the tail of that list
-			threadByTail.PushBack(comment)
-			// Move the thread in the map, since its tail has changed
-			delete(commentThreadsByTail, *comment.InReplyTo)
-			commentThreadsByTail[*comment.ID] = threadByTail
+		if comment.InReplyTo == nil {
+			// Top-level comment
+			threadsMap[*comment.ID] = append(threadsMap[*comment.ID], comment)
 		} else {
-			// This comment is not linked to any existing thread, so it's a new thread
-
-			// Add this comment as the first element of a new list
-			ls := list.New()
-			ls.PushBack(comment)
-			// Push the same list to both maps. IMPORTANT: the same list is referenced by both maps, so modifying
-			// the list in one map will modify it in both
-			if comment.InReplyTo != nil {
-				// If this is the top comment of a thread, there's no need to track it by head
-				commentThreadsByHeadRepliesTo[*comment.InReplyTo] = ls
-			}
-			commentThreadsByTail[*comment.ID] = ls
+			// Reply comment
+			threadsMap[*comment.InReplyTo] = append(threadsMap[*comment.InReplyTo], comment)
 		}
 	}
 
-	if len(commentThreadsByHeadRepliesTo) != 0 {
-		return nil, fmt.Errorf("found comments that reply to unknown comments")
+	threads := [][]*github.PullRequestComment{}
+	for _, thread := range threadsMap {
+		slices.SortFunc(thread, func(a, b *github.PullRequestComment) int {
+			return a.CreatedAt.Compare(b.CreatedAt.Time)
+		})
+		threads = append(threads, thread)
 	}
 
-	checksum := 0
-	commentThreads := [][]*github.PullRequestComment{}
-	for _, thread := range commentThreadsByTail {
-		threadArray := []*github.PullRequestComment{}
-		node := thread.Front()
-		for node != nil {
-			threadArray = append(threadArray, node.Value.(*github.PullRequestComment))
-			node = node.Next()
-		}
-		checksum += len(threadArray)
-		commentThreads = append(commentThreads, threadArray)
-	}
-
-	// Sanity check
-	if checksum != len(comments) {
-		return nil, fmt.Errorf("number of comments in threads (%d) did not match number of comments given (%d)",
-			checksum, len(comments))
-	}
-
-	return commentThreads, nil
+	return threads, nil
 }
 
 // Utility functions
