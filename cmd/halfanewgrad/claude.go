@@ -5,6 +5,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"net/http"
+	"strconv"
+	"time"
 
 	"github.com/anthropics/anthropic-sdk-go"
 )
@@ -74,4 +77,58 @@ func (cc *ClaudeConversation) SendMessage(ctx context.Context, messageContent ..
 	cc.messages = append(cc.messages, message.ToParam())
 
 	return &message, nil
+}
+
+type RateLimitedTransport struct {
+	base http.RoundTripper
+}
+
+func WithRateLimiting(base http.RoundTripper) *RateLimitedTransport {
+	if base == nil {
+		base = http.DefaultTransport
+	}
+	return &RateLimitedTransport{base: base}
+}
+
+func (t *RateLimitedTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	for {
+		resp, err := t.base.RoundTrip(req)
+		if err != nil {
+			return resp, err
+		}
+
+		// Check for 429 status
+		if resp.StatusCode == http.StatusTooManyRequests {
+			retryAfterStr := resp.Header.Get("retry-after")
+			if retryAfterStr != "" {
+				// Parse retry-after header
+				var waitDuration time.Duration
+
+				// Try parsing as seconds
+				if seconds, err := strconv.Atoi(retryAfterStr); err == nil {
+					waitDuration = time.Duration(seconds) * time.Second
+				} else if retryTime, err := time.Parse(time.RFC1123, retryAfterStr); err == nil {
+					waitDuration = time.Until(retryTime)
+				}
+
+				if waitDuration > 0 {
+					// Close the response body to free resources
+					resp.Body.Close()
+
+					// Wait for the specified duration
+					log.Printf("Rate limited, waiting %s", waitDuration)
+					select {
+					case <-req.Context().Done():
+						return nil, req.Context().Err()
+					case <-time.After(waitDuration):
+						// Continue the loop to retry
+						continue
+					}
+				}
+			}
+		}
+
+		// Return response for all other cases
+		return resp, err
+	}
 }

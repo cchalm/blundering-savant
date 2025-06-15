@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"net/http"
 	"os"
 	"strings"
 	"time"
@@ -92,7 +93,11 @@ func NewVirtualDeveloper(config *Config) *VirtualDeveloper {
 	)
 	tc := oauth2.NewClient(ctx, ts)
 	githubClient := github.NewClient(tc)
+	rateLimitedHTTPClient := &http.Client{
+		Transport: WithRateLimiting(nil),
+	}
 	anthropicClient := anthropic.NewClient(
+		option.WithHTTPClient(rateLimitedHTTPClient),
 		option.WithAPIKey(config.AnthropicAPIKey),
 		option.WithMaxRetries(5),
 	)
@@ -127,6 +132,7 @@ func (vd *VirtualDeveloper) Run() {
 	log.Printf("Sleeping for %s", vd.config.CheckInterval)
 	for range ticker.C {
 		vd.checkAndProcessWorkItems(ctx)
+		log.Printf("Sleeping for %s", vd.config.CheckInterval)
 	}
 }
 
@@ -924,7 +930,7 @@ func organizePRReviewCommentsIntoThreads(comments []*github.PullRequestComment) 
 	}
 
 	// Sanity check
-	if checksum != len(commentThreads) {
+	if checksum != len(comments) {
 		return nil, fmt.Errorf("number of comments in threads (%d) did not match number of comments given (%d)",
 			len(commentThreads), checksum)
 	}
