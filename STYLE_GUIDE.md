@@ -418,6 +418,49 @@ type Config struct {
 ```
 
 
+## Security
+
+### Secrets Management
+- **Never** commit secrets, API keys, tokens, or passwords to version control
+- Use environment variables for sensitive configuration
+- Use a secrets management system in production (e.g., AWS Secrets Manager, HashiCorp Vault)
+- Rotate secrets regularly
+
+```go
+// Good - Load sensitive data from environment
+func NewGitHubClient() *Client {
+    token := os.Getenv("GITHUB_TOKEN")
+    if token == "" {
+        log.Fatal("GITHUB_TOKEN environment variable is required")
+    }
+    return &Client{token: token}
+}
+
+// Bad - Hard coding secrets
+func NewGitHubClient() *Client {
+    return &Client{token: "ghp_hardcoded_token_123"} // Never do this!
+}
+```
+
+### Input Validation
+- Validate and sanitize all external inputs
+- Use allowlists instead of blocklists when possible
+- Validate webhook signatures from GitHub
+
+```go
+// Good - Validate webhook payload
+func validateWebhookSignature(payload []byte, signature string, secret string) error {
+    mac := hmac.New(sha256.New, []byte(secret))
+    mac.Write(payload)
+    expectedSignature := "sha256=" + hex.EncodeToString(mac.Sum(nil))
+    
+    if !hmac.Equal([]byte(signature), []byte(expectedSignature)) {
+        return errors.New("invalid webhook signature")
+    }
+    return nil
+}
+```
+
 ## Tools and Linters
 
 ### Required Tools
