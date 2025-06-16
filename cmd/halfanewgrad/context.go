@@ -178,8 +178,6 @@ func (ctx workContext) buildConversationContext() string {
 		timeline = append(timeline, ctx.formatComment(prComment, "Issue"))
 	}
 
-	// TODO consider grouping comments with their reviews
-
 	// Add PR review comment threads
 	for _, thread := range ctx.PRReviewCommentThreads {
 		timeline = append(timeline, ctx.formatReviewCommentThread(thread))
@@ -244,6 +242,9 @@ func (ctx workContext) formatReviewComment(comment *github.PullRequestComment) s
 
 	if comment.AuthorAssociation != nil && *comment.AuthorAssociation != "" && *comment.AuthorAssociation != "none" {
 		formatted.WriteString(fmt.Sprintf(" (%s)", *comment.AuthorAssociation))
+	}
+	if comment.PullRequestReviewID != nil {
+		formatted.WriteString(fmt.Sprintf(" in Review %d", *comment.PullRequestReviewID))
 	}
 
 	formatted.WriteString(fmt.Sprintf(" - %s\n", comment.CreatedAt.Format("2006-01-02 15:04")))
