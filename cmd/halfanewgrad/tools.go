@@ -461,9 +461,6 @@ type PostCommentInput struct {
 	CommentType string `json:"comment_type"`
 	Body        string `json:"body"`
 	InReplyTo   *int64 `json:"in_reply_to,omitempty"`
-	FilePath    string `json:"file_path,omitempty"`
-	Line        int    `json:"line,omitempty"`
-	Side        string `json:"side,omitempty"`
 }
 
 // NewPostCommentTool creates a new post comment tool
@@ -482,7 +479,7 @@ func (t *PostCommentTool) GetToolParam() anthropic.ToolParam {
 			Properties: map[string]any{
 				"comment_type": map[string]any{
 					"type":        "string",
-					"enum":        []string{"issue", "pr", "review", "review_reply"},
+					"enum":        []string{"issue", "pr", "review"},
 					"description": "Type of comment to post",
 				},
 				"body": map[string]any{
@@ -491,20 +488,7 @@ func (t *PostCommentTool) GetToolParam() anthropic.ToolParam {
 				},
 				"in_reply_to": map[string]any{
 					"type":        "integer",
-					"description": "ID of comment being replied to (for threads)",
-				},
-				"file_path": map[string]any{
-					"type":        "string",
-					"description": "File path (for review comments)",
-				},
-				"line": map[string]any{
-					"type":        "integer",
-					"description": "Line number (for review comments)",
-				},
-				"side": map[string]any{
-					"type":        "string",
-					"enum":        []string{"LEFT", "RIGHT"},
-					"description": "Side of diff (for review comments)",
+					"description": "ID of comment being replied to (for review comments only)",
 				},
 			},
 		},
@@ -568,21 +552,15 @@ func (t *PostCommentTool) Run(block anthropic.ToolUseBlock, ctx *ToolContext) (*
 			}
 
 			reviewComment := &github.PullRequestComment{
-				Body:     github.Ptr(input.Body),
-				Path:     github.Ptr(input.FilePath),
-				Line:     github.Ptr(input.Line),
-				Side:     github.Ptr(input.Side),
-				CommitID: pr.Head.SHA,
+				Body:      github.Ptr(input.Body),
+				CommitID:  pr.Head.SHA,
+				InReplyTo: input.InReplyTo,
 			}
 
 			_, _, err = ctx.GithubClient.PullRequests.CreateComment(context.Background(), ctx.Owner, ctx.Repo, *ctx.WorkContext.PullRequest.Number, reviewComment)
 			if err != nil {
 				return nil, err
 			}
-		}
-	case "review_reply":
-		if input.InReplyTo != nil {
-			return nil, fmt.Errorf("TODO review comment reply not fully implemented - needs PR tracking")
 		}
 	}
 

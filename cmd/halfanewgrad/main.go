@@ -922,8 +922,8 @@ You have access to several tools:
   - str_replace: Replace specific text in files with new text
   - create: Create new files with specified content
   - insert: Insert text at specific line numbers
-- commit_changes: Commit file changes in preparation for a new pull request or to update an existing pull request
-- create_pull_request: Create a pull request for committed changes. Only do this if there is no pull request yet
+- commit_changes: Commit file changes. File changes are only stored locally until you make this tool call; you must call commit_changes after making file changes
+- create_pull_request: Create a pull request for committed changes. Only do this if there is no pull request yet. If there is already a pull request, simply committing new changes will update the pull request
 - post_comment: Post comments to engage in discussion
 - add_reaction: React to existing comments
 - request_review: Ask specific users for review or input
