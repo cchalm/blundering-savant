@@ -147,19 +147,6 @@ type GitHubHandler interface {
 
 ## Package Organization
 
-### Package Structure
-```
-cmd/
-  halfanewgrad/          # Main application entry point
-    main.go
-internal/                # Private application code
-  config/               # Configuration management
-  github/               # GitHub API interactions
-  anthropic/            # Anthropic API interactions
-  webhook/              # Webhook handling
-  bot/                  # Core bot logic
-pkg/                    # Public library code (if any)
-```
 
 ### Package Naming
 - Use short, lowercase package names
