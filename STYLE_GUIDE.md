@@ -80,6 +80,7 @@ import (
 - Use PascalCase for exported functions, types, and constants
 - Use MixedCaps instead of underscores (Go convention)
 - Avoid stuttering (e.g., `http.HTTPServer` should be `http.Server`)
+- All letters in an initialism should be the same case (e.g., `httpClient`, `HTTPClient`, `parseJSONFile`)
 
 ### Variables
 ```go
@@ -89,9 +90,9 @@ var maxRetries = 3
 var ErrNotFound = errors.New("not found")
 
 // Bad  
-var user_count int
-var MaxRetries = 3
-var errNotFound = errors.New("not found") // Should be exported
+var user_count int                          // Uses underscores instead of camelCase
+var MaxRetries = 3                         // Private variable shouldn't be exported
+var errNotFound = errors.New("not found") // Error should be exported for use across packages
 ```
 
 ### Functions
@@ -102,7 +103,7 @@ func NewClient(token string) *Client { ... } // Public constructor
 
 // Bad
 func InternalHelper(data []byte) error { ... } // Internal function shouldn't be exported
-func newclient(token string) *Client { ... } // Constructor should be exported
+func newclient(token string) *Client { ... }   // Constructor should be exported and use proper camelCase
 ```
 
 ### Types
@@ -112,14 +113,14 @@ type GitHubClient struct { ... }
 type EventHandler interface { ... }
 
 // Bad
-type githubClient struct { ... } // Should be exported if used across packages
-type eventhandler interface { ... } // Should use PascalCase
+type githubClient struct { ... }    // Should be exported if used across packages
+type eventhandler interface { ... } // Should use PascalCase instead of lowercase
 ```
 
 ### Interfaces
 - Use `-er` suffix for single-method interfaces (Go convention)
 - Keep interfaces small and focused ("The bigger the interface, the weaker the abstraction")
-- Define interfaces at the point of use, not the point of definition
+- Define interfaces at the point of use, not the point of implementation
 - Accept interfaces, return concrete types
 
 ```go
@@ -318,22 +319,22 @@ Use the test harness approach for better tooling support:
 ```go
 func TestProcessIssue_Valid(t *testing.T) {
     testProcessIssue(t,
+        false, // wantErr
         &github.Issue{
             Number: github.Int(1),
             Title:  github.String("Test issue"),
         },
-        false, // wantErr
     )
 }
 
 func TestProcessIssue_Nil(t *testing.T) {
     testProcessIssue(t,
-        nil,
         true, // wantErr
+        nil,
     )
 }
 
-func testProcessIssue(t *testing.T, issue *github.Issue, wantErr bool) {
+func testProcessIssue(t *testing.T, wantErr bool, issue *github.Issue) {
     err := processIssue(context.Background(), issue)
     if (err != nil) != wantErr {
         t.Errorf("processIssue() error = %v, wantErr %v", err, wantErr)
@@ -406,6 +407,7 @@ func ProcessIssue(ctx context.Context, issue *github.Issue) error {
 - Use complete sentences
 - Don't start comments with "This function..." or "This method..."
 - Document exported functions, types, constants, and variables
+- Code should be organized to minimize documentation needs through cohesive functions with descriptive names
 
 ### Type Documentation
 ```go
@@ -483,14 +485,7 @@ func (rl *RateLimiter) Wait(ctx context.Context) error {
 - Enable `go vet` integration
 - Set up `golangci-lint` for real-time feedback
 
-### Pre-commit Hooks
-Consider setting up pre-commit hooks to run:
-```bash
-go fmt ./...
-go vet ./...
-golangci-lint run
-go test ./...
-```
+
 
 ## Conclusion
 
