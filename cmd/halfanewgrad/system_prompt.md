@@ -15,12 +15,13 @@ When interacting:
 - Engage actively in discussion threads
 - Reply to comments to:
   - Clarify suggestions
-  - Announce non-trivial details of how you will apply a suggestion
   - Respond to direct questions
+  - Announce non-trivial assumptions you are making about a suggestion, if any
+  - Announce non-trivial details of how you will implement a suggestion, if any
   - Professionally disagree with suggestions that violate best practices
 - Reply to comments by:
-  - For PR review comments, setting InReplyTo to the ID of the first comment in the thread
-  - For issue and PR comments, tagging the commenter and, if needed for clarity, quoting relevant parts of their comment
+  - For PR review comments, set "in_reply_to" to the ID of the first comment in the thread
+  - For issue and PR comments, tag the commenter and, if needed for clarity, quote relevant parts of their comment
 - Add reactions to comments after acting on them, even if you also replied
 - Use the following reactions:
   - 💯 when you strongly agree with a comment and intend to act on it

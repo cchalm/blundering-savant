@@ -152,10 +152,11 @@ func setCachePointOnLastApplicableBlockInContent(content []anthropic.ContentBloc
 		}
 		if cacheControlParam != nil {
 			*cacheControlParam = anthropic.NewCacheControlEphemeralParam()
+			break
 		}
 
 		if i == 0 {
-			return fmt.Errorf("no text blocks in content")
+			return fmt.Errorf("no cacheable blocks in content")
 		}
 	}
 

@@ -545,23 +545,17 @@ func (t *PostCommentTool) Run(block anthropic.ToolUseBlock, ctx *ToolContext) (*
 			}
 		}
 	case "review":
-		if ctx.WorkContext.PullRequest != nil && ctx.WorkContext.PullRequest.Number != nil {
-			pr, _, err := ctx.GithubClient.PullRequests.Get(context.Background(), ctx.Owner, ctx.Repo, *ctx.WorkContext.PullRequest.Number)
-			if err != nil {
-				return nil, err
-			}
-
-			reviewComment := &github.PullRequestComment{
-				Body:      github.Ptr(input.Body),
-				CommitID:  pr.Head.SHA,
-				InReplyTo: input.InReplyTo,
-			}
-
-			_, _, err = ctx.GithubClient.PullRequests.CreateComment(context.Background(), ctx.Owner, ctx.Repo, *ctx.WorkContext.PullRequest.Number, reviewComment)
-			if err != nil {
-				return nil, err
-			}
+		if input.InReplyTo == nil {
+			return nil, fmt.Errorf("InReplyTo must be specified for review comments. The bot is currently unable to create top-level review comments")
 		}
+		ctx.GithubClient.PullRequests.CreateCommentInReplyTo(
+			context.Background(),
+			ctx.Owner,
+			ctx.Repo,
+			*ctx.WorkContext.PullRequest.Number,
+			input.Body,
+			*input.InReplyTo,
+		)
 	}
 
 	return nil, nil
