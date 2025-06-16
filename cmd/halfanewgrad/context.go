@@ -258,21 +258,39 @@ func (ctx workContext) buildInstructions() string {
 	var instructions strings.Builder
 
 	instructions.WriteString("\n\n## Your Task\n\n")
-	instructions.WriteString(`Analyze this issue, ask clarifying questions, respond/react to comments, make changes and commit them, and/or create a pull request. Follow these guidelines:
+	instructions.WriteString(`An issue assigned to you requires your attention. Follow these guidelines:
 
-1. If needed to complete the task, use the text editor tool to examine the codebase structure and understand the implementation
-2. If needed to complete the task, view relevant files to understand how the code works
-3. If the requirements are unclear, do not guess. Comment on the issue to ask clarifying questions, and then stop. Do not make code changes if requirements are unclear.
-3. If other developers' suggestions are unsafe or unwise based on common best practices, or if they violate the repository's coding guidelines, politely and professionally suggest alternatives. If the other developer insists, apply their suggestion.
-4. If the requirements are clear, make code changes using the text editor tools - do not use placeholders or TODOs
+If there is not a pull request for this issue yet:
+1. If the requirements are unclear, do not guess. Comment on the issue to ask clarifying questions, and then stop. Do not make code changes if requirements are unclear.
+2. Use the text editor tool to examine the codebase structure and view files relevant to the issue
+3. If requirements are clear, make code changes locally using the text editor tools
     - Use str_replace for precise modifications to existing files
     - Use create for new files when needed
     - Use insert to add code at specific locations
-5. When making changes in response to suggestions, remember to maintain the intent of fixing the original issue
-6. If changes are made, commit them with commit_changes. Provide a clear and concise commit message summarizing the changes
-7. If there is not yet a pull request, create one using create_pull_request with:
+	- Do not use placeholders or TODOs. The code you submit must be production-ready
+4. Commit the changes with commit_changes. Provide a clear and concise commit message
+5. Create a pull request using create_pull_request. Include:
    - A descriptive PR title
    - A description of the changes
+
+If there is already a pull request for this issue:
+1. Examine all unaddressed comments, including:
+   - Issue comments
+   - PR comments
+   - PR review comments (comments on the diff)
+2. Answer questions and engage in discussion by replying with post_comment
+3. Clarify suggestions by replying with post_comment
+   - If the suggestion is unclear, ask clarifying questions. Do not guess
+   - If the suggestion is unsafe or unwise based on common best practices or the repository's coding guidelines, politely and professionally explain why and suggest alternatives. If the commenter insists, apply their suggestion.
+4. If suggestions are clear and agreed, make code changes locally using the text editor tools
+    - Use str_replace for precise modifications to existing files
+    - Use create for new files when needed
+    - Use insert to add code at specific locations
+	- Do not use placeholders or TODOs. The code you submit must be production-ready
+	- Remember to preserve the original intent of fixing the issue, found in the issue title, description, and comments
+5. Commit the changes with commit_changes. Provide a clear and concise commit message
+6. React to all comments that have either been addressed or replied to
+	- Do this AFTER either replying to a comment or committing code changes that address the comment
 
 Review all comments, reviews, and feedback carefully. Make sure to address each point raised using the appropriate text editor commands.
 
@@ -354,44 +372,4 @@ func truncateString(s string, maxLen int) string {
 		return s
 	}
 	return s[:maxLen] + "..."
-}
-
-// sanitizeForPrompt removes or replaces characters that might interfere with prompt processing
-func sanitizeForPrompt(s string) string {
-	// Remove null bytes and other control characters
-	s = strings.ReplaceAll(s, "\x00", "")
-	s = strings.ReplaceAll(s, "\r\n", "\n")
-	s = strings.ReplaceAll(s, "\r", "\n")
-
-	// Limit very long lines
-	lines := strings.Split(s, "\n")
-	for i, line := range lines {
-		if len(line) > 500 {
-			lines[i] = line[:500] + "..."
-		}
-	}
-
-	return strings.Join(lines, "\n")
-}
-
-// extractKeywords extracts potential keywords from text for analysis
-func extractKeywords(text string) []string {
-	// Simple keyword extraction - in production this could be more sophisticated
-	words := strings.Fields(strings.ToLower(text))
-	keywords := make(map[string]bool)
-
-	for _, word := range words {
-		// Remove punctuation and filter by length
-		word = strings.Trim(word, ".,!?;:\"'()[]{}*")
-		if len(word) > 3 && len(word) < 20 {
-			keywords[word] = true
-		}
-	}
-
-	var result []string
-	for keyword := range keywords {
-		result = append(result, keyword)
-	}
-
-	return result
 }
