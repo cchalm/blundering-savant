@@ -417,47 +417,6 @@ type Config struct {
 }
 ```
 
-## Security
-
-### Secrets Management
-- Never commit secrets to version control
-- Use environment variables for configuration
-- Implement proper secret rotation
-
-```go
-// Good - Load secrets from environment
-func loadConfig() (*Config, error) {
-    config := &Config{
-        GitHubToken:    os.Getenv("GITHUB_TOKEN"),
-        AnthropicToken: os.Getenv("ANTHROPIC_API_KEY"),
-        WebhookSecret:  os.Getenv("WEBHOOK_SECRET"),
-    }
-    
-    if config.GitHubToken == "" {
-        return nil, fmt.Errorf("GITHUB_TOKEN environment variable is required")
-    }
-    
-    return config, nil
-}
-```
-
-### Rate Limiting
-```go
-// Good - Implement rate limiting for API calls
-type RateLimiter struct {
-    limiter *rate.Limiter
-}
-
-func NewRateLimiter(requestsPerSecond int) *RateLimiter {
-    return &RateLimiter{
-        limiter: rate.NewLimiter(rate.Limit(requestsPerSecond), requestsPerSecond),
-    }
-}
-
-func (rl *RateLimiter) Wait(ctx context.Context) error {
-    return rl.limiter.Wait(ctx)
-}
-```
 
 ## Tools and Linters
 
