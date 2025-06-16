@@ -36,7 +36,7 @@ func NewClaudeConversation(anthropicClient anthropic.Client, model anthropic.Mod
 		maxTokens:            maxTokens,
 		systemPrompt:         systemPrompt,
 		tools:                tools,
-		autoCacheThreshold:   10000,
+		autoCacheThreshold:   5000,
 		cachePointsRemaining: 3, // 4 minus 1 for the system prompt
 	}
 }
@@ -59,7 +59,7 @@ func (cc *ClaudeConversation) sendMessage(ctx context.Context, setCachePoint boo
 			log.Printf("Warning: cannot set cache point, no remaining cache points")
 		} else {
 			cc.cachePointsRemaining--
-			setCachePointOnLastTextBlockInContent(messageContent)
+			setCachePointOnLastApplicableBlockInContent(messageContent)
 		}
 	}
 
@@ -114,11 +114,17 @@ func (cc *ClaudeConversation) sendMessage(ctx context.Context, setCachePoint boo
 		message.Usage.CacheReadInputTokens,
 	)
 
-	messageParam := message.ToParam()
 	if (message.Usage.InputTokens > cc.autoCacheThreshold) && cc.cachePointsRemaining != 0 {
-		fmt.Println("Auto-caching")
-		cc.cachePointsRemaining--
-		setCachePointOnLastTextBlockInContent(messageParam.Content)
+		log.Println("Auto-caching")
+		// Set the cache point on the last user message rather than the assistant response, since we don't know if there
+		// will be text blocks in the response
+		lastUserMessage := cc.messages[len(cc.messages)-1]
+		err := setCachePointOnLastApplicableBlockInContent(lastUserMessage.Content)
+		if err != nil {
+			log.Printf("Warning: %s", err)
+		} else {
+			cc.cachePointsRemaining--
+		}
 	}
 
 	// Append the generated message to the conversation for continuation
@@ -133,17 +139,27 @@ func (cc *ClaudeConversation) sendMessage(ctx context.Context, setCachePoint boo
 	return &message, nil
 }
 
-func setCachePointOnLastTextBlockInContent(content []anthropic.ContentBlockParamUnion) {
-	// Set the cache point at the last text block in the content
+func setCachePointOnLastApplicableBlockInContent(content []anthropic.ContentBlockParamUnion) error {
 	for i := len(content) - 1; i >= 0; i-- {
-		if text := content[i].OfText; text != nil {
-			text.CacheControl = anthropic.NewCacheControlEphemeralParam()
-			break
+		c := content[i]
+		var cacheControlParam *anthropic.CacheControlEphemeralParam
+		if param := c.OfText; param != nil {
+			cacheControlParam = &param.CacheControl
+		} else if param := c.OfToolResult; param != nil {
+			cacheControlParam = &param.CacheControl
+		} else if param := c.OfToolUse; param != nil {
+			cacheControlParam = &param.CacheControl
 		}
+		if cacheControlParam != nil {
+			*cacheControlParam = anthropic.NewCacheControlEphemeralParam()
+		}
+
 		if i == 0 {
-			fmt.Printf("Warning: unable to set cache point, no text blocks in content")
+			return fmt.Errorf("no text blocks in content")
 		}
 	}
+
+	return nil
 }
 
 type RateLimitedTransport struct {

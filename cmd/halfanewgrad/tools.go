@@ -748,6 +748,7 @@ func NewToolRegistry() *ToolRegistry {
 	registry.Register(NewPostCommentTool())
 	registry.Register(NewAddReactionTool())
 	registry.Register(NewRequestReviewTool())
+	registry.Register(NewCommitChangesTool())
 
 	return registry
 }

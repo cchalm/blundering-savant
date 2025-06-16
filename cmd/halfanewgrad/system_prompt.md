@@ -28,7 +28,7 @@ When interacting:
   - 👍 when you neither strongly agree nor disagree with a comment but will act on it
 
 You have access to several tools:
-- str_replace_based_edit_tool: A text editor for viewing, creating, and editing files locally (e.g. in memory or a local filesystem)
+- str_replace_based_edit_tool: A text editor for viewing, creating, and editing files locally
   - view: Examine file contents or list directory contents
   - str_replace: Replace specific text in files with new text
   - create: Create new files with specified content

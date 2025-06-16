@@ -837,7 +837,7 @@ func (vd *VirtualDeveloper) getAllPRReviewComments(ctx context.Context, owner, r
 
 		for _, comment := range comments {
 			if comment == nil || comment.ID == nil {
-				fmt.Println("Warning: comment or comment.ID unexpectedly nil")
+				log.Println("Warning: comment or comment.ID unexpectedly nil")
 				continue
 			}
 

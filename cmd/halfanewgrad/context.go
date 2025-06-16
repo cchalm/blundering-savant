@@ -158,7 +158,8 @@ func (ctx workContext) buildConversationContext() string {
 	// Add PR reviews and their comments
 	for _, review := range ctx.PRReviews {
 		// Add the main review
-		reviewStr := fmt.Sprintf("\n### PR Review by @%s (%s) - %s\n",
+		reviewStr := fmt.Sprintf("\n### PR Review %d by @%s (%s) - %s\n",
+			*review.ID,
 			*review.User.Login,
 			*review.AuthorAssociation,
 			review.SubmittedAt.Format("2006-01-02 15:04"))
@@ -214,16 +215,20 @@ func (ctx workContext) formatReviewCommentThread(thread []*github.PullRequestCom
 		topComment := thread[0]
 
 		formatted.WriteString(fmt.Sprintf("\n### PR Review Comment Thread on `%s`", *topComment.Path))
-		if topComment.Line != nil && *topComment.Line > 0 {
-			formatted.WriteString(fmt.Sprintf(" (line %d", *topComment.Line))
-			if topComment.StartLine != nil && *topComment.StartLine != *topComment.Line {
-				formatted.WriteString(fmt.Sprintf("-%d", *topComment.Line))
+		if topComment.Line != nil {
+			if topComment.StartLine != nil {
+				formatted.WriteString(fmt.Sprintf(" (lines %d-%d)", *topComment.StartLine, *topComment.Line))
+			} else {
+				formatted.WriteString(fmt.Sprintf(" (line %d)", *topComment.Line))
 			}
-			formatted.WriteString(")")
 		}
 
-		if topComment.DiffHunk != nil && *topComment.DiffHunk != "" {
-			formatted.WriteString(fmt.Sprintf("\n```diff\n%s\n```\n", *topComment.DiffHunk))
+		if topComment.DiffHunk != nil {
+			if len(*topComment.DiffHunk) > 1000 {
+				formatted.WriteString(fmt.Sprintf("\n<Large diff (%d bytes) omitted>\n", len(*topComment.DiffHunk)))
+			} else {
+				formatted.WriteString(fmt.Sprintf("\n```diff\n%s\n```\n", *topComment.DiffHunk))
+			}
 		}
 
 		for _, comment := range thread {
@@ -265,12 +270,12 @@ If there is not a pull request for this issue yet:
 1. If the requirements are unclear, do not guess. Comment on the issue to ask clarifying questions, and then stop. Do not make code changes if requirements are unclear.
 2. Use the text editor tool to examine the codebase structure and view files relevant to the issue
 3. If requirements are clear, make code changes locally using the text editor tools
-    - Use str_replace for precise modifications to existing files
-    - Use create for new files when needed
-    - Use insert to add code at specific locations
+    - Use "str_replace" for precise modifications to existing files
+    - Use "create" for new files when needed
+    - Use "insert" to add code at specific locations
 	- Do not use placeholders or TODOs. The code you submit must be production-ready
-4. Commit the changes with commit_changes. Provide a clear and concise commit message
-5. Create a pull request using create_pull_request. Include:
+4. Commit the changes with the "commit_changes" tool. Provide a clear and concise commit message
+5. Create a pull request with the "create_pull_request" tool. Include:
    - A descriptive PR title
    - A description of the changes
 
@@ -279,19 +284,21 @@ If there is already a pull request for this issue:
    - Issue comments
    - PR comments
    - PR review comments (comments on the diff)
-2. Answer questions and engage in discussion by replying with post_comment
-3. Clarify suggestions by replying with post_comment
+2. Use the text editor tool to examine the codebase and view files to gather any context necessary to understand comments
+3. Answer questions and engage in discussion by replying with the "post_comment" tool
+4. Clarify suggestions by replying with the "post_comment" tool
    - If the suggestion is unclear, ask clarifying questions. Do not guess
    - If the suggestion is unsafe or unwise based on common best practices or the repository's coding guidelines, politely and professionally explain why and suggest alternatives. If the commenter insists, apply their suggestion.
-4. If suggestions are clear and agreed, make code changes locally using the text editor tools
-    - Use str_replace for precise modifications to existing files
-    - Use create for new files when needed
-    - Use insert to add code at specific locations
+5. If suggestions are clear and agreed, make code changes locally using the text editor tools
+    - Use "str_replace" for precise modifications to existing files
+    - Use "create" for new files when needed
+    - Use "insert" to add code at specific locations
 	- Do not use placeholders or TODOs. The code you submit must be production-ready
 	- Remember to preserve the original intent of fixing the issue, found in the issue title, description, and comments
-5. Commit the changes with commit_changes. Provide a clear and concise commit message
-6. React to all comments that have either been addressed or replied to
+6. Commit the changes with the "commit_changes" tool. Provide a clear and concise commit message
+7. React to all comments that have either been addressed or replied to
 	- Do this AFTER either replying to a comment or committing code changes that address the comment
+8. Post a comment on the pull request explaining the new changes
 
 Review all comments, reviews, and feedback carefully. Make sure to address each point raised using the appropriate text editor commands.
 
