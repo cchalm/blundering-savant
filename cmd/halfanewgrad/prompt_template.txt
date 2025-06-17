@@ -77,13 +77,13 @@ Review all comments, reviews, and feedback carefully. Make sure to address each 
 Use tools in parallel whenever possible.
 {{- if .IssueCommentsRequiringResponses}}
 
-Issue comments requiring responses: {{.IssueCommentsRequiringResponses}}
+Issue comments requiring responses: {{commentIDs .IssueCommentsRequiringResponses}}
 {{- end}}
 {{- if .PRCommentsRequiringResponses}}
 
-PR comments requiring responses: {{.PRCommentsRequiringResponses}}
+PR comments requiring responses: {{commentIDs .PRCommentsRequiringResponses}}
 {{- end}}
 {{- if .PRReviewCommentsRequiringResponses}}
 
-PR review comments requiring responses: {{.PRReviewCommentsRequiringResponses}}
+PR review comments requiring responses: {{commentIDs .PRReviewCommentsRequiringResponses}}
 {{- end}}

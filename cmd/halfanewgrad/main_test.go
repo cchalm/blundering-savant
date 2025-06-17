@@ -151,7 +151,9 @@ func TestBuildPrompt_BasicTemplate(t *testing.T) {
 		},
 	}
 
-	prompt := ctx.BuildPrompt()
+	promptPtr, err := ctx.BuildPrompt()
+	require.NoError(t, err)
+	prompt := *promptPtr
 
 	// Verify the template was executed and contains expected content
 	require.Contains(t, prompt, "Repository: owner/repo")
@@ -179,7 +181,9 @@ func TestBuildPrompt_WithPullRequest(t *testing.T) {
 		},
 	}
 
-	prompt := ctx.BuildPrompt()
+	promptPtr, err := ctx.BuildPrompt()
+	require.NoError(t, err)
+	prompt := *promptPtr
 
 	require.Contains(t, prompt, "Pull Request #456 is open for this issue")
 }
@@ -202,7 +206,9 @@ func TestBuildPrompt_WithStyleGuide(t *testing.T) {
 		},
 	}
 
-	prompt := ctx.BuildPrompt()
+	promptPtr, err := ctx.BuildPrompt()
+	require.NoError(t, err)
+	prompt := *promptPtr
 
 	require.Contains(t, prompt, "Style Guide:")
 	require.Contains(t, prompt, "Use tabs for indentation")
@@ -224,7 +230,9 @@ func TestBuildPrompt_WithFileTree(t *testing.T) {
 		},
 	}
 
-	prompt := ctx.BuildPrompt()
+	promptPtr, err := ctx.BuildPrompt()
+	require.NoError(t, err)
+	prompt := *promptPtr
 
 	require.Contains(t, prompt, "Repository structure (sample files):")
 	require.Contains(t, prompt, "- main.go")
@@ -254,7 +262,9 @@ func TestBuildPrompt_WithCommentsRequiringResponses(t *testing.T) {
 		},
 	}
 
-	prompt := ctx.BuildPrompt()
+	promptPtr, err := ctx.BuildPrompt()
+	require.NoError(t, err)
+	prompt := *promptPtr
 
 	require.Contains(t, prompt, "Issue comments requiring responses: 1001, 1002")
 	require.Contains(t, prompt, "PR comments requiring responses: 2001")

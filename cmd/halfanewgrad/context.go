@@ -58,9 +58,9 @@ type promptTemplateData struct {
 	FileTreeTruncated                    bool
 	HasConversationHistory               bool
 	ConversationHistory                  string
-	IssueCommentsRequiringResponses      string
-	PRCommentsRequiringResponses         string
-	PRReviewCommentsRequiringResponses   string
+	IssueCommentsRequiringResponses      []*github.IssueComment
+	PRCommentsRequiringResponses         []*github.IssueComment
+	PRReviewCommentsRequiringResponses   []*github.PullRequestComment
 }
 
 // CodebaseInfo holds information about the repository structure
@@ -79,25 +79,48 @@ type StyleGuide struct {
 }
 
 // BuildPrompt generates the complete prompt for Claude based on the context
-func (ctx workContext) BuildPrompt() string {
+func (ctx workContext) BuildPrompt() (*string, error) {
 	data := ctx.buildTemplateData()
 	
-	tmpl, err := template.New("prompt").Parse(promptTemplate)
+	// Create template with helper functions
+	funcMap := template.FuncMap{
+		"commentIDs": func(comments interface{}) string {
+			switch c := comments.(type) {
+			case []*github.IssueComment:
+				var ids []string
+				for _, comment := range c {
+					if comment.ID != nil {
+						ids = append(ids, strconv.FormatInt(*comment.ID, 10))
+					}
+				}
+				return strings.Join(ids, ", ")
+			case []*github.PullRequestComment:
+				var ids []string
+				for _, comment := range c {
+					if comment.ID != nil {
+						ids = append(ids, strconv.FormatInt(*comment.ID, 10))
+					}
+				}
+				return strings.Join(ids, ", ")
+			default:
+				return ""
+			}
+		},
+	}
+	
+	tmpl, err := template.New("prompt").Funcs(funcMap).Parse(promptTemplate)
 	if err != nil {
-		// Fallback to basic prompt if template parsing fails
-		return fmt.Sprintf("Error parsing prompt template: %v\n\nFallback prompt:\nRepository: %s\nIssue: %s", 
-			data.Repository, data.IssueTitle)
+		return nil, fmt.Errorf("failed to parse prompt template: %w", err)
 	}
 	
 	var buf bytes.Buffer
 	err = tmpl.Execute(&buf, data)
 	if err != nil {
-		// Fallback to basic prompt if template execution fails
-		return fmt.Sprintf("Error executing prompt template: %v\n\nFallback prompt:\nRepository: %s\nIssue: %s", 
-			data.Repository, data.IssueTitle)
+		return nil, fmt.Errorf("failed to execute prompt template: %w", err)
 	}
 	
-	return buf.String()
+	result := buf.String()
+	return &result, nil
 }
 
 // buildTemplateData creates the data structure for template rendering
@@ -168,29 +191,9 @@ func (ctx workContext) buildTemplateData() promptTemplateData {
 	}
 	
 	// Comments requiring responses
-	if len(ctx.IssueCommentsRequiringResponses) > 0 {
-		var commentIDs []string
-		for _, comment := range ctx.IssueCommentsRequiringResponses {
-			commentIDs = append(commentIDs, strconv.FormatInt(*comment.ID, 10))
-		}
-		data.IssueCommentsRequiringResponses = strings.Join(commentIDs, ", ")
-	}
-	
-	if len(ctx.PRCommentsRequiringResponses) > 0 {
-		var commentIDs []string
-		for _, comment := range ctx.PRCommentsRequiringResponses {
-			commentIDs = append(commentIDs, strconv.FormatInt(*comment.ID, 10))
-		}
-		data.PRCommentsRequiringResponses = strings.Join(commentIDs, ", ")
-	}
-	
-	if len(ctx.PRReviewCommentsRequiringResponses) > 0 {
-		var commentIDs []string
-		for _, comment := range ctx.PRReviewCommentsRequiringResponses {
-			commentIDs = append(commentIDs, strconv.FormatInt(*comment.ID, 10))
-		}
-		data.PRReviewCommentsRequiringResponses = strings.Join(commentIDs, ", ")
-	}
+	data.IssueCommentsRequiringResponses = ctx.IssueCommentsRequiringResponses
+	data.PRCommentsRequiringResponses = ctx.PRCommentsRequiringResponses
+	data.PRReviewCommentsRequiringResponses = ctx.PRReviewCommentsRequiringResponses
 	
 	return data
 }
@@ -253,7 +256,7 @@ func (ctx workContext) formatComment(comment *github.IssueComment, commentType s
 	formatted.WriteString(fmt.Sprintf(" - %s\n", comment.CreatedAt.Format("2006-01-02 15:04")))
 
 	if comment.UpdatedAt != nil && comment.CreatedAt != comment.UpdatedAt {
-		formatted.WriteString("*(edited)*\n")
+		formatted.WriteString("<edited>\n")
 	}
 
 	formatted.WriteString(fmt.Sprintf("\n%s\n", *comment.Body))
