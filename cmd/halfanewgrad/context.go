@@ -1,9 +1,12 @@
 package main
 
 import (
+	"bytes"
+	_ "embed"
 	"fmt"
 	"strconv"
 	"strings"
+	"text/template"
 
 	"github.com/google/go-github/v72/github"
 )
@@ -38,6 +41,28 @@ type workContext struct {
 	BotUsername string
 }
 
+//go:embed prompt_template.txt
+var promptTemplate string
+
+// promptTemplateData holds the data used to render the prompt template
+type promptTemplateData struct {
+	Repository                           string
+	MainLanguage                         string
+	IssueNumber                          int
+	IssueTitle                           string
+	IssueBody                            string
+	PullRequestNumber                    *int
+	StyleGuideContent                    string
+	ReadmeContent                        string
+	FileTree                             []string
+	FileTreeTruncated                    bool
+	HasConversationHistory               bool
+	ConversationHistory                  string
+	IssueCommentsRequiringResponses      string
+	PRCommentsRequiringResponses         string
+	PRReviewCommentsRequiringResponses   string
+}
+
 // CodebaseInfo holds information about the repository structure
 type CodebaseInfo struct {
 	MainLanguage  string
@@ -55,96 +80,124 @@ type StyleGuide struct {
 
 // BuildPrompt generates the complete prompt for Claude based on the context
 func (ctx workContext) BuildPrompt() string {
-	var prompt strings.Builder
-
-	// Basic information
-	prompt.WriteString(ctx.buildBasicInfo())
-
-	// Code context
-	if ctx.StyleGuide != nil && ctx.StyleGuide.Content != "" {
-		prompt.WriteString(fmt.Sprintf("\n\nStyle Guide:\n%s\n", ctx.StyleGuide.Content))
+	data := ctx.buildTemplateData()
+	
+	tmpl, err := template.New("prompt").Parse(promptTemplate)
+	if err != nil {
+		// Fallback to basic prompt if template parsing fails
+		return fmt.Sprintf("Error parsing prompt template: %v\n\nFallback prompt:\nRepository: %s\nIssue: %s", 
+			data.Repository, data.IssueTitle)
 	}
-
-	if ctx.CodebaseInfo != nil {
-		prompt.WriteString(ctx.buildCodebaseContext())
+	
+	var buf bytes.Buffer
+	err = tmpl.Execute(&buf, data)
+	if err != nil {
+		// Fallback to basic prompt if template execution fails
+		return fmt.Sprintf("Error executing prompt template: %v\n\nFallback prompt:\nRepository: %s\nIssue: %s", 
+			data.Repository, data.IssueTitle)
 	}
-
-	// Conversation context
-	if len(ctx.IssueComments) > 0 || len(ctx.PRComments) > 0 || len(ctx.PRReviewCommentThreads) > 0 || len(ctx.PRReviews) > 0 {
-		prompt.WriteString("\n\n## Conversation History\n")
-		prompt.WriteString(ctx.buildConversationContext())
-	}
-
-	// Instructions based on state
-	prompt.WriteString(ctx.buildInstructions())
-
-	return prompt.String()
+	
+	return buf.String()
 }
 
-// buildBasicInfo creates the basic issue/PR information section
-func (ctx workContext) buildBasicInfo() string {
-	var info strings.Builder
-
-	repoName := "unknown"
+// buildTemplateData creates the data structure for template rendering
+func (ctx workContext) buildTemplateData() promptTemplateData {
+	data := promptTemplateData{}
+	
+	// Basic repository and issue information
 	if ctx.Repository != nil && ctx.Repository.FullName != nil {
-		repoName = *ctx.Repository.FullName
+		data.Repository = *ctx.Repository.FullName
+	} else {
+		data.Repository = "unknown"
 	}
-
-	mainLang := "unknown"
+	
 	if ctx.CodebaseInfo != nil {
-		mainLang = ctx.CodebaseInfo.MainLanguage
+		data.MainLanguage = ctx.CodebaseInfo.MainLanguage
 	}
-
-	issueNumber := 0
-	if ctx.Issue != nil && ctx.Issue.Number != nil {
-		issueNumber = *ctx.Issue.Number
+	if data.MainLanguage == "" {
+		data.MainLanguage = "unknown"
 	}
-
-	issueTitle := "No title"
-	if ctx.Issue != nil && ctx.Issue.Title != nil {
-		issueTitle = *ctx.Issue.Title
-	}
-
-	issueBody := "No description provided"
-	if ctx.Issue != nil && ctx.Issue.Body != nil {
-		issueBody = *ctx.Issue.Body
-	}
-
-	info.WriteString(fmt.Sprintf(`Repository: %s
-Main Language: %s
-Issue #%d: %s
-
-Issue Description:
-%s`, repoName, mainLang, issueNumber, issueTitle, issueBody))
-
-	if ctx.PullRequest != nil && ctx.PullRequest.Number != nil {
-		info.WriteString(fmt.Sprintf("\n\nPull Request #%d is open for this issue.", *ctx.PullRequest.Number))
-	}
-
-	return info.String()
-}
-
-// buildCodebaseContext creates the codebase information section
-func (ctx workContext) buildCodebaseContext() string {
-	var info strings.Builder
-
-	if ctx.CodebaseInfo.ReadmeContent != "" {
-		info.WriteString(fmt.Sprintf("\n\nREADME excerpt:\n%s\n", truncateString(ctx.CodebaseInfo.ReadmeContent, 1000)))
-	}
-
-	if len(ctx.CodebaseInfo.FileTree) > 0 {
-		info.WriteString("\nRepository structure (sample files):\n")
-		for i, file := range ctx.CodebaseInfo.FileTree {
-			if i >= 20 {
-				info.WriteString("...\n")
-				break
-			}
-			info.WriteString(fmt.Sprintf("- %s\n", file))
+	
+	if ctx.Issue != nil {
+		if ctx.Issue.Number != nil {
+			data.IssueNumber = *ctx.Issue.Number
+		}
+		if ctx.Issue.Title != nil {
+			data.IssueTitle = *ctx.Issue.Title
+		} else {
+			data.IssueTitle = "No title"
+		}
+		if ctx.Issue.Body != nil {
+			data.IssueBody = *ctx.Issue.Body
+		} else {
+			data.IssueBody = "No description provided"
 		}
 	}
-
-	return info.String()
+	
+	// Pull request information
+	if ctx.PullRequest != nil && ctx.PullRequest.Number != nil {
+		data.PullRequestNumber = ctx.PullRequest.Number
+	}
+	
+	// Style guide content
+	if ctx.StyleGuide != nil && ctx.StyleGuide.Content != "" {
+		data.StyleGuideContent = ctx.StyleGuide.Content
+	}
+	
+	// Codebase information
+	if ctx.CodebaseInfo != nil {
+		if ctx.CodebaseInfo.ReadmeContent != "" {
+			data.ReadmeContent = truncateString(ctx.CodebaseInfo.ReadmeContent, 1000)
+		}
+		
+		if len(ctx.CodebaseInfo.FileTree) > 0 {
+			maxFiles := 20
+			if len(ctx.CodebaseInfo.FileTree) > maxFiles {
+				data.FileTree = ctx.CodebaseInfo.FileTree[:maxFiles]
+				data.FileTreeTruncated = true
+			} else {
+				data.FileTree = ctx.CodebaseInfo.FileTree
+			}
+		}
+	}
+	
+	// Conversation history
+	if len(ctx.IssueComments) > 0 || len(ctx.PRComments) > 0 || len(ctx.PRReviewCommentThreads) > 0 || len(ctx.PRReviews) > 0 {
+		data.HasConversationHistory = true
+		data.ConversationHistory = ctx.buildConversationContext()
+	}
+	
+	// Comments requiring responses
+	if len(ctx.IssueCommentsRequiringResponses) > 0 {
+		var commentIDs []string
+		for _, comment := range ctx.IssueCommentsRequiringResponses {
+			commentIDs = append(commentIDs, strconv.FormatInt(*comment.ID, 10))
+		}
+		data.IssueCommentsRequiringResponses = strings.Join(commentIDs, ", ")
+	}
+	
+	if len(ctx.PRCommentsRequiringResponses) > 0 {
+		var commentIDs []string
+		for _, comment := range ctx.PRCommentsRequiringResponses {
+			commentIDs = append(commentIDs, strconv.FormatInt(*comment.ID, 10))
+		}
+		data.PRCommentsRequiringResponses = strings.Join(commentIDs, ", ")
+	}
+	
+	if len(ctx.PRReviewCommentsRequiringResponses) > 0 {
+		var commentIDs []string
+		for _, comment := range ctx.PRReviewCommentsRequiringResponses {
+			commentIDs = append(commentIDs, strconv.FormatInt(*comment.ID, 10))
+		}
+		data.PRReviewCommentsRequiringResponses = strings.Join(commentIDs, ", ")
+	}
+	
+	return data
 }
+
+
+
+
 
 // buildConversationContext creates a chronological view of all comments
 func (ctx workContext) buildConversationContext() string {
@@ -259,77 +312,7 @@ func (ctx workContext) formatReviewComment(comment *github.PullRequestComment) s
 	return formatted.String()
 }
 
-// buildInstructions creates task-specific instructions
-func (ctx workContext) buildInstructions() string {
-	var instructions strings.Builder
 
-	instructions.WriteString("\n\n## Your Task\n\n")
-	instructions.WriteString(`An issue assigned to you requires your attention. Follow these guidelines:
-
-If there is not a pull request for this issue yet:
-1. If the requirements are unclear, do not guess. Comment on the issue to ask clarifying questions, and then stop. Do not make code changes if requirements are unclear.
-2. Use the text editor tool to examine the codebase structure and view files relevant to the issue
-3. If requirements are clear, make code changes locally using the text editor tools
-    - Use "str_replace" for precise modifications to existing files
-    - Use "create" for new files when needed
-    - Use "insert" to add code at specific locations
-	- Do not use placeholders or TODOs. The code you submit must be production-ready
-4. Commit the changes with the "commit_changes" tool. Provide a clear and concise commit message
-5. Create a pull request with the "create_pull_request" tool. Include:
-   - A descriptive PR title
-   - A description of the changes
-
-If there is already a pull request for this issue:
-1. Examine all unaddressed comments, including:
-   - Issue comments
-   - PR comments
-   - PR review comments (comments on the diff)
-2. Use the text editor tool to examine the codebase and view files to gather any context necessary to understand comments
-3. Answer questions and engage in discussion by replying with the "post_comment" tool
-4. Clarify suggestions by replying with the "post_comment" tool
-   - If the suggestion is unclear, ask clarifying questions. Do not guess
-   - If the suggestion is unsafe or unwise based on common best practices or the repository's coding guidelines, politely and professionally explain why and suggest alternatives. If the commenter insists, apply their suggestion.
-5. If suggestions are clear and agreed, make code changes locally using the text editor tools
-    - Use "str_replace" for precise modifications to existing files
-    - Use "create" for new files when needed
-    - Use "insert" to add code at specific locations
-	- Do not use placeholders or TODOs. The code you submit must be production-ready
-	- Remember to preserve the original intent of fixing the issue, found in the issue title, description, and comments
-6. Commit the changes with the "commit_changes" tool. Provide a clear and concise commit message
-7. React to all comments that have either been addressed or replied to
-	- Do this AFTER either replying to a comment or committing code changes that address the comment
-8. Post a comment on the pull request explaining the new changes
-
-Review all comments, reviews, and feedback carefully. Make sure to address each point raised using the appropriate text editor commands.
-
-Use tools in parallel whenever possible.`)
-
-	// List specific comments needing responses
-	needsResponseIssueCommentIDs := []string{}
-	for _, comment := range ctx.IssueCommentsRequiringResponses {
-		needsResponseIssueCommentIDs = append(needsResponseIssueCommentIDs, strconv.FormatInt(*comment.ID, 10))
-	}
-	needsResponsePRCommentIDs := []string{}
-	for _, comment := range ctx.PRCommentsRequiringResponses {
-		needsResponsePRCommentIDs = append(needsResponsePRCommentIDs, strconv.FormatInt(*comment.ID, 10))
-	}
-	needsResponsePRReviewCommentIDs := []string{}
-	for _, comment := range ctx.PRReviewCommentsRequiringResponses {
-		needsResponsePRReviewCommentIDs = append(needsResponsePRReviewCommentIDs, strconv.FormatInt(*comment.ID, 10))
-	}
-
-	if len(needsResponseIssueCommentIDs) > 0 {
-		instructions.WriteString(fmt.Sprintf("\n\nIssue comments requiring responses: %s", strings.Join(needsResponseIssueCommentIDs, ", ")))
-	}
-	if len(needsResponsePRCommentIDs) > 0 {
-		instructions.WriteString(fmt.Sprintf("\n\nPR comments requiring responses: %s", strings.Join(needsResponsePRCommentIDs, ", ")))
-	}
-	if len(needsResponsePRReviewCommentIDs) > 0 {
-		instructions.WriteString(fmt.Sprintf("\n\nPR review comments requiring responses: %s", strings.Join(needsResponsePRReviewCommentIDs, ", ")))
-	}
-
-	return instructions.String()
-}
 
 // GetMainLanguageInfo returns information about the main programming language
 func (ctx workContext) GetMainLanguageInfo() (string, map[string]string) {

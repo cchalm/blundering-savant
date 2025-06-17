@@ -1,0 +1,89 @@
+Repository: {{.Repository}}
+Main Language: {{.MainLanguage}}
+Issue #{{.IssueNumber}}: {{.IssueTitle}}
+
+Issue Description:
+{{.IssueBody}}
+{{- if .PullRequestNumber}}
+
+Pull Request #{{.PullRequestNumber}} is open for this issue.
+{{- end}}
+{{- if .StyleGuideContent}}
+
+Style Guide:
+{{.StyleGuideContent}}
+{{- end}}
+{{- if .ReadmeContent}}
+
+README excerpt:
+{{.ReadmeContent}}
+{{- end}}
+{{- if .FileTree}}
+
+Repository structure (sample files):
+{{- range .FileTree}}
+- {{.}}
+{{- end}}
+{{- if .FileTreeTruncated}}
+...
+{{- end}}
+{{- end}}
+{{- if .HasConversationHistory}}
+
+## Conversation History
+{{.ConversationHistory}}
+{{- end}}
+
+## Your Task
+
+An issue assigned to you requires your attention. Follow these guidelines:
+
+If there is not a pull request for this issue yet:
+1. If the requirements are unclear, do not guess. Comment on the issue to ask clarifying questions, and then stop. Do not make code changes if requirements are unclear.
+2. Use the text editor tool to examine the codebase structure and view files relevant to the issue
+3. If requirements are clear, make code changes locally using the text editor tools
+    - Use "str_replace" for precise modifications to existing files
+    - Use "create" for new files when needed
+    - Use "insert" to add code at specific locations
+	- Do not use placeholders or TODOs. The code you submit must be production-ready
+4. Commit the changes with the "commit_changes" tool. Provide a clear and concise commit message
+5. Create a pull request with the "create_pull_request" tool. Include:
+   - A descriptive PR title
+   - A description of the changes
+
+If there is already a pull request for this issue:
+1. Examine all unaddressed comments, including:
+   - Issue comments
+   - PR comments
+   - PR review comments (comments on the diff)
+2. Use the text editor tool to examine the codebase and view files to gather any context necessary to understand comments
+3. Answer questions and engage in discussion by replying with the "post_comment" tool
+4. Clarify suggestions by replying with the "post_comment" tool
+   - If the suggestion is unclear, ask clarifying questions. Do not guess
+   - If the suggestion is unsafe or unwise based on common best practices or the repository's coding guidelines, politely and professionally explain why and suggest alternatives. If the commenter insists, apply their suggestion.
+5. If suggestions are clear and agreed, make code changes locally using the text editor tools
+    - Use "str_replace" for precise modifications to existing files
+    - Use "create" for new files when needed
+    - Use "insert" to add code at specific locations
+	- Do not use placeholders or TODOs. The code you submit must be production-ready
+	- Remember to preserve the original intent of fixing the issue, found in the issue title, description, and comments
+6. Commit the changes with the "commit_changes" tool. Provide a clear and concise commit message
+7. React to all comments that have either been addressed or replied to
+	- Do this AFTER either replying to a comment or committing code changes that address the comment
+8. Post a comment on the pull request explaining the new changes
+
+Review all comments, reviews, and feedback carefully. Make sure to address each point raised using the appropriate text editor commands.
+
+Use tools in parallel whenever possible.
+{{- if .IssueCommentsRequiringResponses}}
+
+Issue comments requiring responses: {{.IssueCommentsRequiringResponses}}
+{{- end}}
+{{- if .PRCommentsRequiringResponses}}
+
+PR comments requiring responses: {{.PRCommentsRequiringResponses}}
+{{- end}}
+{{- if .PRReviewCommentsRequiringResponses}}
+
+PR review comments requiring responses: {{.PRReviewCommentsRequiringResponses}}
+{{- end}}
