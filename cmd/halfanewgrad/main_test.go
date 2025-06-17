@@ -132,3 +132,119 @@ func TestOrganizePRReviewCommentsIntoThreads_EmptyInput(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, threads, 0)
 }
+
+func TestMemoryTimestampCache_GetTimestamps_NotFound(t *testing.T) {
+	cache := NewMemoryTimestampCache()
+	
+	issueUpdatedAt, prUpdatedAt, found := cache.GetTimestamps("owner", "repo", 123)
+	
+	require.False(t, found)
+	require.Nil(t, issueUpdatedAt)
+	require.Nil(t, prUpdatedAt)
+}
+
+func TestMemoryTimestampCache_SetAndGetTimestamps(t *testing.T) {
+	cache := NewMemoryTimestampCache()
+	
+	issueTime := time.Now()
+	prTime := time.Now().Add(1 * time.Hour)
+	
+	// Set timestamps
+	cache.SetTimestamps("owner", "repo", 123, &issueTime, &prTime)
+	
+	// Get timestamps
+	issueUpdatedAt, prUpdatedAt, found := cache.GetTimestamps("owner", "repo", 123)
+	
+	require.True(t, found)
+	require.NotNil(t, issueUpdatedAt)
+	require.NotNil(t, prUpdatedAt)
+	require.True(t, issueTime.Equal(*issueUpdatedAt))
+	require.True(t, prTime.Equal(*prUpdatedAt))
+}
+
+func TestMemoryTimestampCache_SetAndGetTimestamps_NilPR(t *testing.T) {
+	cache := NewMemoryTimestampCache()
+	
+	issueTime := time.Now()
+	
+	// Set timestamps with nil PR
+	cache.SetTimestamps("owner", "repo", 123, &issueTime, nil)
+	
+	// Get timestamps
+	issueUpdatedAt, prUpdatedAt, found := cache.GetTimestamps("owner", "repo", 123)
+	
+	require.True(t, found)
+	require.NotNil(t, issueUpdatedAt)
+	require.Nil(t, prUpdatedAt)
+	require.True(t, issueTime.Equal(*issueUpdatedAt))
+}
+
+func TestMemoryTimestampCache_UpdateExisting(t *testing.T) {
+	cache := NewMemoryTimestampCache()
+	
+	// Set initial timestamps
+	issueTime1 := time.Now()
+	prTime1 := time.Now().Add(1 * time.Hour)
+	cache.SetTimestamps("owner", "repo", 123, &issueTime1, &prTime1)
+	
+	// Update timestamps
+	issueTime2 := time.Now().Add(2 * time.Hour)
+	prTime2 := time.Now().Add(3 * time.Hour)
+	cache.SetTimestamps("owner", "repo", 123, &issueTime2, &prTime2)
+	
+	// Get updated timestamps
+	issueUpdatedAt, prUpdatedAt, found := cache.GetTimestamps("owner", "repo", 123)
+	
+	require.True(t, found)
+	require.NotNil(t, issueUpdatedAt)
+	require.NotNil(t, prUpdatedAt)
+	require.True(t, issueTime2.Equal(*issueUpdatedAt))
+	require.True(t, prTime2.Equal(*prUpdatedAt))
+	require.False(t, issueTime1.Equal(*issueUpdatedAt))
+	require.False(t, prTime1.Equal(*prUpdatedAt))
+}
+
+func TestMemoryTimestampCache_DifferentIssues(t *testing.T) {
+	cache := NewMemoryTimestampCache()
+	
+	issueTime1 := time.Now()
+	issueTime2 := time.Now().Add(1 * time.Hour)
+	
+	// Set timestamps for different issues
+	cache.SetTimestamps("owner", "repo", 123, &issueTime1, nil)
+	cache.SetTimestamps("owner", "repo", 456, &issueTime2, nil)
+	
+	// Get timestamps for first issue
+	issueUpdatedAt1, prUpdatedAt1, found1 := cache.GetTimestamps("owner", "repo", 123)
+	require.True(t, found1)
+	require.True(t, issueTime1.Equal(*issueUpdatedAt1))
+	require.Nil(t, prUpdatedAt1)
+	
+	// Get timestamps for second issue
+	issueUpdatedAt2, prUpdatedAt2, found2 := cache.GetTimestamps("owner", "repo", 456)
+	require.True(t, found2)
+	require.True(t, issueTime2.Equal(*issueUpdatedAt2))
+	require.Nil(t, prUpdatedAt2)
+	
+	// Verify they are different
+	require.False(t, issueTime1.Equal(*issueUpdatedAt2))
+}
+
+func TestMemoryTimestampCache_DifferentRepos(t *testing.T) {
+	cache := NewMemoryTimestampCache()
+	
+	issueTime := time.Now()
+	
+	// Set timestamps for same issue number in different repos
+	cache.SetTimestamps("owner1", "repo1", 123, &issueTime, nil)
+	cache.SetTimestamps("owner2", "repo2", 123, &issueTime, nil)
+	
+	// Both should be found independently
+	_, _, found1 := cache.GetTimestamps("owner1", "repo1", 123)
+	_, _, found2 := cache.GetTimestamps("owner2", "repo2", 123)
+	_, _, found3 := cache.GetTimestamps("owner1", "repo2", 123)
+	
+	require.True(t, found1)
+	require.True(t, found2)
+	require.False(t, found3) // Different combination should not be found
+}

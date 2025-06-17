@@ -9,6 +9,7 @@ import (
 	"os"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/anthropics/anthropic-sdk-go"
@@ -17,6 +18,60 @@ import (
 	"github.com/joho/godotenv"
 	"golang.org/x/oauth2"
 )
+
+// TimestampCache provides an interface for caching issue/PR timestamps
+type TimestampCache interface {
+	// GetTimestamps returns the last known timestamps for an issue and its associated PR
+	GetTimestamps(owner, repo string, issueNumber int) (issueUpdatedAt, prUpdatedAt *time.Time, found bool)
+	
+	// SetTimestamps stores the timestamps for an issue and its associated PR
+	SetTimestamps(owner, repo string, issueNumber int, issueUpdatedAt, prUpdatedAt *time.Time)
+}
+
+// MemoryTimestampCache implements TimestampCache using in-memory storage
+type MemoryTimestampCache struct {
+	mu    sync.RWMutex
+	cache map[string]TimestampEntry
+}
+
+// TimestampEntry holds the cached timestamp information
+type TimestampEntry struct {
+	IssueUpdatedAt *time.Time
+	PRUpdatedAt    *time.Time
+}
+
+// NewMemoryTimestampCache creates a new in-memory timestamp cache
+func NewMemoryTimestampCache() *MemoryTimestampCache {
+	return &MemoryTimestampCache{
+		cache: make(map[string]TimestampEntry),
+	}
+}
+
+// GetTimestamps returns the cached timestamps for an issue and its PR
+func (c *MemoryTimestampCache) GetTimestamps(owner, repo string, issueNumber int) (issueUpdatedAt, prUpdatedAt *time.Time, found bool) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	
+	key := fmt.Sprintf("%s/%s/%d", owner, repo, issueNumber)
+	entry, exists := c.cache[key]
+	if !exists {
+		return nil, nil, false
+	}
+	
+	return entry.IssueUpdatedAt, entry.PRUpdatedAt, true
+}
+
+// SetTimestamps stores the timestamps for an issue and its PR
+func (c *MemoryTimestampCache) SetTimestamps(owner, repo string, issueNumber int, issueUpdatedAt, prUpdatedAt *time.Time) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	
+	key := fmt.Sprintf("%s/%s/%d", owner, repo, issueNumber)
+	c.cache[key] = TimestampEntry{
+		IssueUpdatedAt: issueUpdatedAt,
+		PRUpdatedAt:    prUpdatedAt,
+	}
+}
 
 // Config holds the configuration for the virtual developer
 type Config struct {
@@ -34,6 +89,7 @@ type VirtualDeveloper struct {
 	toolRegistry      *ToolRegistry
 	fileSystemFactory githubFileSystemFactory
 	botName           string
+	timestampCache    TimestampCache
 }
 
 var (
@@ -110,6 +166,7 @@ func NewVirtualDeveloper(config *Config) *VirtualDeveloper {
 		toolRegistry:      NewToolRegistry(),
 		fileSystemFactory: githubFileSystemFactory{githubClient: githubClient},
 		botName:           config.GitHubUsername,
+		timestampCache:    NewMemoryTimestampCache(),
 	}
 }
 
@@ -190,6 +247,16 @@ func (vd *VirtualDeveloper) processIssue(ctx context.Context, owner, repo string
 		}
 	}()
 
+	// Check if we need to process this issue based on cached timestamps
+	skipProcessing, err := vd.checkTimestampCache(ctx, owner, repo, issue)
+	if err != nil {
+		log.Printf("Warning: Could not check timestamp cache: %v", err)
+		// Continue processing in case of cache error
+	} else if skipProcessing {
+		log.Printf("issue timestamps unchanged, skipping processing")
+		return nil
+	}
+
 	botUser, _, err := vd.githubClient.Users.Get(ctx, vd.botName)
 	if err != nil {
 		return fmt.Errorf("failed to get bot user: %w", err)
@@ -207,6 +274,8 @@ func (vd *VirtualDeveloper) processIssue(ctx context.Context, owner, repo string
 	// Check if we need to do anything
 	if !vd.needsAttention(*workCtx) {
 		log.Printf("issue does not require attention")
+		// Update cache with current timestamps since we've done the work
+		vd.updateTimestampCache(owner, repo, issue, workCtx.PullRequest)
 		return nil
 	}
 
@@ -216,7 +285,92 @@ func (vd *VirtualDeveloper) processIssue(ctx context.Context, owner, repo string
 		return fmt.Errorf("failed to process with AI: %w", err)
 	}
 
+	// Update cache with current timestamps after successful processing
+	vd.updateTimestampCache(owner, repo, issue, workCtx.PullRequest)
+
 	return nil
+}
+
+// checkTimestampCache checks if the issue/PR timestamps have changed since last processing
+// Returns true if processing should be skipped (timestamps unchanged), false otherwise
+func (vd *VirtualDeveloper) checkTimestampCache(ctx context.Context, owner, repo string, issue *github.Issue) (bool, error) {
+	if issue.Number == nil {
+		return false, fmt.Errorf("issue number is nil")
+	}
+
+	// Get cached timestamps
+	cachedIssueUpdatedAt, cachedPRUpdatedAt, found := vd.timestampCache.GetTimestamps(owner, repo, *issue.Number)
+	if !found {
+		// No cache entry exists, need to process
+		return false, nil
+	}
+
+	// Get current issue timestamp
+	currentIssue, _, err := vd.githubClient.Issues.Get(ctx, owner, repo, *issue.Number)
+	if err != nil {
+		return false, fmt.Errorf("failed to get current issue: %w", err)
+	}
+
+	// Check if issue timestamp has changed
+	if currentIssue.UpdatedAt == nil {
+		return false, fmt.Errorf("current issue updated_at is nil")
+	}
+	
+	if cachedIssueUpdatedAt == nil || !currentIssue.UpdatedAt.Equal(*cachedIssueUpdatedAt) {
+		// Issue timestamp changed, need to process
+		return false, nil
+	}
+
+	// Get current PR timestamp if a PR might exist
+	workBranch := getWorkBranchName(issue)
+	pr, err := getPullRequest(ctx, vd.githubClient, owner, repo, workBranch, vd.botName)
+	if err != nil {
+		return false, fmt.Errorf("failed to get pull request: %w", err)
+	}
+
+	// Compare PR timestamps
+	if pr == nil {
+		// No PR exists now
+		if cachedPRUpdatedAt != nil {
+			// Had a PR before but not now, something changed
+			return false, nil
+		}
+		// No PR before and none now, timestamps match
+		return true, nil
+	}
+
+	// PR exists now
+	if cachedPRUpdatedAt == nil {
+		// No PR before but one exists now, something changed
+		return false, nil
+	}
+
+	if pr.UpdatedAt == nil {
+		return false, fmt.Errorf("current PR updated_at is nil")
+	}
+
+	if !pr.UpdatedAt.Equal(*cachedPRUpdatedAt) {
+		// PR timestamp changed, need to process
+		return false, nil
+	}
+
+	// Both timestamps match, can skip processing
+	return true, nil
+}
+
+// updateTimestampCache updates the cache with current issue and PR timestamps
+func (vd *VirtualDeveloper) updateTimestampCache(owner, repo string, issue *github.Issue, pr *github.PullRequest) {
+	if issue.Number == nil || issue.UpdatedAt == nil {
+		log.Printf("Warning: Cannot update timestamp cache, issue number or updated_at is nil")
+		return
+	}
+
+	var prUpdatedAt *time.Time
+	if pr != nil && pr.UpdatedAt != nil {
+		prUpdatedAt = &pr.UpdatedAt.Time
+	}
+
+	vd.timestampCache.SetTimestamps(owner, repo, *issue.Number, &issue.UpdatedAt.Time, prUpdatedAt)
 }
 
 func getWorkBranchName(issue *github.Issue) string {
