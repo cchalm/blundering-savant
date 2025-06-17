@@ -24,10 +24,10 @@ type workContext struct {
 	CodebaseInfo *CodebaseInfo
 
 	// Conversation context
-	IssueComments          []*github.IssueComment
-	PRComments             []*github.IssueComment         // PRs are issues under the hood, so PR comments are issue comments
+	IssueComments          []*github.IssueComment         // Issue comments are sorted by timestamp
+	PRComments             []*github.IssueComment         // PRs are issues under the hood, so PR comments are issue comments. These are also sorted by timestamp
 	PRReviewCommentThreads [][]*github.PullRequestComment // List of comment threads
-	PRReviews              []*github.PullRequestReview
+	PRReviews              []*github.PullRequestReview    // PR reviews are sorted by timestamp
 
 	// Current work state
 	IssueCommentsRequiringResponses    []*github.IssueComment

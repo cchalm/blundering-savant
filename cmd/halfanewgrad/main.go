@@ -379,6 +379,10 @@ func (vd *VirtualDeveloper) processWithAI(ctx context.Context, workCtx workConte
 
 // needsAttention checks if a work item needs AI attention
 func (vd *VirtualDeveloper) needsAttention(workCtx workContext) bool {
+	if len(workCtx.IssueComments) == 0 && workCtx.PullRequest == nil {
+		// If there are no issue comments and no pull request, this is a brand new issue and requires our attention
+		return true
+	}
 	// Check if there are comments needing responses
 	if len(workCtx.IssueCommentsRequiringResponses) > 0 ||
 		len(workCtx.PRCommentsRequiringResponses) > 0 ||
@@ -797,7 +801,7 @@ func (vd *VirtualDeveloper) getAllIssueComments(ctx context.Context, owner, repo
 	return allComments, nil
 }
 
-// getAllPRReviews retrieves all reviews on a PR
+// getAllPRReviews retrieves all reviews on a PR, sorted chronologically
 func (vd *VirtualDeveloper) getAllPRReviews(ctx context.Context, owner, repo string, prNumber int) ([]*github.PullRequestReview, error) {
 	var allReviews []*github.PullRequestReview
 
@@ -817,7 +821,7 @@ func (vd *VirtualDeveloper) getAllPRReviews(ctx context.Context, owner, repo str
 	return allReviews, nil
 }
 
-// getAllPRComments retrieves all review comments on a PR
+// getAllPRComments retrieves all review comments on a PR, sorted chronologically
 func (vd *VirtualDeveloper) getAllPRReviewComments(ctx context.Context, owner, repo string, prNumber int) ([]*github.PullRequestComment, error) {
 	var allComments []*github.PullRequestComment
 
