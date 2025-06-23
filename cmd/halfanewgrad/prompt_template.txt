@@ -33,10 +33,12 @@ Repository structure (sample files):
 ## Conversation History
 {{- range .IssueComments}}
 
-### Issue Comment {{deref .ID}} by @{{deref .User.Login}}{{if and .AuthorAssociation (ne (deref .AuthorAssociation) "") (ne (deref .AuthorAssociation) "none")}} ({{deref .AuthorAssociation}}){{end}} - {{formatTime .CreatedAt}}
-{{- if and .UpdatedAt .CreatedAt (ne .CreatedAt .UpdatedAt)}}
+### Issue Comment {{deref .ID}} by @{{deref .User.Login}}
+  {{- if and .AuthorAssociation (ne (deref .AuthorAssociation) "") (ne (deref .AuthorAssociation) "none")}} ({{deref .AuthorAssociation}})
+  {{- end}} - {{formatTime .CreatedAt}}
+  {{- if and .UpdatedAt .CreatedAt (ne .CreatedAt .UpdatedAt)}}
 <edited>
-{{- end}}
+  {{- end}}
 
 {{deref .Body}}
 {{- end}}
@@ -44,42 +46,53 @@ Repository structure (sample files):
 
 ### PR Review {{deref .ID}} by @{{deref .User.Login}} ({{deref .AuthorAssociation}}) - {{formatTime .SubmittedAt}}
 **Status: {{deref .State}}**
-{{- if .Body}}
+  {{- if .Body}}
 
 {{deref .Body}}
-{{- end}}
+  {{- end}}
 {{- end}}
 {{- range .PRComments}}
 
-### Issue Comment {{deref .ID}} by @{{deref .User.Login}}{{if and .AuthorAssociation (ne (deref .AuthorAssociation) "") (ne (deref .AuthorAssociation) "none")}} ({{deref .AuthorAssociation}}){{end}} - {{formatTime .CreatedAt}}
-{{- if and .UpdatedAt .CreatedAt (ne .CreatedAt .UpdatedAt)}}
+### Issue Comment {{deref .ID}} by @{{deref .User.Login}}
+  {{- if and .AuthorAssociation (ne (deref .AuthorAssociation) "") (ne (deref .AuthorAssociation) "none")}} ({{deref .AuthorAssociation}})
+  {{- end}} - {{formatTime .CreatedAt}}
+  {{- if and .UpdatedAt .CreatedAt (ne .CreatedAt .UpdatedAt)}}
 <edited>
-{{- end}}
+  {{- end}}
 
 {{deref .Body}}
 {{- end}}
-{{- range .PRReviewCommentThreads}}
-{{- $thread := .}}
-{{- if gt (len $thread) 0}}
-{{- $topComment := index $thread 0}}
+{{- range .PRReviewCommentThreads -}}
+  {{- $thread := . -}}
+  {{- if gt (len $thread) 0 -}}
+    {{- $topComment := index $thread 0}}
 
-### PR Review Comment Thread on `{{deref $topComment.Path}}`{{if $topComment.Line}}{{if $topComment.StartLine}} (lines {{deref $topComment.StartLine}}-{{deref $topComment.Line}}){{else}} (line {{deref $topComment.Line}}){{end}}{{end}}
-{{- if $topComment.DiffHunk}}
-{{- $truncated := truncateDiff $topComment.DiffHunk}}
-{{- if eq $truncated (deref $topComment.DiffHunk)}}
+### PR Review Comment Thread on `{{deref $topComment.Path}}`
+    {{- if $topComment.Line -}}
+      {{- if $topComment.StartLine}} (lines {{deref $topComment.StartLine}}-{{deref $topComment.Line}})
+      {{- else}} (line {{deref $topComment.Line}})
+      {{- end -}}
+    {{- end -}}
+    {{- if $topComment.DiffHunk}}
+      {{- $truncated := truncateDiff $topComment.DiffHunk -}}
+      {{- if eq $truncated (deref $topComment.DiffHunk)}}
 ```diff
 {{$truncated}}
 ```
-{{- else}}
+      {{- else}}
 {{$truncated}}
-{{- end}}
-{{- end}}
-{{- range $thread}}
-PR Review Comment {{deref .ID}} by @{{deref .User.Login}}{{if and .AuthorAssociation (ne (deref .AuthorAssociation) "") (ne (deref .AuthorAssociation) "none")}} ({{deref .AuthorAssociation}}){{end}}{{if .PullRequestReviewID}} in Review {{deref .PullRequestReviewID}}{{end}} - {{formatTime .CreatedAt}}
+      {{- end -}}
+    {{- end -}}
+    {{- range $thread}}
+PR Review Comment {{deref .ID}} by @{{deref .User.Login}}
+      {{- if and .AuthorAssociation (ne (deref .AuthorAssociation) "") (ne (deref .AuthorAssociation) "none")}} ({{deref .AuthorAssociation}})
+      {{- end -}}
+      {{- if .PullRequestReviewID}} in Review {{deref .PullRequestReviewID}}
+      {{- end}} - {{formatTime .CreatedAt}}
 
 {{deref .Body}}
-{{- end}}
-{{- end}}
+    {{- end -}}
+  {{- end -}}
 {{- end}}
 {{- end}}
 
