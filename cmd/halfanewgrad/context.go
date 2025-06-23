@@ -44,6 +44,51 @@ type workContext struct {
 //go:embed prompt_template.txt
 var promptTemplate string
 
+// Custom types for template data to avoid pointer dereferencing in templates
+
+// TemplateUser represents a user in template data
+type TemplateUser struct {
+	Login string
+}
+
+// TemplateComment represents a comment in template data
+type TemplateComment struct {
+	ID                  int64
+	Body                string
+	User                TemplateUser
+	AuthorAssociation   string
+	CreatedAt           string
+	UpdatedAt           string
+	IsEdited            bool
+}
+
+// TemplateReview represents a PR review in template data
+type TemplateReview struct {
+	ID                int64
+	Body              string
+	User              TemplateUser
+	AuthorAssociation string
+	SubmittedAt       string
+	State             string
+}
+
+// TemplateReviewComment represents a PR review comment in template data
+type TemplateReviewComment struct {
+	ID                    int64
+	Body                  string
+	User                  TemplateUser
+	AuthorAssociation     string
+	CreatedAt             string
+	Path                  string
+	Line                  *int
+	StartLine             *int
+	DiffHunk              string
+	PullRequestReviewID   *int64
+}
+
+// TemplateReviewCommentThread represents a thread of PR review comments
+type TemplateReviewCommentThread []TemplateReviewComment
+
 // promptTemplateData holds the data used to render the prompt template
 type promptTemplateData struct {
 	Repository                           string
@@ -58,14 +103,14 @@ type promptTemplateData struct {
 	FileTreeTruncated                    bool
 	HasConversationHistory               bool
 	// Conversation data structures for template to format
-	IssueComments                        []*github.IssueComment
-	PRComments                           []*github.IssueComment
-	PRReviewCommentThreads              [][]*github.PullRequestComment
-	PRReviews                           []*github.PullRequestReview
+	IssueComments                        []TemplateComment
+	PRComments                           []TemplateComment
+	PRReviewCommentThreads              []TemplateReviewCommentThread
+	PRReviews                           []TemplateReview
 	BotUsername                         string
-	IssueCommentsRequiringResponses      []*github.IssueComment
-	PRCommentsRequiringResponses         []*github.IssueComment
-	PRReviewCommentsRequiringResponses   []*github.PullRequestComment
+	IssueCommentsRequiringResponses      []TemplateComment
+	PRCommentsRequiringResponses         []TemplateComment
+	PRReviewCommentsRequiringResponses   []TemplateReviewComment
 }
 
 // CodebaseInfo holds information about the repository structure
@@ -91,63 +136,27 @@ func (ctx workContext) BuildPrompt() (*string, error) {
 	funcMap := template.FuncMap{
 		"commentIDs": func(comments interface{}) string {
 			switch c := comments.(type) {
-			case []*github.IssueComment:
+			case []TemplateComment:
 				var ids []string
 				for _, comment := range c {
-					if comment.ID != nil {
-						ids = append(ids, strconv.FormatInt(*comment.ID, 10))
-					}
+					ids = append(ids, strconv.FormatInt(comment.ID, 10))
 				}
 				return strings.Join(ids, ", ")
-			case []*github.PullRequestComment:
+			case []TemplateReviewComment:
 				var ids []string
 				for _, comment := range c {
-					if comment.ID != nil {
-						ids = append(ids, strconv.FormatInt(*comment.ID, 10))
-					}
+					ids = append(ids, strconv.FormatInt(comment.ID, 10))
 				}
 				return strings.Join(ids, ", ")
 			default:
 				return ""
 			}
 		},
-		"formatTime": func(t interface{}) string {
-			switch v := t.(type) {
-			case *github.Timestamp:
-				if v != nil {
-					return v.Format("2006-01-02 15:04")
-				}
+		"truncateDiff": func(diff string) string {
+			if len(diff) > 1000 {
+				return fmt.Sprintf("<Large diff (%d bytes) omitted>", len(diff))
 			}
-			return ""
-		},
-		"truncateDiff": func(diff *string) string {
-			if diff == nil {
-				return ""
-			}
-			if len(*diff) > 1000 {
-				return fmt.Sprintf("<Large diff (%d bytes) omitted>", len(*diff))
-			}
-			return *diff
-		},
-		"deref": func(ptr interface{}) interface{} {
-			switch v := ptr.(type) {
-			case *string:
-				if v != nil {
-					return *v
-				}
-				return ""
-			case *int:
-				if v != nil {
-					return *v
-				}
-				return 0
-			case *int64:
-				if v != nil {
-					return *v
-				}
-				return int64(0)
-			}
-			return ptr
+			return diff
 		},
 	}
 	
@@ -164,6 +173,101 @@ func (ctx workContext) BuildPrompt() (*string, error) {
 	
 	result := buf.String()
 	return &result, nil
+}
+
+// Helper functions to convert GitHub types to template types
+
+func convertGitHubUser(user *github.User) TemplateUser {
+	if user == nil || user.Login == nil {
+		return TemplateUser{Login: "unknown"}
+	}
+	return TemplateUser{Login: *user.Login}
+}
+
+func convertGitHubComment(comment *github.IssueComment) TemplateComment {
+	if comment == nil {
+		return TemplateComment{}
+	}
+	
+	tc := TemplateComment{
+		Body: safeDeref(comment.Body, ""),
+		User: convertGitHubUser(comment.User),
+		AuthorAssociation: safeDeref(comment.AuthorAssociation, "<none>"),
+	}
+	
+	if comment.ID != nil {
+		tc.ID = *comment.ID
+	}
+	
+	if comment.CreatedAt != nil {
+		tc.CreatedAt = comment.CreatedAt.Format("2006-01-02 15:04")
+	}
+	
+	if comment.UpdatedAt != nil {
+		tc.UpdatedAt = comment.UpdatedAt.Format("2006-01-02 15:04")
+		tc.IsEdited = comment.CreatedAt != nil && !comment.CreatedAt.Equal(comment.UpdatedAt.Time)
+	}
+	
+	return tc
+}
+
+func convertGitHubReview(review *github.PullRequestReview) TemplateReview {
+	if review == nil {
+		return TemplateReview{}
+	}
+	
+	tr := TemplateReview{
+		Body: safeDeref(review.Body, ""),
+		User: convertGitHubUser(review.User),
+		AuthorAssociation: safeDeref(review.AuthorAssociation, "<none>"),
+		State: safeDeref(review.State, ""),
+	}
+	
+	if review.ID != nil {
+		tr.ID = *review.ID
+	}
+	
+	if review.SubmittedAt != nil {
+		tr.SubmittedAt = review.SubmittedAt.Format("2006-01-02 15:04")
+	}
+	
+	return tr
+}
+
+func convertGitHubReviewComment(comment *github.PullRequestComment) TemplateReviewComment {
+	if comment == nil {
+		return TemplateReviewComment{}
+	}
+	
+	trc := TemplateReviewComment{
+		Body: safeDeref(comment.Body, ""),
+		User: convertGitHubUser(comment.User),
+		AuthorAssociation: safeDeref(comment.AuthorAssociation, "<none>"),
+		Path: safeDeref(comment.Path, ""),
+		DiffHunk: safeDeref(comment.DiffHunk, ""),
+	}
+	
+	if comment.ID != nil {
+		trc.ID = *comment.ID
+	}
+	
+	if comment.CreatedAt != nil {
+		trc.CreatedAt = comment.CreatedAt.Format("2006-01-02 15:04")
+	}
+	
+	// These remain as pointers since they can be legitimately nil
+	trc.Line = comment.Line
+	trc.StartLine = comment.StartLine
+	trc.PullRequestReviewID = comment.PullRequestReviewID
+	
+	return trc
+}
+
+func safeDeref[T any](ptr *T, defaultVal T) T {
+	if ptr == nil {
+		return defaultVal
+	}
+	return *ptr
 }
 
 // buildTemplateData creates the data structure for template rendering
@@ -227,20 +331,49 @@ func (ctx workContext) buildTemplateData() promptTemplateData {
 		}
 	}
 	
-	// Conversation history - pass raw data structures to template
+	// Conversation history - convert GitHub types to template types
 	if len(ctx.IssueComments) > 0 || len(ctx.PRComments) > 0 || len(ctx.PRReviewCommentThreads) > 0 || len(ctx.PRReviews) > 0 {
 		data.HasConversationHistory = true
-		data.IssueComments = ctx.IssueComments
-		data.PRComments = ctx.PRComments
-		data.PRReviewCommentThreads = ctx.PRReviewCommentThreads
-		data.PRReviews = ctx.PRReviews
 		data.BotUsername = ctx.BotUsername
+		
+		// Convert issue comments
+		for _, comment := range ctx.IssueComments {
+			data.IssueComments = append(data.IssueComments, convertGitHubComment(comment))
+		}
+		
+		// Convert PR comments
+		for _, comment := range ctx.PRComments {
+			data.PRComments = append(data.PRComments, convertGitHubComment(comment))
+		}
+		
+		// Convert PR reviews
+		for _, review := range ctx.PRReviews {
+			data.PRReviews = append(data.PRReviews, convertGitHubReview(review))
+		}
+		
+		// Convert PR review comment threads
+		for _, thread := range ctx.PRReviewCommentThreads {
+			var convertedThread TemplateReviewCommentThread
+			for _, comment := range thread {
+				convertedThread = append(convertedThread, convertGitHubReviewComment(comment))
+			}
+			data.PRReviewCommentThreads = append(data.PRReviewCommentThreads, convertedThread)
+		}
 	}
 	
-	// Comments requiring responses
-	data.IssueCommentsRequiringResponses = ctx.IssueCommentsRequiringResponses
-	data.PRCommentsRequiringResponses = ctx.PRCommentsRequiringResponses
-	data.PRReviewCommentsRequiringResponses = ctx.PRReviewCommentsRequiringResponses
+	// Comments requiring responses - convert to template types
+	for _, comment := range ctx.IssueCommentsRequiringResponses {
+		data.IssueCommentsRequiringResponses = append(data.IssueCommentsRequiringResponses, convertGitHubComment(comment))
+	}
+	
+	for _, comment := range ctx.PRCommentsRequiringResponses {
+		data.PRCommentsRequiringResponses = append(data.PRCommentsRequiringResponses, convertGitHubComment(comment))
+	}
+	
+	for _, comment := range ctx.PRReviewCommentsRequiringResponses {
+		data.PRReviewCommentsRequiringResponses = append(data.PRReviewCommentsRequiringResponses, convertGitHubReviewComment(comment))
+	}
+	
 	
 	return data
 }

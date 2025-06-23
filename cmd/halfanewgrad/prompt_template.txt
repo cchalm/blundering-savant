@@ -33,49 +33,49 @@ Repository structure (sample files):
 ## Conversation History
 {{- range .IssueComments}}
 
-### Issue Comment {{deref .ID}} by @{{deref .User.Login}}
-  {{- if and .AuthorAssociation (ne (deref .AuthorAssociation) "") (ne (deref .AuthorAssociation) "none")}} ({{deref .AuthorAssociation}})
-  {{- end}} - {{formatTime .CreatedAt}}
-  {{- if and .UpdatedAt .CreatedAt (ne .CreatedAt .UpdatedAt)}}
+### Issue Comment {{.ID}} by @{{.User.Login}}
+  {{- if and .AuthorAssociation (ne .AuthorAssociation "") (ne .AuthorAssociation "<none>")}} ({{.AuthorAssociation}})
+  {{- end}} - {{.CreatedAt}}
+  {{- if .IsEdited}}
 <edited>
   {{- end}}
 
-{{deref .Body}}
+{{.Body}}
 {{- end}}
 {{- range .PRReviews}}
 
-### PR Review {{deref .ID}} by @{{deref .User.Login}} ({{deref .AuthorAssociation}}) - {{formatTime .SubmittedAt}}
-**Status: {{deref .State}}**
+### PR Review {{.ID}} by @{{.User.Login}} ({{.AuthorAssociation}}) - {{.SubmittedAt}}
+**Status: {{.State}}**
   {{- if .Body}}
 
-{{deref .Body}}
+{{.Body}}
   {{- end}}
 {{- end}}
 {{- range .PRComments}}
 
-### Issue Comment {{deref .ID}} by @{{deref .User.Login}}
-  {{- if and .AuthorAssociation (ne (deref .AuthorAssociation) "") (ne (deref .AuthorAssociation) "none")}} ({{deref .AuthorAssociation}})
-  {{- end}} - {{formatTime .CreatedAt}}
-  {{- if and .UpdatedAt .CreatedAt (ne .CreatedAt .UpdatedAt)}}
+### Issue Comment {{.ID}} by @{{.User.Login}}
+  {{- if and .AuthorAssociation (ne .AuthorAssociation "") (ne .AuthorAssociation "<none>")}} ({{.AuthorAssociation}})
+  {{- end}} - {{.CreatedAt}}
+  {{- if .IsEdited}}
 <edited>
   {{- end}}
 
-{{deref .Body}}
+{{.Body}}
 {{- end}}
 {{- range .PRReviewCommentThreads -}}
   {{- $thread := . -}}
   {{- if gt (len $thread) 0 -}}
     {{- $topComment := index $thread 0}}
 
-### PR Review Comment Thread on `{{deref $topComment.Path}}`
+### PR Review Comment Thread on `{{$topComment.Path}}`
     {{- if $topComment.Line -}}
-      {{- if $topComment.StartLine}} (lines {{deref $topComment.StartLine}}-{{deref $topComment.Line}})
-      {{- else}} (line {{deref $topComment.Line}})
+      {{- if $topComment.StartLine}} (lines {{$topComment.StartLine}}-{{$topComment.Line}})
+      {{- else}} (line {{$topComment.Line}})
       {{- end -}}
     {{- end -}}
     {{- if $topComment.DiffHunk}}
       {{- $truncated := truncateDiff $topComment.DiffHunk -}}
-      {{- if eq $truncated (deref $topComment.DiffHunk)}}
+      {{- if eq $truncated $topComment.DiffHunk}}
 ```diff
 {{$truncated}}
 ```
@@ -84,13 +84,13 @@ Repository structure (sample files):
       {{- end -}}
     {{- end -}}
     {{- range $thread}}
-PR Review Comment {{deref .ID}} by @{{deref .User.Login}}
-      {{- if and .AuthorAssociation (ne (deref .AuthorAssociation) "") (ne (deref .AuthorAssociation) "none")}} ({{deref .AuthorAssociation}})
+PR Review Comment {{.ID}} by @{{.User.Login}}
+      {{- if and .AuthorAssociation (ne .AuthorAssociation "") (ne .AuthorAssociation "<none>")}} ({{.AuthorAssociation}})
       {{- end -}}
-      {{- if .PullRequestReviewID}} in Review {{deref .PullRequestReviewID}}
-      {{- end}} - {{formatTime .CreatedAt}}
+      {{- if .PullRequestReviewID}} in Review {{.PullRequestReviewID}}
+      {{- end}} - {{.CreatedAt}}
 
-{{deref .Body}}
+{{.Body}}
     {{- end -}}
   {{- end -}}
 {{- end}}
