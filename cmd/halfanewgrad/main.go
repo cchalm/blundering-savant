@@ -9,7 +9,6 @@ import (
 	"os"
 	"slices"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/anthropics/anthropic-sdk-go"
@@ -18,60 +17,6 @@ import (
 	"github.com/joho/godotenv"
 	"golang.org/x/oauth2"
 )
-
-// TimestampCache provides an interface for caching issue/PR timestamps
-type TimestampCache interface {
-	// GetTimestamps returns the last known timestamps for an issue and its associated PR
-	GetTimestamps(owner, repo string, issueNumber int) (issueUpdatedAt, prUpdatedAt *time.Time, found bool)
-
-	// SetTimestamps stores the timestamps for an issue and its associated PR
-	SetTimestamps(owner, repo string, issueNumber int, issueUpdatedAt, prUpdatedAt *time.Time)
-}
-
-// MemoryTimestampCache implements TimestampCache using in-memory storage
-type MemoryTimestampCache struct {
-	mu    sync.RWMutex
-	cache map[string]TimestampEntry
-}
-
-// TimestampEntry holds the cached timestamp information
-type TimestampEntry struct {
-	IssueUpdatedAt *time.Time
-	PRUpdatedAt    *time.Time
-}
-
-// NewMemoryTimestampCache creates a new in-memory timestamp cache
-func NewMemoryTimestampCache() *MemoryTimestampCache {
-	return &MemoryTimestampCache{
-		cache: make(map[string]TimestampEntry),
-	}
-}
-
-// GetTimestamps returns the cached timestamps for an issue and its PR
-func (c *MemoryTimestampCache) GetTimestamps(owner, repo string, issueNumber int) (issueUpdatedAt, prUpdatedAt *time.Time, found bool) {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-
-	key := fmt.Sprintf("%s/%s/%d", owner, repo, issueNumber)
-	entry, exists := c.cache[key]
-	if !exists {
-		return nil, nil, false
-	}
-
-	return entry.IssueUpdatedAt, entry.PRUpdatedAt, true
-}
-
-// SetTimestamps stores the timestamps for an issue and its PR
-func (c *MemoryTimestampCache) SetTimestamps(owner, repo string, issueNumber int, issueUpdatedAt, prUpdatedAt *time.Time) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	key := fmt.Sprintf("%s/%s/%d", owner, repo, issueNumber)
-	c.cache[key] = TimestampEntry{
-		IssueUpdatedAt: issueUpdatedAt,
-		PRUpdatedAt:    prUpdatedAt,
-	}
-}
 
 // Config holds the configuration for the virtual developer
 type Config struct {
@@ -253,7 +198,7 @@ func (vd *VirtualDeveloper) processIssue(ctx context.Context, owner, repo string
 		log.Printf("Warning: Could not check timestamp cache: %v", err)
 		// Continue processing in case of cache error
 	} else if skipProcessing {
-		log.Printf("issue timestamps unchanged, skipping processing")
+		log.Printf("issue does not require attention (cached)")
 		return nil
 	}
 
@@ -305,18 +250,12 @@ func (vd *VirtualDeveloper) checkTimestampCache(ctx context.Context, owner, repo
 		return false, nil
 	}
 
-	// Get current issue timestamp
-	currentIssue, _, err := vd.githubClient.Issues.Get(ctx, owner, repo, *issue.Number)
-	if err != nil {
-		return false, fmt.Errorf("failed to get current issue: %w", err)
+	// Check if issue timestamp has changed (using the issue parameter, which is relatively fresh)
+	if issue.UpdatedAt == nil {
+		return false, fmt.Errorf("issue updated_at is nil")
 	}
 
-	// Check if issue timestamp has changed
-	if currentIssue.UpdatedAt == nil {
-		return false, fmt.Errorf("current issue updated_at is nil")
-	}
-
-	if cachedIssueUpdatedAt == nil || !currentIssue.UpdatedAt.Time.Equal(*cachedIssueUpdatedAt) {
+	if cachedIssueUpdatedAt == nil || !issue.UpdatedAt.Time.Equal(*cachedIssueUpdatedAt) {
 		// Issue timestamp changed, need to process
 		return false, nil
 	}
