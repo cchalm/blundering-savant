@@ -36,8 +36,8 @@ func NewClaudeConversation(anthropicClient anthropic.Client, model anthropic.Mod
 		maxTokens:            maxTokens,
 		systemPrompt:         systemPrompt,
 		tools:                tools,
-		autoCacheThreshold:   5000,
-		cachePointsRemaining: 3, // 4 minus 1 for the system prompt
+		autoCacheThreshold:   10000,
+		cachePointsRemaining: 4,
 	}
 }
 
@@ -58,8 +58,12 @@ func (cc *ClaudeConversation) sendMessage(ctx context.Context, setCachePoint boo
 		if cc.cachePointsRemaining == 0 {
 			log.Printf("Warning: cannot set cache point, no remaining cache points")
 		} else {
-			cc.cachePointsRemaining--
-			setCachePointOnLastApplicableBlockInContent(messageContent)
+			err := setCachePointOnLastApplicableBlockInContent(messageContent)
+			if err != nil {
+				log.Printf("Warning: failed to set cache point: %s", err)
+			} else {
+				cc.cachePointsRemaining--
+			}
 		}
 	}
 
@@ -121,7 +125,7 @@ func (cc *ClaudeConversation) sendMessage(ctx context.Context, setCachePoint boo
 		lastUserMessage := cc.messages[len(cc.messages)-1]
 		err := setCachePointOnLastApplicableBlockInContent(lastUserMessage.Content)
 		if err != nil {
-			log.Printf("Warning: %s", err)
+			log.Printf("Warning: failed to set cache point: %s", err)
 		} else {
 			cc.cachePointsRemaining--
 		}

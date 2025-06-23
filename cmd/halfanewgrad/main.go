@@ -466,7 +466,7 @@ func (vd *VirtualDeveloper) processWithAI(ctx context.Context, workCtx workConte
 		return fmt.Errorf("failed to send initial message to AI: %w", err)
 	}
 
-	for i := 0; i < maxIterations; i++ {
+	for i := range maxIterations {
 		log.Printf("Processing AI response, iteration: %d", i+1)
 		for _, contentBlock := range response.Content {
 			switch block := contentBlock.AsAny().(type) {
