@@ -31,7 +31,56 @@ Repository structure (sample files):
 {{- if .HasConversationHistory}}
 
 ## Conversation History
-{{.ConversationHistory}}
+{{- range .IssueComments}}
+
+### Issue Comment {{deref .ID}} by @{{deref .User.Login}}{{if and .AuthorAssociation (ne (deref .AuthorAssociation) "") (ne (deref .AuthorAssociation) "none")}} ({{deref .AuthorAssociation}}){{end}} - {{formatTime .CreatedAt}}
+{{- if and .UpdatedAt .CreatedAt (ne .CreatedAt .UpdatedAt)}}
+<edited>
+{{- end}}
+
+{{deref .Body}}
+{{- end}}
+{{- range .PRReviews}}
+
+### PR Review {{deref .ID}} by @{{deref .User.Login}} ({{deref .AuthorAssociation}}) - {{formatTime .SubmittedAt}}
+**Status: {{deref .State}}**
+{{- if .Body}}
+
+{{deref .Body}}
+{{- end}}
+{{- end}}
+{{- range .PRComments}}
+
+### Issue Comment {{deref .ID}} by @{{deref .User.Login}}{{if and .AuthorAssociation (ne (deref .AuthorAssociation) "") (ne (deref .AuthorAssociation) "none")}} ({{deref .AuthorAssociation}}){{end}} - {{formatTime .CreatedAt}}
+{{- if and .UpdatedAt .CreatedAt (ne .CreatedAt .UpdatedAt)}}
+<edited>
+{{- end}}
+
+{{deref .Body}}
+{{- end}}
+{{- range .PRReviewCommentThreads}}
+{{- $thread := .}}
+{{- if gt (len $thread) 0}}
+{{- $topComment := index $thread 0}}
+
+### PR Review Comment Thread on `{{deref $topComment.Path}}`{{if $topComment.Line}}{{if $topComment.StartLine}} (lines {{deref $topComment.StartLine}}-{{deref $topComment.Line}}){{else}} (line {{deref $topComment.Line}}){{end}}{{end}}
+{{- if $topComment.DiffHunk}}
+{{- $truncated := truncateDiff $topComment.DiffHunk}}
+{{- if eq $truncated (deref $topComment.DiffHunk)}}
+```diff
+{{$truncated}}
+```
+{{- else}}
+{{$truncated}}
+{{- end}}
+{{- end}}
+{{- range $thread}}
+PR Review Comment {{deref .ID}} by @{{deref .User.Login}}{{if and .AuthorAssociation (ne (deref .AuthorAssociation) "") (ne (deref .AuthorAssociation) "none")}} ({{deref .AuthorAssociation}}){{end}}{{if .PullRequestReviewID}} in Review {{deref .PullRequestReviewID}}{{end}} - {{formatTime .CreatedAt}}
+
+{{deref .Body}}
+{{- end}}
+{{- end}}
+{{- end}}
 {{- end}}
 
 ## Your Task

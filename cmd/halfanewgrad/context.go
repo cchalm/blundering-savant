@@ -57,7 +57,12 @@ type promptTemplateData struct {
 	FileTree                             []string
 	FileTreeTruncated                    bool
 	HasConversationHistory               bool
-	ConversationHistory                  string
+	// Conversation data structures for template to format
+	IssueComments                        []*github.IssueComment
+	PRComments                           []*github.IssueComment
+	PRReviewCommentThreads              [][]*github.PullRequestComment
+	PRReviews                           []*github.PullRequestReview
+	BotUsername                         string
 	IssueCommentsRequiringResponses      []*github.IssueComment
 	PRCommentsRequiringResponses         []*github.IssueComment
 	PRReviewCommentsRequiringResponses   []*github.PullRequestComment
@@ -105,6 +110,44 @@ func (ctx workContext) BuildPrompt() (*string, error) {
 			default:
 				return ""
 			}
+		},
+		"formatTime": func(t interface{}) string {
+			switch v := t.(type) {
+			case *github.Timestamp:
+				if v != nil {
+					return v.Format("2006-01-02 15:04")
+				}
+			}
+			return ""
+		},
+		"truncateDiff": func(diff *string) string {
+			if diff == nil {
+				return ""
+			}
+			if len(*diff) > 1000 {
+				return fmt.Sprintf("<Large diff (%d bytes) omitted>", len(*diff))
+			}
+			return *diff
+		},
+		"deref": func(ptr interface{}) interface{} {
+			switch v := ptr.(type) {
+			case *string:
+				if v != nil {
+					return *v
+				}
+				return ""
+			case *int:
+				if v != nil {
+					return *v
+				}
+				return 0
+			case *int64:
+				if v != nil {
+					return *v
+				}
+				return int64(0)
+			}
+			return ptr
 		},
 	}
 	
@@ -184,10 +227,14 @@ func (ctx workContext) buildTemplateData() promptTemplateData {
 		}
 	}
 	
-	// Conversation history
+	// Conversation history - pass raw data structures to template
 	if len(ctx.IssueComments) > 0 || len(ctx.PRComments) > 0 || len(ctx.PRReviewCommentThreads) > 0 || len(ctx.PRReviews) > 0 {
 		data.HasConversationHistory = true
-		data.ConversationHistory = ctx.buildConversationContext()
+		data.IssueComments = ctx.IssueComments
+		data.PRComments = ctx.PRComments
+		data.PRReviewCommentThreads = ctx.PRReviewCommentThreads
+		data.PRReviews = ctx.PRReviews
+		data.BotUsername = ctx.BotUsername
 	}
 	
 	// Comments requiring responses
@@ -202,118 +249,7 @@ func (ctx workContext) buildTemplateData() promptTemplateData {
 
 
 
-// buildConversationContext creates a chronological view of all comments
-func (ctx workContext) buildConversationContext() string {
-	var timeline []string
 
-	// Add issue comments
-	for _, comment := range ctx.IssueComments {
-		timeline = append(timeline, ctx.formatComment(comment, "Issue"))
-	}
-
-	// Add PR reviews and their comments
-	for _, review := range ctx.PRReviews {
-		// Add the main review
-		reviewStr := fmt.Sprintf("\n### PR Review %d by @%s (%s) - %s\n",
-			*review.ID,
-			*review.User.Login,
-			*review.AuthorAssociation,
-			review.SubmittedAt.Format("2006-01-02 15:04"))
-
-		if review.State != nil {
-			reviewStr += fmt.Sprintf("**Status: %s**\n", *review.State)
-		}
-
-		if review.Body != nil {
-			reviewStr += fmt.Sprintf("\n%s\n", *review.Body)
-		}
-
-		timeline = append(timeline, reviewStr)
-	}
-
-	for _, prComment := range ctx.PRComments {
-		timeline = append(timeline, ctx.formatComment(prComment, "Issue"))
-	}
-
-	// Add PR review comment threads
-	for _, thread := range ctx.PRReviewCommentThreads {
-		timeline = append(timeline, ctx.formatReviewCommentThread(thread))
-	}
-
-	return strings.Join(timeline, "\n")
-}
-
-// formatComment formats a regular comment
-func (ctx workContext) formatComment(comment *github.IssueComment, commentType string) string {
-	var formatted strings.Builder
-
-	formatted.WriteString(fmt.Sprintf("\n### %s Comment %d by @%s", commentType, *comment.ID, *comment.User.Login))
-
-	if comment.AuthorAssociation != nil && *comment.AuthorAssociation != "" && *comment.AuthorAssociation != "none" {
-		formatted.WriteString(fmt.Sprintf(" (%s)", *comment.AuthorAssociation))
-	}
-
-	formatted.WriteString(fmt.Sprintf(" - %s\n", comment.CreatedAt.Format("2006-01-02 15:04")))
-
-	if comment.UpdatedAt != nil && comment.CreatedAt != comment.UpdatedAt {
-		formatted.WriteString("<edited>\n")
-	}
-
-	formatted.WriteString(fmt.Sprintf("\n%s\n", *comment.Body))
-
-	return formatted.String()
-}
-
-func (ctx workContext) formatReviewCommentThread(thread []*github.PullRequestComment) string {
-	var formatted strings.Builder
-
-	if len(thread) != 0 {
-		topComment := thread[0]
-
-		formatted.WriteString(fmt.Sprintf("\n### PR Review Comment Thread on `%s`", *topComment.Path))
-		if topComment.Line != nil {
-			if topComment.StartLine != nil {
-				formatted.WriteString(fmt.Sprintf(" (lines %d-%d)", *topComment.StartLine, *topComment.Line))
-			} else {
-				formatted.WriteString(fmt.Sprintf(" (line %d)", *topComment.Line))
-			}
-		}
-
-		if topComment.DiffHunk != nil {
-			if len(*topComment.DiffHunk) > 1000 {
-				formatted.WriteString(fmt.Sprintf("\n<Large diff (%d bytes) omitted>\n", len(*topComment.DiffHunk)))
-			} else {
-				formatted.WriteString(fmt.Sprintf("\n```diff\n%s\n```\n", *topComment.DiffHunk))
-			}
-		}
-
-		for _, comment := range thread {
-			formatted.WriteString(ctx.formatReviewComment(comment))
-		}
-	}
-
-	return formatted.String()
-}
-
-// formatReviewComment formats a code review comment
-func (ctx workContext) formatReviewComment(comment *github.PullRequestComment) string {
-	var formatted strings.Builder
-
-	formatted.WriteString(fmt.Sprintf("PR Review Comment %d by @%s", *comment.ID, *comment.User.Login))
-
-	if comment.AuthorAssociation != nil && *comment.AuthorAssociation != "" && *comment.AuthorAssociation != "none" {
-		formatted.WriteString(fmt.Sprintf(" (%s)", *comment.AuthorAssociation))
-	}
-	if comment.PullRequestReviewID != nil {
-		formatted.WriteString(fmt.Sprintf(" in Review %d", *comment.PullRequestReviewID))
-	}
-
-	formatted.WriteString(fmt.Sprintf(" - %s\n", comment.CreatedAt.Format("2006-01-02 15:04")))
-
-	formatted.WriteString(fmt.Sprintf("\n%s\n", *comment.Body))
-
-	return formatted.String()
-}
 
 
 
