@@ -19,26 +19,62 @@ type ClaudeConversation struct {
 	client anthropic.Client
 
 	model        anthropic.Model
-	maxTokens    int64
 	systemPrompt string
 	tools        []anthropic.ToolParam
-	messages     []anthropic.MessageParam
+	messages     []conversationTurn
 
+	maxTokens            int64 // Maximum number of output tokens per response
 	autoCacheThreshold   int64 // Number of input tokens after which we automatically set a cache point
 	cachePointsRemaining int   // Number of cache points remaining in this conversation
 }
 
-func NewClaudeConversation(anthropicClient anthropic.Client, model anthropic.Model, maxTokens int64, systemPrompt string, tools []anthropic.ToolParam) *ClaudeConversation {
+// conversationTurn is a pair of messages: a user message, and an optional assistant response
+type conversationTurn struct {
+	userMessage anthropic.MessageParam
+	response    *anthropic.Message // May be nil
+}
+
+func NewClaudeConversation(
+	anthropicClient anthropic.Client,
+	model anthropic.Model,
+	maxTokens int64,
+	tools []anthropic.ToolParam,
+	systemPrompt string,
+) *ClaudeConversation {
+
 	return &ClaudeConversation{
 		client: anthropicClient,
 
-		model:                model,
+		model:        model,
+		systemPrompt: systemPrompt,
+		tools:        tools,
+
 		maxTokens:            maxTokens,
-		systemPrompt:         systemPrompt,
-		tools:                tools,
 		autoCacheThreshold:   10000,
 		cachePointsRemaining: 4,
 	}
+}
+
+func ResumeClaudeConversation(
+	anthropicClient anthropic.Client,
+	history conversationHistory,
+	model anthropic.Model,
+	maxTokens int64,
+	tools []anthropic.ToolParam,
+) (*ClaudeConversation, error) {
+	c := &ClaudeConversation{
+		client: anthropicClient,
+
+		model:        model,
+		systemPrompt: history.SystemPrompt,
+		tools:        tools,
+		messages:     history.Messages,
+
+		maxTokens:            maxTokens,
+		autoCacheThreshold:   10000,
+		cachePointsRemaining: 4,
+	}
+	return c, nil
 }
 
 // SendMessage sends a user message with the given content and returns Claude's response
@@ -67,7 +103,17 @@ func (cc *ClaudeConversation) sendMessage(ctx context.Context, setCachePoint boo
 		}
 	}
 
-	cc.messages = append(cc.messages, anthropic.NewUserMessage(messageContent...))
+	cc.messages = append(cc.messages, conversationTurn{
+		userMessage: anthropic.NewUserMessage(messageContent...),
+	})
+
+	messageParams := []anthropic.MessageParam{}
+	for _, turn := range cc.messages {
+		messageParams = append(messageParams, turn.userMessage)
+		if turn.response != nil {
+			messageParams = append(messageParams, turn.response.ToParam())
+		}
+	}
 
 	params := anthropic.MessageNewParams{
 		Model:     cc.model,
@@ -81,7 +127,7 @@ func (cc *ClaudeConversation) sendMessage(ctx context.Context, setCachePoint boo
 				// CacheControl: anthropic.NewCacheControlEphemeralParam(),
 			},
 		},
-		Messages: cc.messages,
+		Messages: messageParams,
 	}
 
 	toolParams := []anthropic.ToolUnionParam{}
@@ -93,10 +139,10 @@ func (cc *ClaudeConversation) sendMessage(ctx context.Context, setCachePoint boo
 	params.Tools = toolParams
 
 	stream := cc.client.Messages.NewStreaming(ctx, params)
-	message := anthropic.Message{}
+	response := anthropic.Message{}
 	for stream.Next() {
 		event := stream.Current()
-		err := message.Accumulate(event)
+		err := response.Accumulate(event)
 		if err != nil {
 			return nil, fmt.Errorf("failed to accumulate response content stream: %w", err)
 		}
@@ -104,8 +150,8 @@ func (cc *ClaudeConversation) sendMessage(ctx context.Context, setCachePoint boo
 	if stream.Err() != nil {
 		return nil, fmt.Errorf("failed to stream response: %w", stream.Err())
 	}
-	if message.StopReason == "" {
-		b, err := json.Marshal(message)
+	if response.StopReason == "" {
+		b, err := json.Marshal(response)
 		if err != nil {
 			log.Printf("error while marshalling corrupt message for inspection: %v", err)
 		}
@@ -113,17 +159,17 @@ func (cc *ClaudeConversation) sendMessage(ctx context.Context, setCachePoint boo
 	}
 
 	log.Printf("Token usage - Input: %d, Cache create: %d, Cache read: %d",
-		message.Usage.InputTokens,
-		message.Usage.CacheCreationInputTokens,
-		message.Usage.CacheReadInputTokens,
+		response.Usage.InputTokens,
+		response.Usage.CacheCreationInputTokens,
+		response.Usage.CacheReadInputTokens,
 	)
 
-	if (message.Usage.InputTokens > cc.autoCacheThreshold) && cc.cachePointsRemaining != 0 {
+	if (response.Usage.InputTokens > cc.autoCacheThreshold) && cc.cachePointsRemaining != 0 {
 		log.Println("Auto-caching")
 		// Set the cache point on the last user message rather than the assistant response, since we don't know if there
 		// will be text blocks in the response
-		lastUserMessage := cc.messages[len(cc.messages)-1]
-		err := setCachePointOnLastApplicableBlockInContent(lastUserMessage.Content)
+		lastTurn := cc.messages[len(cc.messages)-1]
+		err := setCachePointOnLastApplicableBlockInContent(lastTurn.userMessage.Content)
 		if err != nil {
 			log.Printf("Warning: failed to set cache point: %s", err)
 		} else {
@@ -131,16 +177,16 @@ func (cc *ClaudeConversation) sendMessage(ctx context.Context, setCachePoint boo
 		}
 	}
 
-	// Append the generated message to the conversation for continuation
-	cc.messages = append(cc.messages, message.ToParam())
+	// Record the repsonse
+	cc.messages[len(cc.messages)-1].response = &response
 
 	// TODO remove this
-	b, err := json.Marshal(cc.messages)
+	b, err := json.Marshal(append(messageParams, response.ToParam()))
 	if err == nil {
 		os.WriteFile("conversation.json", b, 0666)
 	}
 
-	return &message, nil
+	return &response, nil
 }
 
 func setCachePointOnLastApplicableBlockInContent(content []anthropic.ContentBlockParamUnion) error {
@@ -165,6 +211,20 @@ func setCachePointOnLastApplicableBlockInContent(content []anthropic.ContentBloc
 	}
 
 	return nil
+}
+
+// conversationHistory contains a serializable and resumable snapshot of a ClaudeConversation
+type conversationHistory struct {
+	SystemPrompt string             `json:"systemPrompt"`
+	Messages     []conversationTurn `json:"messages"`
+}
+
+// History returns a serializable conversation history
+func (cc *ClaudeConversation) History() conversationHistory {
+	return conversationHistory{
+		SystemPrompt: cc.systemPrompt,
+		Messages:     cc.messages,
+	}
 }
 
 type RateLimitedTransport struct {
