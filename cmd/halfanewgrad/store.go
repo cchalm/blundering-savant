@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path"
@@ -24,7 +25,10 @@ type FileSystemConversationHistoryStore struct {
 func (fskvs FileSystemConversationHistoryStore) Get(key string) (*conversationHistory, error) {
 	path := path.Join(fskvs.dir, key)
 	b, err := os.ReadFile(path)
-	if err != nil {
+	if errors.Is(err, os.ErrNotExist) {
+		// The file doesn't exist so nothing is stored at this key
+		return nil, nil
+	} else if err != nil {
 		return nil, fmt.Errorf("failed to read file: %w", err)
 	}
 	var value conversationHistory
