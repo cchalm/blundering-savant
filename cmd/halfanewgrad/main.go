@@ -23,7 +23,7 @@ import (
 type TimestampCache interface {
 	// GetTimestamps returns the last known timestamps for an issue and its associated PR
 	GetTimestamps(owner, repo string, issueNumber int) (issueUpdatedAt, prUpdatedAt *time.Time, found bool)
-	
+
 	// SetTimestamps stores the timestamps for an issue and its associated PR
 	SetTimestamps(owner, repo string, issueNumber int, issueUpdatedAt, prUpdatedAt *time.Time)
 }
@@ -51,13 +51,13 @@ func NewMemoryTimestampCache() *MemoryTimestampCache {
 func (c *MemoryTimestampCache) GetTimestamps(owner, repo string, issueNumber int) (issueUpdatedAt, prUpdatedAt *time.Time, found bool) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	
+
 	key := fmt.Sprintf("%s/%s/%d", owner, repo, issueNumber)
 	entry, exists := c.cache[key]
 	if !exists {
 		return nil, nil, false
 	}
-	
+
 	return entry.IssueUpdatedAt, entry.PRUpdatedAt, true
 }
 
@@ -65,7 +65,7 @@ func (c *MemoryTimestampCache) GetTimestamps(owner, repo string, issueNumber int
 func (c *MemoryTimestampCache) SetTimestamps(owner, repo string, issueNumber int, issueUpdatedAt, prUpdatedAt *time.Time) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	
+
 	key := fmt.Sprintf("%s/%s/%d", owner, repo, issueNumber)
 	c.cache[key] = TimestampEntry{
 		IssueUpdatedAt: issueUpdatedAt,
@@ -315,8 +315,8 @@ func (vd *VirtualDeveloper) checkTimestampCache(ctx context.Context, owner, repo
 	if currentIssue.UpdatedAt == nil {
 		return false, fmt.Errorf("current issue updated_at is nil")
 	}
-	
-	if cachedIssueUpdatedAt == nil || !currentIssue.UpdatedAt.Equal(*cachedIssueUpdatedAt) {
+
+	if cachedIssueUpdatedAt == nil || !currentIssue.UpdatedAt.Time.Equal(*cachedIssueUpdatedAt) {
 		// Issue timestamp changed, need to process
 		return false, nil
 	}
@@ -349,7 +349,7 @@ func (vd *VirtualDeveloper) checkTimestampCache(ctx context.Context, owner, repo
 		return false, fmt.Errorf("current PR updated_at is nil")
 	}
 
-	if !pr.UpdatedAt.Equal(*cachedPRUpdatedAt) {
+	if !pr.UpdatedAt.Time.Equal(*cachedPRUpdatedAt) {
 		// PR timestamp changed, need to process
 		return false, nil
 	}
