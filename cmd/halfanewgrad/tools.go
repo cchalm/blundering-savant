@@ -106,7 +106,7 @@ func (t *TextEditorTool) ParseToolUse(block anthropic.ToolUseBlock) (*TextEditor
 func (t *TextEditorTool) Run(block anthropic.ToolUseBlock, ctx *ToolContext) (*string, error) {
 	input, err := t.ParseToolUse(block)
 	if err != nil {
-		return nil, fmt.Errorf("error parsing input: %v", err)
+		return nil, fmt.Errorf("error parsing input: %w", err)
 	}
 
 	var result string
@@ -128,7 +128,7 @@ func (t *TextEditorTool) Run(block anthropic.ToolUseBlock, ctx *ToolContext) (*s
 	}
 
 	if err != nil {
-		return nil, fmt.Errorf("%v", err)
+		return nil, fmt.Errorf("error running tool: %w", err)
 	}
 	return &result, nil
 }
@@ -317,7 +317,7 @@ func (t *CommitChangesTool) ParseToolUse(block anthropic.ToolUseBlock) (*CommitC
 func (t *CommitChangesTool) Run(block anthropic.ToolUseBlock, ctx *ToolContext) (*string, error) {
 	input, err := t.ParseToolUse(block)
 	if err != nil {
-		return nil, fmt.Errorf("error parsing input: %v", err)
+		return nil, fmt.Errorf("error parsing input: %w", err)
 	}
 
 	if ctx.FileSystem == nil {
@@ -397,7 +397,7 @@ func (t *CreatePullRequestTool) ParseToolUse(block anthropic.ToolUseBlock) (*Cre
 func (t *CreatePullRequestTool) Run(block anthropic.ToolUseBlock, ctx *ToolContext) (*string, error) {
 	input, err := t.ParseToolUse(block)
 	if err != nil {
-		return nil, fmt.Errorf("error parsing input: %v", err)
+		return nil, fmt.Errorf("error parsing input: %w", err)
 	}
 
 	if ctx.FileSystem == nil {
@@ -512,7 +512,7 @@ func (t *PostCommentTool) ParseToolUse(block anthropic.ToolUseBlock) (*PostComme
 func (t *PostCommentTool) Run(block anthropic.ToolUseBlock, ctx *ToolContext) (*string, error) {
 	input, err := t.ParseToolUse(block)
 	if err != nil {
-		return nil, fmt.Errorf("error parsing input: %v", err)
+		return nil, fmt.Errorf("error parsing input: %w", err)
 	}
 
 	if input.Body == "" {
@@ -623,7 +623,7 @@ func (t *AddReactionTool) ParseToolUse(block anthropic.ToolUseBlock) (*AddReacti
 func (t *AddReactionTool) Run(block anthropic.ToolUseBlock, ctx *ToolContext) (*string, error) {
 	input, err := t.ParseToolUse(block)
 	if err != nil {
-		return nil, fmt.Errorf("error parsing input: %v", err)
+		return nil, fmt.Errorf("error parsing input: %w", err)
 	}
 
 	if input.CommentID == 0 {
@@ -706,7 +706,7 @@ func (t *RequestReviewTool) ParseToolUse(block anthropic.ToolUseBlock) (*Request
 func (t *RequestReviewTool) Run(block anthropic.ToolUseBlock, ctx *ToolContext) (*string, error) {
 	input, err := t.ParseToolUse(block)
 	if err != nil {
-		return nil, fmt.Errorf("error parsing input: %v", err)
+		return nil, fmt.Errorf("error parsing input: %w", err)
 	}
 
 	if len(input.Usernames) == 0 {
