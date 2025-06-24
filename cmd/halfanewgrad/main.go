@@ -926,6 +926,11 @@ func (vd *VirtualDeveloper) initConversation(ctx context.Context, workCtx workCo
 			return nil, nil, fmt.Errorf("failed to resume conversation: %w", err)
 		}
 
+		err = vd.rerunStatefulToolCalls(ctx, workCtx, c)
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to rerun stateful tool calls: %w", err)
+		}
+
 		// Extract the last message of the resumed conversation. If it is a user message, send it and return the
 		// response. If it is an assistant response, simply return that
 		lastTurn := c.messages[len(c.messages)-1]
@@ -957,4 +962,22 @@ func (vd *VirtualDeveloper) initConversation(ctx context.Context, workCtx workCo
 		}
 		return c, response, nil
 	}
+}
+
+func (vd *VirtualDeveloper) rerunStatefulToolCalls(ctx context.Context, workCtx workContext, conversation *ClaudeConversation) error {
+	for _, turn := range conversation.messages {
+		for _, block := range turn.response.Content {
+			switch toolUseBlock := block.AsAny().(type) {
+			case anthropic.ToolUseBlock:
+				tool, found := vd.toolRegistry.GetTool(toolUseBlock.Name)
+				if !found {
+					return fmt.Errorf("failed to resume conversation, unknown tool: %s", toolUseBlock.Name)
+				}
+
+				// TODO if tool is stateful, run it
+			}
+		}
+	}
+
+	return nil
 }

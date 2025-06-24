@@ -19,6 +19,15 @@ type AnthropicTool interface {
 
 	// Run takes a ToolUseBlock, performs the tool call, and returns a string result or an error
 	Run(block anthropic.ToolUseBlock, ctx *ToolContext) (*string, error)
+
+	// Replay is the same as Run, except that it skips actions with persistent side effects, e.g. non-idempotent API
+	// calls. Call this to restore local state changes of a previous tool call in a new environment
+	//
+	// TODO should we instead add a requirement that Run be idempotent?
+	// - Then we'd waste time replaying expensive tool calls with no side effects, like viewing a large file
+	// - Are there any clever ways to do conversation resumption using Docker images? E.g. create a "layer" that can be
+	//   applied on top of our default image to spin up a container with previous local state restored
+	Replay(block anthropic.ToolUseBlock) bool
 }
 
 // ToolContext provides context needed by tools during execution
