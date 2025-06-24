@@ -930,14 +930,14 @@ func (vd *VirtualDeveloper) initConversation(ctx context.Context, workCtx workCo
 		// response. If it is an assistant response, simply return that
 		lastTurn := c.messages[len(c.messages)-1]
 		var response *anthropic.Message
-		if lastTurn.response != nil {
+		if lastTurn.Response != nil {
 			// Resuming from a response
 			log.Printf("Resuming previous conversation from an assistant message")
-			response = lastTurn.response
+			response = lastTurn.Response
 		} else {
 			// Resuming from a user message
 			log.Printf("Resuming previous conversation from a user message - sending message")
-			r, err := c.SendMessage(ctx, lastTurn.userMessage.Content...)
+			r, err := c.SendMessage(ctx, lastTurn.UserMessage.Content...)
 			if err != nil {
 				return nil, nil, fmt.Errorf("failed to send last message of resumed conversation: %w", err)
 			}

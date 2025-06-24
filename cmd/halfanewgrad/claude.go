@@ -30,8 +30,8 @@ type ClaudeConversation struct {
 
 // conversationTurn is a pair of messages: a user message, and an optional assistant response
 type conversationTurn struct {
-	userMessage anthropic.MessageParam
-	response    *anthropic.Message // May be nil
+	UserMessage anthropic.MessageParam
+	Response    *anthropic.Message // May be nil
 }
 
 func NewClaudeConversation(
@@ -104,14 +104,14 @@ func (cc *ClaudeConversation) sendMessage(ctx context.Context, setCachePoint boo
 	}
 
 	cc.messages = append(cc.messages, conversationTurn{
-		userMessage: anthropic.NewUserMessage(messageContent...),
+		UserMessage: anthropic.NewUserMessage(messageContent...),
 	})
 
 	messageParams := []anthropic.MessageParam{}
 	for _, turn := range cc.messages {
-		messageParams = append(messageParams, turn.userMessage)
-		if turn.response != nil {
-			messageParams = append(messageParams, turn.response.ToParam())
+		messageParams = append(messageParams, turn.UserMessage)
+		if turn.Response != nil {
+			messageParams = append(messageParams, turn.Response.ToParam())
 		}
 	}
 
@@ -169,7 +169,7 @@ func (cc *ClaudeConversation) sendMessage(ctx context.Context, setCachePoint boo
 		// Set the cache point on the last user message rather than the assistant response, since we don't know if there
 		// will be text blocks in the response
 		lastTurn := cc.messages[len(cc.messages)-1]
-		err := setCachePointOnLastApplicableBlockInContent(lastTurn.userMessage.Content)
+		err := setCachePointOnLastApplicableBlockInContent(lastTurn.UserMessage.Content)
 		if err != nil {
 			log.Printf("Warning: failed to set cache point: %s", err)
 		} else {
@@ -178,7 +178,7 @@ func (cc *ClaudeConversation) sendMessage(ctx context.Context, setCachePoint boo
 	}
 
 	// Record the repsonse
-	cc.messages[len(cc.messages)-1].response = &response
+	cc.messages[len(cc.messages)-1].Response = &response
 
 	// TODO remove this
 	b, err := json.Marshal(append(messageParams, response.ToParam()))
