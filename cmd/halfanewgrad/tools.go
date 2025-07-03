@@ -201,10 +201,10 @@ func (t *TextEditorTool) executeStrReplace(input *TextEditorInput, fs *GitHubFil
 
 	count := strings.Count(content, input.OldStr)
 	if count == 0 {
-		return "", fmt.Errorf("old_str not found in file")
+		return "", ToolInputError{fmt.Errorf("old_str not found in file")}
 	}
 	if count > 1 {
-		return "", fmt.Errorf("old_str found %d times in file, must be unique", count)
+		return "", ToolInputError{fmt.Errorf("old_str found %d times in file, must be unique", count)}
 	}
 
 	newContent := strings.Replace(content, input.OldStr, input.NewStr, 1)
@@ -778,7 +778,7 @@ func (r *ToolRegistry) ProcessToolUse(block anthropic.ToolUseBlock, ctx *ToolCon
 	response, err := tool.Run(block, ctx)
 
 	var resultBlock anthropic.ToolResultBlockParam
-	var tie *ToolInputError
+	var tie ToolInputError
 	if errors.As(err, &tie) {
 		// Respond to with an error result block to give the AI the opportunity to correct the inputs
 		resultBlock = newToolResultBlockParam(block.ID, tie.Error(), true)

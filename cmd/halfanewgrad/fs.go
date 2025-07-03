@@ -78,7 +78,7 @@ func (gfs *GitHubFileSystem) ReadFile(path string) (string, error) {
 	}
 
 	if fileContent == nil {
-		return "", fmt.Errorf("file not found: %s", path)
+		return "", fmt.Errorf("file content nil")
 	}
 
 	content, err := fileContent.GetContent()
