@@ -34,7 +34,7 @@ Repository structure (sample files):
 {{- range .IssueComments}}
 
 ### Issue Comment {{.ID}} by @{{.User.Login}}
-  {{- if and .AuthorAssociation (ne .AuthorAssociation "") (ne .AuthorAssociation "<none>")}} ({{.AuthorAssociation}})
+  {{- if ne .AuthorAssociation ""}} ({{.AuthorAssociation}})
   {{- end}} - {{.CreatedAt}}
   {{- if .IsEdited}}
 <edited>
@@ -54,7 +54,7 @@ Repository structure (sample files):
 {{- range .PRComments}}
 
 ### Issue Comment {{.ID}} by @{{.User.Login}}
-  {{- if and .AuthorAssociation (ne .AuthorAssociation "") (ne .AuthorAssociation "<none>")}} ({{.AuthorAssociation}})
+  {{- if ne .AuthorAssociation ""}} ({{.AuthorAssociation}})
   {{- end}} - {{.CreatedAt}}
   {{- if .IsEdited}}
 <edited>
@@ -85,7 +85,7 @@ Repository structure (sample files):
     {{- end -}}
     {{- range $thread}}
 PR Review Comment {{.ID}} by @{{.User.Login}}
-      {{- if and .AuthorAssociation (ne .AuthorAssociation "") (ne .AuthorAssociation "<none>")}} ({{.AuthorAssociation}})
+      {{- if ne .AuthorAssociation ""}} ({{.AuthorAssociation}})
       {{- end -}}
       {{- if .PullRequestReviewID}} in Review {{.PullRequestReviewID}}
       {{- end}} - {{.CreatedAt}}
