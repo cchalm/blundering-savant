@@ -581,12 +581,6 @@ func (vd *VirtualDeveloper) buildWorkContext(ctx context.Context, owner, repo st
 	// We'll use this branch name to implicitly link the issue and the pull request 1-1
 	workCtx.WorkBranch = getWorkBranchName(issue)
 
-	// TODO remove this
-	if *issue.Number == 1 && repo == "halfanewgrad" {
-		// temporarily override branch name for testing
-		workCtx.WorkBranch = "fix/issue-1-add-a-style-guide-at-the-root-of-the-repo-containi"
-	}
-
 	// Get the existing pull request, if any
 	pr, err := getPullRequest(ctx, vd.githubClient, owner, repo, workCtx.WorkBranch, workCtx.BotUsername)
 	if err != nil {
@@ -936,10 +930,11 @@ func (vd *VirtualDeveloper) initConversation(ctx context.Context, workCtx workCo
 		lastTurn := conv.messages[len(conv.messages)-1]
 		var response *anthropic.Message
 		if lastTurn.Response != nil {
-			// TODO we should be careful here, since assistant message handling is not necessarily idempotent, e.g. if
-			// the bot sends a message with two tool calls and we get through one of them before encountering an error
-			// with the second, the handling of the first tool call may have had side effects that would be damaging to
-			// repeat --- maybe we should only resume from user messages?
+			// We should be careful here. Assistant message handling is not necessarily idempotent, e.g. if the bot
+			// sends a message with two tool calls and we get through one of them before encountering an error with the
+			// second, the handling of the first tool call may have had side effects that would be damaging to repeat.
+			// Consider implementing transactions with rollback for parallel tool calls.
+
 			// Resuming from a response
 			log.Printf("Resuming previous conversation from an assistant message")
 			response = lastTurn.Response
