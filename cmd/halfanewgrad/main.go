@@ -306,7 +306,7 @@ func (vd *VirtualDeveloper) processWithAI(ctx context.Context, workCtx workConte
 	}
 
 	// Initialize conversation
-	conversation, response, err := vd.initConversation(ctx, workCtx)
+	conversation, response, err := vd.initConversation(ctx, workCtx, toolCtx)
 	if err != nil {
 		return fmt.Errorf("failed to initialize conversation: %w", err)
 	}
@@ -910,7 +910,7 @@ func organizePRReviewCommentsIntoThreads(comments []*github.PullRequestComment) 
 var systemPrompt string
 
 // initConversation either constructs a new conversation or resumes a previous conversation
-func (vd *VirtualDeveloper) initConversation(ctx context.Context, workCtx workContext) (*ClaudeConversation, *anthropic.Message, error) {
+func (vd *VirtualDeveloper) initConversation(ctx context.Context, workCtx workContext, toolCtx *ToolContext) (*ClaudeConversation, *anthropic.Message, error) {
 	model := anthropic.ModelClaudeSonnet4_0
 	var maxTokens int64 = 64000
 
@@ -921,34 +921,38 @@ func (vd *VirtualDeveloper) initConversation(ctx context.Context, workCtx workCo
 	tools := vd.toolRegistry.GetAllToolParams()
 
 	if conversationStr != nil {
-		c, err := ResumeClaudeConversation(vd.anthropicClient, *conversationStr, model, maxTokens, tools)
+		conv, err := ResumeClaudeConversation(vd.anthropicClient, *conversationStr, model, maxTokens, tools)
 		if err != nil {
 			return nil, nil, fmt.Errorf("failed to resume conversation: %w", err)
 		}
 
-		err = vd.rerunStatefulToolCalls(ctx, workCtx, c)
+		err = vd.rerunStatefulToolCalls(ctx, workCtx, toolCtx, conv)
 		if err != nil {
 			return nil, nil, fmt.Errorf("failed to rerun stateful tool calls: %w", err)
 		}
 
 		// Extract the last message of the resumed conversation. If it is a user message, send it and return the
 		// response. If it is an assistant response, simply return that
-		lastTurn := c.messages[len(c.messages)-1]
+		lastTurn := conv.messages[len(conv.messages)-1]
 		var response *anthropic.Message
 		if lastTurn.Response != nil {
+			// TODO we should be careful here, since assistant message handling is not necessarily idempotent, e.g. if
+			// the bot sends a message with two tool calls and we get through one of them before encountering an error
+			// with the second, the handling of the first tool call may have had side effects that would be damaging to
+			// repeat --- maybe we should only resume from user messages?
 			// Resuming from a response
 			log.Printf("Resuming previous conversation from an assistant message")
 			response = lastTurn.Response
 		} else {
 			// Resuming from a user message
 			log.Printf("Resuming previous conversation from a user message - sending message")
-			r, err := c.SendMessage(ctx, lastTurn.UserMessage.Content...)
+			r, err := conv.SendMessage(ctx, lastTurn.UserMessage.Content...)
 			if err != nil {
 				return nil, nil, fmt.Errorf("failed to send last message of resumed conversation: %w", err)
 			}
 			response = r
 		}
-		return c, response, nil
+		return conv, response, nil
 	} else {
 		c := NewClaudeConversation(vd.anthropicClient, model, maxTokens, tools, systemPrompt)
 
@@ -964,17 +968,19 @@ func (vd *VirtualDeveloper) initConversation(ctx context.Context, workCtx workCo
 	}
 }
 
-func (vd *VirtualDeveloper) rerunStatefulToolCalls(ctx context.Context, workCtx workContext, conversation *ClaudeConversation) error {
-	for _, turn := range conversation.messages {
-		for _, block := range turn.response.Content {
+func (vd *VirtualDeveloper) rerunStatefulToolCalls(ctx context.Context, workCtx workContext, toolCtx *ToolContext, conversation *ClaudeConversation) error {
+	for turnNumber, turn := range conversation.messages {
+		if turnNumber == len(conversation.messages)-1 {
+			// Skip the last message in the conversation, since this message was not previously handled
+			break
+		}
+		for _, block := range turn.Response.Content {
 			switch toolUseBlock := block.AsAny().(type) {
 			case anthropic.ToolUseBlock:
-				tool, found := vd.toolRegistry.GetTool(toolUseBlock.Name)
-				if !found {
-					return fmt.Errorf("failed to resume conversation, unknown tool: %s", toolUseBlock.Name)
+				err := vd.toolRegistry.ReplayToolUse(toolUseBlock, toolCtx)
+				if err != nil {
+					return err
 				}
-
-				// TODO if tool is stateful, run it
 			}
 		}
 	}

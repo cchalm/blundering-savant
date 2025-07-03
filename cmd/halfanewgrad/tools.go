@@ -17,17 +17,18 @@ type AnthropicTool interface {
 	// GetToolParam creates and returns an anthropic.ToolParam defining the tool
 	GetToolParam() anthropic.ToolParam
 
-	// Run takes a ToolUseBlock, performs the tool call, and returns a string result or an error
+	// Run takes a ToolUseBlock, performs the tool call, and returns a string result or an error. The error will be a
+	// ToolInputError if it is recoverable by fixing inputs. A call to Run has no side effects if it returns
+	// ToolInputError
 	Run(block anthropic.ToolUseBlock, ctx *ToolContext) (*string, error)
 
-	// Replay is the same as Run, except that it skips actions with persistent side effects, e.g. non-idempotent API
-	// calls. Call this to restore local state changes of a previous tool call in a new environment
-	//
-	// TODO should we instead add a requirement that Run be idempotent?
-	// - Then we'd waste time replaying expensive tool calls with no side effects, like viewing a large file
-	// - Are there any clever ways to do conversation resumption using Docker images? E.g. create a "layer" that can be
-	//   applied on top of our default image to spin up a container with previous local state restored
-	Replay(block anthropic.ToolUseBlock) bool
+	// Replay is the same as Run, except that it skips actions with persistent side effects, e.g. pushing git commits to
+	// a remote. Persistent side effects also include anything persisted in the conversation, e.g. fetching the content
+	// of a file.
+	// Call this to restore local state changes of a previous tool call in a new environment.
+	// Note that this function does not return a string, because a response should already have been added to the
+	// conversation from the original run of this tool.
+	Replay(block anthropic.ToolUseBlock, ctx *ToolContext) error
 }
 
 // ToolContext provides context needed by tools during execution
@@ -113,6 +114,15 @@ func (t *TextEditorTool) ParseToolUse(block anthropic.ToolUseBlock) (*TextEditor
 
 // Run executes the text editor command
 func (t *TextEditorTool) Run(block anthropic.ToolUseBlock, ctx *ToolContext) (*string, error) {
+	return t.run(block, ctx, false)
+}
+
+func (t *TextEditorTool) Replay(block anthropic.ToolUseBlock, ctx *ToolContext) error {
+	_, err := t.run(block, ctx, true)
+	return err
+}
+
+func (t *TextEditorTool) run(block anthropic.ToolUseBlock, ctx *ToolContext, replay bool) (*string, error) {
 	input, err := t.ParseToolUse(block)
 	if err != nil {
 		return nil, fmt.Errorf("error parsing input: %w", err)
@@ -121,6 +131,10 @@ func (t *TextEditorTool) Run(block anthropic.ToolUseBlock, ctx *ToolContext) (*s
 	var result string
 	switch input.Command {
 	case "view":
+		if replay {
+			// No side effects to replay
+			return nil, nil
+		}
 		result, err = t.executeView(input, ctx.FileSystem)
 	case "str_replace":
 		result, err = t.executeStrReplace(input, ctx.FileSystem)
@@ -351,6 +365,12 @@ func (t *CommitChangesTool) Run(block anthropic.ToolUseBlock, ctx *ToolContext) 
 	return nil, nil
 }
 
+func (t *CommitChangesTool) Replay(block anthropic.ToolUseBlock, ctx *ToolContext) error {
+	// Since all prior replayed file changes were persisted remotely by this commit call, we must clear them
+	ctx.FileSystem.ClearChanges()
+	return nil
+}
+
 // CreatePullRequestTool implements the create_pull_request tool
 type CreatePullRequestTool struct {
 	BaseTool
@@ -458,6 +478,11 @@ Fixes #%d
 	}
 
 	return nil, nil
+}
+
+func (t *CreatePullRequestTool) Replay(block anthropic.ToolUseBlock, ctx *ToolContext) error {
+	// No side effects to replay
+	return nil
 }
 
 // PostCommentTool implements the post_comment tool
@@ -570,6 +595,11 @@ func (t *PostCommentTool) Run(block anthropic.ToolUseBlock, ctx *ToolContext) (*
 	return nil, nil
 }
 
+func (t *PostCommentTool) Replay(block anthropic.ToolUseBlock, ctx *ToolContext) error {
+	// No side effects to replay
+	return nil
+}
+
 // AddReactionTool implements the add_reaction tool
 type AddReactionTool struct {
 	BaseTool
@@ -659,6 +689,11 @@ func (t *AddReactionTool) Run(block anthropic.ToolUseBlock, ctx *ToolContext) (*
 	return nil, nil
 }
 
+func (t *AddReactionTool) Replay(block anthropic.ToolUseBlock, ctx *ToolContext) error {
+	// No side effects to replay
+	return nil
+}
+
 // RequestReviewTool implements the request_review tool
 type RequestReviewTool struct {
 	BaseTool
@@ -734,6 +769,11 @@ func (t *RequestReviewTool) Run(block anthropic.ToolUseBlock, ctx *ToolContext) 
 	return nil, err
 }
 
+func (t *RequestReviewTool) Replay(block anthropic.ToolUseBlock, ctx *ToolContext) error {
+	// No side effects to replay
+	return nil
+}
+
 // ToolRegistry manages all available tools
 type ToolRegistry struct {
 	tools map[string]AnthropicTool
@@ -800,6 +840,25 @@ func (r *ToolRegistry) ProcessToolUse(block anthropic.ToolUseBlock, ctx *ToolCon
 		resultBlock = newToolResultBlockParam(block.ID, "", false)
 	}
 	return &resultBlock, nil
+}
+
+// ReplayToolUse replays a tool use block with the appropriate tool
+func (r *ToolRegistry) ReplayToolUse(toolUseBlock anthropic.ToolUseBlock, ctx *ToolContext) error {
+	tool, ok := r.GetTool(toolUseBlock.Name)
+	if !ok {
+		return fmt.Errorf("unknown tool: %s", toolUseBlock.Name)
+	}
+
+	err := tool.Replay(toolUseBlock, ctx)
+
+	var tie ToolInputError
+	if errors.As(err, &tie) {
+		// If the error is an input issue, the reporting of that error is already in the conversation history, so there
+		// is no need to repeat it. Do nothing
+	} else if err != nil {
+		return fmt.Errorf("error while running tool: %w", err)
+	}
+	return nil
 }
 
 // Helper function to create a ToolResultBlockParam, in contrast to anthropic.NewToolResultBlockParam which creates a
