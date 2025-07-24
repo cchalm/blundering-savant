@@ -4,20 +4,20 @@
 .DEFAULT_GOAL := help
 
 # Variables
-APP_NAME := halfanewgrad
+APP_NAME := blundering-savant
 SERVICE_NAME := bot
 DOCKER_IMAGE := $(APP_NAME):latest
 COMPOSE_FILE := docker-compose.yml
 
 ## help: Display this help message
 help:
-	@echo "Halfanewgrad Bot - Available Commands:"
+	@echo "Blundering Savant Bot - Available Commands:"
 	@echo ""
 	@awk 'BEGIN {FS = ":.*##"; printf "\033[36m%-15s\033[0m %s\n", "Command", "Description"} /^[a-zA-Z_-]+:.*?##/ { printf "\033[36m%-15s\033[0m %s\n", $$1, $$2 }' $(MAKEFILE_LIST)
 
 ## setup: Initial setup - copy env file and download dependencies
 setup:
-	@echo "Setting up halfanewgrad bot..."
+	@echo "Setting up blundering-savant bot..."
 	@test -f .env || cp .env.example .env
 	@echo "✓ Environment file created (please edit .env with your credentials)"
 	@go mod download
@@ -36,14 +36,14 @@ build:
 
 ## run: Run the bot using Docker Compose
 run:
-	@echo "Starting halfanewgrad Bot..."
+	@echo "Starting blundering-savant Bot..."
 	docker-compose up -d
 	@echo "✓ Bot started successfully"
 	@echo "Run 'make logs' to view logs"
 
 ## stop: Stop the bot
 stop:
-	@echo "Stopping halfanewgrad Bot..."
+	@echo "Stopping blundering-savant Bot..."
 	docker-compose down
 	@echo "✓ Bot stopped"
 
@@ -60,7 +60,7 @@ logs-tail:
 
 ## status: Check bot status
 status:
-	@echo "Halfanewgrad Bot Status:"
+	@echo "Blundering Savant Bot Status:"
 	@docker-compose ps
 
 ## clean: Clean up containers and images
@@ -97,7 +97,7 @@ update:
 ## dev: Run locally without Docker (for development)
 dev:
 	@test -f .env || (echo "Error: .env file not found. Run 'make setup' first." && exit 1)
-	@echo "Running halfanewgrad Bot locally..."
+	@echo "Running blundering-savant Bot locally..."
 	go run .
 
 ## shell: Open a shell in the running container

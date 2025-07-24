@@ -1,4 +1,4 @@
-module github.com/cchalm/halfanewgrad
+module github.com/cchalm/blundering-savant
 
 go 1.24.3
 

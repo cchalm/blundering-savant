@@ -1,4 +1,4 @@
-# Halfanewgrad Bot
+# Blundering Savant Bot
 
 A GitHub bot powered by Anthropic's Claude API that acts as a virtual developer, automatically creating pull requests to resolve issues.
 
@@ -41,7 +41,7 @@ A GitHub bot powered by Anthropic's Claude API that acts as a virtual developer,
 1. Clone this repository:
 ```bash
 git clone <repository-url>
-cd halfanewgrad
+cd blundering-savant
 ```
 
 2. Copy the environment template:
@@ -65,13 +65,13 @@ docker-compose up -d
 
 Using Docker directly:
 ```bash
-docker build -t halfanewgrad .
+docker build -t blundering-savant .
 docker run -d \
-  --name halfanewgrad \
+  --name blundering-savant \
   -e GITHUB_TOKEN=$GITHUB_TOKEN \
   -e ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY \
   -e GITHUB_USERNAME=$GITHUB_USERNAME \
-  halfanewgrad
+  blundering-savant
 ```
 
 ## Usage
@@ -102,7 +102,7 @@ docker run -d \
 
 View logs:
 ```bash
-docker-compose logs -f halfanewgrad
+docker-compose logs -f blundering-savant
 ```
 
 Check health:
@@ -128,7 +128,7 @@ docker-compose ps
 ## Troubleshooting
 
 ### Bot not responding to issues
-- Check logs: `docker-compose logs halfanewgrad`
+- Check logs: `docker-compose logs blundering-savant`
 - Verify the issue is assigned to the correct username
 - Ensure the bot has repository access
 

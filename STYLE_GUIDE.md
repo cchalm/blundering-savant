@@ -1,6 +1,6 @@
 # Go Style Guide
 
-This document outlines the coding standards and best practices for the Halfanewgrad Bot project. Following these guidelines ensures consistency, readability, and maintainability of the codebase.
+This document outlines the coding standards and best practices for the Blundering Savant Bot project. Following these guidelines ensures consistency, readability, and maintainability of the codebase.
 
 ## Table of Contents
 
@@ -68,8 +68,8 @@ import (
     "github.com/google/go-github/v72/github"
     "golang.org/x/oauth2"
 
-    "github.com/cchalm/halfanewgrad/internal/config"
-    "github.com/cchalm/halfanewgrad/internal/github"
+    "github.com/cchalm/blundering-savant/internal/config"
+    "github.com/cchalm/blundering-savant/internal/github"
 )
 ```
 
@@ -89,7 +89,7 @@ var userCount int
 var maxRetries = 3
 var ErrNotFound = errors.New("not found")
 
-// Bad  
+// Bad
 var user_count int                          // Uses underscores instead of camelCase
 var MaxRetries = 3                         // Private variable shouldn't be exported
 var errNotFound = errors.New("not found") // Error should be exported for use across packages
@@ -189,11 +189,11 @@ func processIssue(ctx context.Context, issueNumber int) error {
     if err != nil {
         return fmt.Errorf("failed to fetch issue %d: %w", issueNumber, err)
     }
-    
+
     if err := validateIssue(issue); err != nil {
         return fmt.Errorf("issue validation failed: %w", err)
     }
-    
+
     return nil
 }
 ```
@@ -219,7 +219,7 @@ func processWebhook(ctx context.Context, payload []byte) error {
     if err != nil {
         return err
     }
-    
+
     return handleEvent(ctx, event)
 }
 
@@ -229,14 +229,14 @@ func makeAPICall(ctx context.Context, url string) (*Response, error) {
     if err != nil {
         return nil, err
     }
-    
+
     client := &http.Client{Timeout: 30 * time.Second}
     resp, err := client.Do(req)
     if err != nil {
         return nil, err
     }
     defer resp.Body.Close()
-    
+
     // ... process response
 }
 ```
@@ -374,7 +374,7 @@ Go has specific documentation conventions that work with `go doc` and `godoc`:
 
 ### Package Documentation
 ```go
-// Package github provides GitHub API integration for the Halfanewgrad Bot.
+// Package github provides GitHub API integration for the Blundering Savant Bot.
 // It handles authentication, webhook processing, and API interactions.
 package github
 ```
@@ -408,11 +408,11 @@ type Client struct {
 type Config struct {
     // Token is the GitHub personal access token
     Token string `json:"token"`
-    
+
     // Org is the GitHub organization name
     Org string `json:"org"`
-    
-    // Repo is the GitHub repository name  
+
+    // Repo is the GitHub repository name
     Repo string `json:"repo"`
 }
 ```
@@ -453,7 +453,7 @@ func validateWebhookSignature(payload []byte, signature string, secret string) e
     mac := hmac.New(sha256.New, []byte(secret))
     mac.Write(payload)
     expectedSignature := "sha256=" + hex.EncodeToString(mac.Sum(nil))
-    
+
     if !hmac.Equal([]byte(signature), []byte(expectedSignature)) {
         return errors.New("invalid webhook signature")
     }
@@ -481,7 +481,7 @@ func validateWebhookSignature(payload []byte, signature string, secret string) e
 This style guide should be treated as a living document that evolves with the project and Go ecosystem. When in doubt, prioritize:
 
 1. Readability over cleverness
-2. Simplicity over complexity  
+2. Simplicity over complexity
 3. Explicit over implicit
 4. Standard library over third-party dependencies
 

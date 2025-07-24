@@ -17,7 +17,7 @@ RUN go mod download
 COPY . .
 
 # Build the application
-RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o halfanewgrad ./cmd/halfanewgrad
+RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o blundering-savant ./cmd/blundering-savant
 
 # Final stage
 FROM alpine:latest
@@ -33,7 +33,7 @@ RUN addgroup -g 1000 -S appuser && \
 WORKDIR /app
 
 # Copy binary from builder
-COPY --from=builder /app/halfanewgrad .
+COPY --from=builder /app/blundering-savant .
 
 # Change ownership
 RUN chown -R appuser:appuser /app
@@ -46,4 +46,4 @@ HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
     CMD ["/bin/sh", "-c", "ps aux | grep '[h]alfanewgrad' || exit 1"]
 
 # Run the application
-CMD ["./halfanewgrad"]
+CMD ["./blundering-savant"]
