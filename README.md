@@ -34,13 +34,13 @@ and will go rogue and attempt to abuse the broad permissions of that access toke
 collaborator permission settings and protected branches to restrict the bot's permissions to only the minimum required
 to perform its intended functions.
 
-### 2. Anthropic API Setup
+### Anthropic API Setup
 
 1. Sign up for an Anthropic account at https://console.anthropic.com
 1. Generate an API key from the console
 1. Ensure you have sufficient credits for API usage
 
-### 3. Configuration
+### Configuration
 
 1. Clone this repository:
 ```bash
@@ -60,7 +60,7 @@ GITHUB_USERNAME=<your-bot-username>
 ANTHROPIC_API_KEY=sk-ant-<your-anthropic-api-key>
 ```
 
-### 4. Running the Bot
+### Running the Bot
 
 1. Build: `make build`
 1. Run: `make run`
