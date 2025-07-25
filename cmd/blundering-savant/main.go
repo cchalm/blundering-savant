@@ -19,7 +19,7 @@ import (
 	"golang.org/x/oauth2"
 )
 
-// Config holds the configuration for the virtual developer
+// Config holds the configuration for the bot
 type Config struct {
 	GitHubToken               string
 	AnthropicAPIKey           string
@@ -84,7 +84,7 @@ func main() {
 
 	vd := NewVirtualDeveloper(config)
 
-	log.Printf("Virtual Developer started. Monitoring issues for @%s every %s", config.GitHubUsername, config.CheckInterval)
+	log.Printf("Bot started. Monitoring issues for @%s every %s", config.GitHubUsername, config.CheckInterval)
 
 	// Start the main loop
 	vd.Run()

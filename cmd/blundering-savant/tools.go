@@ -462,7 +462,7 @@ func (t *CreatePullRequestTool) Run(block anthropic.ToolUseBlock, ctx *ToolConte
 Fixes #%d
 
 ---
-*This PR was created by the Virtual Developer bot.*`, input.PullRequestBody, issueNumber)
+*This PR was created by the Blundering Savant bot.*`, input.PullRequestBody, issueNumber)
 	} else {
 		// For existing PRs, use the same target branch
 		if ctx.WorkContext.PullRequest != nil && ctx.WorkContext.PullRequest.Base != nil && ctx.WorkContext.PullRequest.Base.Ref != nil {
