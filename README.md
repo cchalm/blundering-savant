@@ -90,6 +90,8 @@ ANTHROPIC_API_KEY=sk-ant-<your-anthropic-api-key>
 
 ## Limitations
 
+- The bot cannot compile code
+- The bot cannot run tests
 - The bot can only use one branch and create one PR per issue
 - The bot cannot create new issues
 - The bot cannot approve or merge its own PRs, by design
