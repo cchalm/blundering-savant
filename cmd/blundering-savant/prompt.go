@@ -160,7 +160,7 @@ func convertGitHubComment(comment *github.IssueComment) commentData {
 
 	if comment.UpdatedAt != nil {
 		tc.UpdatedAt = comment.UpdatedAt.Format("2006-01-02 15:04")
-		tc.IsEdited = comment.CreatedAt != nil && !comment.CreatedAt.Equal(comment.UpdatedAt.Time)
+		tc.IsEdited = comment.CreatedAt != nil && !comment.CreatedAt.Time.Equal(comment.UpdatedAt.Time)
 	}
 
 	return tc
