@@ -195,6 +195,12 @@ func (gfs *GitHubFileSystem) GetChangedFiles() []string {
 	return files
 }
 
+// ClearChanges deletes any file changes staged in this file system
+func (gfs *GitHubFileSystem) ClearChanges() {
+	gfs.workingTree = map[string]string{}
+	gfs.deletedFiles = map[string]bool{}
+}
+
 // CommitChanges creates a commit with all changes in the working tree
 func (gfs *GitHubFileSystem) CommitChanges(commitMessage string) (*github.Commit, error) {
 	if !gfs.HasChanges() {
@@ -288,8 +294,7 @@ func (gfs *GitHubFileSystem) CommitChanges(commitMessage string) (*github.Commit
 	// Update our state
 	gfs.baseCommit = createdCommit
 	gfs.currentTreeSHA = *createdTree.SHA
-	gfs.workingTree = make(map[string]string)
-	gfs.deletedFiles = make(map[string]bool)
+	gfs.ClearChanges()
 
 	return createdCommit, nil
 }

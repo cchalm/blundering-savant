@@ -1,47 +1,51 @@
-# Halfanewgrad Bot
+# The Blundering Savant AI Coding Agent
 
-A GitHub bot powered by Anthropic's Claude API that acts as a virtual developer, automatically creating pull requests to resolve issues.
+Blundering Savant is a generative AI coding agent that presents as a GitHub user. The agent receives instructions via
+issues, reviews, and comments and proposes code changes by creating and updating pull requests.
 
-## Features
-
-- 🤖 **Automated Issue Resolution**: Monitors GitHub issues assigned to the bot and creates PRs to solve them
-- 📝 **Style Guide Compliance**: Automatically detects and follows repository coding standards
-- 💬 **Interactive PR Management**: Responds to comments and review feedback on pull requests
-- 🔄 **Continuous Monitoring**: Regularly checks for new issues and PR updates
-- 🐳 **Docker Support**: Runs in a containerized environment for easy deployment
-
-## Prerequisites
-
-- Docker and Docker Compose
-- GitHub Personal Access Token with appropriate permissions
-- Anthropic API Key
-- A GitHub account for the bot
+Generative AI is fallible in ways similar to people. It makes typos, misinteprets requirements, overcomplicates, and
+falls down rabbit holes. We already have tools to help fallible individuals code together: issues, pull requests,
+and code reviews. Let's apply those same tools to collaborate with a new breed of intelligence.
 
 ## Setup
 
-### 1. GitHub Setup
+### GitHub User Setup
 
-1. Create a new GitHub account for your bot (or use an existing one)
-2. Generate a Personal Access Token:
-   - Go to Settings → Developer settings → Personal access tokens → Tokens (classic)
-   - Click "Generate new token"
-   - Select scopes:
-     - `repo` (Full control of private repositories)
-     - `workflow` (Update GitHub Action workflows)
-     - `write:discussion` (Write discussion comments)
+1. Create a new GitHub user account for your bot
+    - Do not use your main GitHub account, for the same reasons that you would not share a GitHub account with a coworker
+    - Be transparent: in the account's bio, disclose that the account is a bot
+1. Generate a Personal Access Token[^1]:
+    - Go to Settings → Developer settings → Personal access tokens → Tokens (classic)
+    - Click "Generate new token"
+    - Select scopes:
+      - `repo` (Full control of private repositories)
+1. Add the bot to a project as a collaborator
+    - Switch to your main GitHub account
+    - Navigate to a GitHub repository that you are the owner of
+    - Go to Settings → Collaborators
+    - Click "Add people"
+    - Search for your bot account via whatever method you prefer and select it
+    - Click "Add to repository"
+    - Switch to your bot account to accept the invite
+
+[^1]: There is currently no way to generate fine-grained access tokens for collaborator access to repositories owned by
+individuals. When you give a classic Personal Access Token to the bot, you should assume from that point on that it can
+and will go rogue and attempt to abuse the broad permissions of that access token. As a repository owner, use
+collaborator permission settings and protected branches to restrict the bot's permissions to only the minimum required
+to perform its intended functions.
 
 ### 2. Anthropic API Setup
 
 1. Sign up for an Anthropic account at https://console.anthropic.com
-2. Generate an API key from the console
-3. Ensure you have sufficient credits for API usage
+1. Generate an API key from the console
+1. Ensure you have sufficient credits for API usage
 
 ### 3. Configuration
 
 1. Clone this repository:
 ```bash
 git clone <repository-url>
-cd halfanewgrad
+cd blundering-savant
 ```
 
 2. Copy the environment template:
@@ -51,129 +55,44 @@ cp .env.example .env
 
 3. Edit `.env` with your credentials:
 ```env
-GITHUB_TOKEN=ghp_your_token_here
-ANTHROPIC_API_KEY=sk-ant-your_key_here
-GITHUB_USERNAME=your-bot-username
+GITHUB_TOKEN=ghp_<your_github_token>
+GITHUB_USERNAME=<your-bot-username>
+ANTHROPIC_API_KEY=sk-ant-<your-anthropic-api-key>
 ```
 
 ### 4. Running the Bot
 
-Using Docker Compose:
-```bash
-docker-compose up -d
-```
-
-Using Docker directly:
-```bash
-docker build -t halfanewgrad .
-docker run -d \
-  --name halfanewgrad \
-  -e GITHUB_TOKEN=$GITHUB_TOKEN \
-  -e ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY \
-  -e GITHUB_USERNAME=$GITHUB_USERNAME \
-  halfanewgrad
-```
+1. Build: `make build`
+1. Run: `make run`
+1. Logs: `make logs`
+1. Stop: `make stop`
 
 ## Usage
 
 1. **Assign Issues**: Assign GitHub issues to your bot's username
-2. **Wait for PR**: The bot will analyze the issue and create a PR within a few minutes
-3. **Review and Feedback**: Comment on the PR with any requested changes
-4. **Merge**: Once satisfied, merge the PR (the bot cannot merge PRs)
-
-## How It Works
-
-1. **Issue Detection**: The bot periodically scans for issues assigned to it
-2. **Code Analysis**: It analyzes the repository structure and coding standards
-3. **Solution Generation**: Uses Claude to generate appropriate code changes
-4. **PR Creation**: Creates a new branch and pull request with the solution
-5. **Feedback Loop**: Monitors and responds to PR comments and reviews
+1. **Wait for PR**: The bot will analyze the issue and create a PR
+1. **Review and Repeat**: Comment on the PR with any requested changes and wait for the bot to update the PR
+1. **Merge**: Once satisfied, merge the PR (the bot cannot merge PRs)
 
 ## Configuration Options
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `CHECK_INTERVAL` | How often to check for new issues | 5m |
-| `PR_UPDATE_CHECK_INTERVAL` | How often to check PR updates | 2m |
-| `MAX_CONCURRENT_ISSUES` | Max issues to process at once | 3 |
+| `CHECK_INTERVAL` | How often to check for new issues and comments on GitHub | 5m |
 | `LOG_LEVEL` | Logging verbosity | info |
-
-## Monitoring
-
-View logs:
-```bash
-docker-compose logs -f halfanewgrad
-```
-
-Check health:
-```bash
-docker-compose ps
-```
+| `RESUMABLE_CONVERSATIONS_DIR` | Directory in which to store interrupted conversation histories for later resumption | &lt;none&gt; |
 
 ## Best Practices
 
-1. **Start Small**: Test with simple issues first
-2. **Clear Issues**: Write detailed issue descriptions with acceptance criteria
-3. **Review Carefully**: Always review generated code before merging
-4. **Style Guides**: Maintain clear coding standards in your repository
-5. **Permissions**: Only give the bot necessary repository permissions
+1. **Detailed Instructions**: The bot will get creative. If you want something specific, be specific
+1. **Review Carefully**: Always review generated code before merging
+1. **Style Guides**: Make implicit coding standards explicit with style guides
 
 ## Limitations
 
-- The bot cannot approve or merge its own PRs
-- Complex architectural changes may require human intervention
-- Limited by GitHub API rate limits
-- Requires clear issue descriptions to work effectively
-
-## Troubleshooting
-
-### Bot not responding to issues
-- Check logs: `docker-compose logs halfanewgrad`
-- Verify the issue is assigned to the correct username
-- Ensure the bot has repository access
-
-### API errors
-- Verify your API keys are correct
-- Check API rate limits and quotas
-- Ensure sufficient Anthropic credits
-
-### PR creation failures
-- Check GitHub token permissions
-- Verify branch protection rules allow bot PRs
-- Review repository settings
-
-## Security Considerations
-
-- Keep API keys secure and never commit them
-- Use environment variables for sensitive data
-- Regularly rotate access tokens
-- Monitor bot activity for unusual behavior
-- Limit repository permissions to minimum required
-
-## Contributing
-
-Contributions are welcome! Please:
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Submit a pull request
-
-## License
-
-MIT License - See LICENSE file for details
-
-## Support
-
-For issues and questions:
-- Create an issue in this repository
-- Check existing issues for solutions
-- Review logs for error messages
-
-## Roadmap
-
-- [ ] Add support for multiple programming languages
-- [ ] Implement test generation
-- [ ] Add database for state persistence
-- [ ] Support for GitHub Actions integration
-- [ ] Advanced code review capabilities
-- [ ] Team collaboration features
+- The bot can only use one branch and create one PR per issue
+- The bot cannot create new issues
+- The bot cannot approve or merge its own PRs, by design
+- The bot's speed is constrained primarily by generative AI API rate limits
+- Issue descriptions must be detailed
+  - Current AI models avoid asking clarifying questions and prefer to guess

@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -18,22 +19,24 @@ import (
 	"golang.org/x/oauth2"
 )
 
-// Config holds the configuration for the virtual developer
+// Config holds the configuration for the bot
 type Config struct {
-	GitHubToken     string
-	AnthropicAPIKey string
-	GitHubUsername  string
-	CheckInterval   time.Duration
+	GitHubToken               string
+	AnthropicAPIKey           string
+	GitHubUsername            string
+	ResumableConversationsDir string
+	CheckInterval             time.Duration
 }
 
 // VirtualDeveloper represents our bot
 type VirtualDeveloper struct {
-	config            *Config
-	githubClient      *github.Client
-	anthropicClient   anthropic.Client
-	toolRegistry      *ToolRegistry
-	fileSystemFactory githubFileSystemFactory
-	botName           string
+	config                 *Config
+	githubClient           *github.Client
+	anthropicClient        anthropic.Client
+	toolRegistry           *ToolRegistry
+	fileSystemFactory      githubFileSystemFactory
+	resumableConversations FileSystemConversationHistoryStore
+	botName                string
 }
 
 var (
@@ -61,10 +64,11 @@ func main() {
 	}
 
 	config := &Config{
-		GitHubToken:     os.Getenv("GITHUB_TOKEN"),
-		AnthropicAPIKey: os.Getenv("ANTHROPIC_API_KEY"),
-		GitHubUsername:  os.Getenv("GITHUB_USERNAME"),
-		CheckInterval:   5 * time.Minute, // Default
+		GitHubToken:               os.Getenv("GITHUB_TOKEN"),
+		AnthropicAPIKey:           os.Getenv("ANTHROPIC_API_KEY"),
+		GitHubUsername:            os.Getenv("GITHUB_USERNAME"),
+		ResumableConversationsDir: os.Getenv("RESUMABLE_CONVERSATIONS_DIR"),
+		CheckInterval:             5 * time.Minute, // Default
 	}
 
 	if config.GitHubToken == "" || config.AnthropicAPIKey == "" || config.GitHubUsername == "" {
@@ -80,7 +84,7 @@ func main() {
 
 	vd := NewVirtualDeveloper(config)
 
-	log.Printf("Virtual Developer started. Monitoring issues for @%s every %s", config.GitHubUsername, config.CheckInterval)
+	log.Printf("Bot started. Monitoring issues for @%s every %s", config.GitHubUsername, config.CheckInterval)
 
 	// Start the main loop
 	vd.Run()
@@ -104,12 +108,13 @@ func NewVirtualDeveloper(config *Config) *VirtualDeveloper {
 	)
 
 	return &VirtualDeveloper{
-		config:            config,
-		githubClient:      githubClient,
-		anthropicClient:   anthropicClient,
-		toolRegistry:      NewToolRegistry(),
-		fileSystemFactory: githubFileSystemFactory{githubClient: githubClient},
-		botName:           config.GitHubUsername,
+		config:                 config,
+		githubClient:           githubClient,
+		anthropicClient:        anthropicClient,
+		toolRegistry:           NewToolRegistry(),
+		fileSystemFactory:      githubFileSystemFactory{githubClient: githubClient},
+		resumableConversations: FileSystemConversationHistoryStore{dir: config.ResumableConversationsDir},
+		botName:                config.GitHubUsername,
 	}
 }
 
@@ -301,21 +306,19 @@ func (vd *VirtualDeveloper) processWithAI(ctx context.Context, workCtx workConte
 	}
 
 	// Initialize conversation
-	var conversation = vd.initConversation()
-
-	log.Printf("Sending initial message to AI")
-	promptPtr, err := workCtx.BuildPrompt()
+	conversation, response, err := vd.initConversation(ctx, workCtx, toolCtx)
 	if err != nil {
-		return fmt.Errorf("failed to build prompt: %w", err)
-	}
-	// Send initial message with a cache breakpoint, because the initial message tends to be very large and we are
-	// likely to need several back-and-forths after this
-	response, err := conversation.SendMessageAndSetCachePoint(ctx, anthropic.NewTextBlock(*promptPtr))
-	if err != nil {
-		return fmt.Errorf("failed to send initial message to AI: %w", err)
+		return fmt.Errorf("failed to initialize conversation: %w", err)
 	}
 
-	for i := range maxIterations {
+	i := 0
+	for response.StopReason != anthropic.StopReasonEndTurn {
+		if i > maxIterations {
+			return fmt.Errorf("exceeded maximum iterations (%d) without completion", maxIterations)
+		}
+		// Persist the conversation history up to this point
+		vd.resumableConversations.Set(strconv.Itoa(*workCtx.Issue.Number), conversation.History())
+
 		log.Printf("Processing AI response, iteration: %d", i+1)
 		for _, contentBlock := range response.Content {
 			switch block := contentBlock.AsAny().(type) {
@@ -368,14 +371,22 @@ func (vd *VirtualDeveloper) processWithAI(ctx context.Context, workCtx workConte
 		case anthropic.StopReasonRefusal:
 			return fmt.Errorf("the AI refused to generate a response due to safety concerns")
 		case anthropic.StopReasonEndTurn:
-			log.Print("AI interaction concluded")
-			return nil
+			return fmt.Errorf("that's weird, it shouldn't be possible to reach this branch")
 		default:
 			return fmt.Errorf("unexpected stop reason: %v", response.StopReason)
 		}
+
+		i++
 	}
 
-	return fmt.Errorf("exceeded maximum iterations (%d) without completion", maxIterations)
+	// We're done! Delete the conversation history so that we don't try to resume it later
+	err = vd.resumableConversations.Delete(strconv.Itoa(*workCtx.Issue.Number))
+	if err != nil {
+		return fmt.Errorf("failed to delete conversation history for concluded conversation: %w", err)
+	}
+
+	log.Print("AI interaction concluded")
+	return nil
 }
 
 // Helper functions
@@ -569,12 +580,6 @@ func (vd *VirtualDeveloper) buildWorkContext(ctx context.Context, owner, repo st
 	workCtx.TargetBranch = *repoInfo.DefaultBranch
 	// We'll use this branch name to implicitly link the issue and the pull request 1-1
 	workCtx.WorkBranch = getWorkBranchName(issue)
-
-	// TODO remove this
-	if *issue.Number == 1 && repo == "halfanewgrad" {
-		// temporarily override branch name for testing
-		workCtx.WorkBranch = "fix/issue-1-add-a-style-guide-at-the-root-of-the-repo-containi"
-	}
 
 	// Get the existing pull request, if any
 	pr, err := getPullRequest(ctx, vd.githubClient, owner, repo, workCtx.WorkBranch, workCtx.BotUsername)
@@ -898,11 +903,85 @@ func organizePRReviewCommentsIntoThreads(comments []*github.PullRequestComment) 
 //go:embed system_prompt.md
 var systemPrompt string
 
-func (vd *VirtualDeveloper) initConversation() *ClaudeConversation {
+// initConversation either constructs a new conversation or resumes a previous conversation
+func (vd *VirtualDeveloper) initConversation(ctx context.Context, workCtx workContext, toolCtx *ToolContext) (*ClaudeConversation, *anthropic.Message, error) {
 	model := anthropic.ModelClaudeSonnet4_0
 	var maxTokens int64 = 64000
 
+	conversationStr, err := vd.resumableConversations.Get(strconv.Itoa(*workCtx.Issue.Number))
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to look up resumable conversation by issue number: %w", err)
+	}
 	tools := vd.toolRegistry.GetAllToolParams()
 
-	return NewClaudeConversation(vd.anthropicClient, model, maxTokens, systemPrompt, tools)
+	if conversationStr != nil {
+		conv, err := ResumeClaudeConversation(vd.anthropicClient, *conversationStr, model, maxTokens, tools)
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to resume conversation: %w", err)
+		}
+
+		err = vd.rerunStatefulToolCalls(ctx, workCtx, toolCtx, conv)
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to rerun stateful tool calls: %w", err)
+		}
+
+		// Extract the last message of the resumed conversation. If it is a user message, send it and return the
+		// response. If it is an assistant response, simply return that
+		lastTurn := conv.messages[len(conv.messages)-1]
+		var response *anthropic.Message
+		if lastTurn.Response != nil {
+			// We should be careful here. Assistant message handling is not necessarily idempotent, e.g. if the bot
+			// sends a message with two tool calls and we get through one of them before encountering an error with the
+			// second, the handling of the first tool call may have had side effects that would be damaging to repeat.
+			// Consider implementing transactions with rollback for parallel tool calls.
+
+			// Resuming from a response
+			log.Printf("Resuming previous conversation from an assistant message")
+			response = lastTurn.Response
+		} else {
+			// Resuming from a user message
+			log.Printf("Resuming previous conversation from a user message - sending message")
+			r, err := conv.SendMessage(ctx, lastTurn.UserMessage.Content...)
+			if err != nil {
+				return nil, nil, fmt.Errorf("failed to send last message of resumed conversation: %w", err)
+			}
+			response = r
+		}
+		return conv, response, nil
+	} else {
+		c := NewClaudeConversation(vd.anthropicClient, model, maxTokens, tools, systemPrompt)
+
+		log.Printf("Sending initial message to AI")
+		promptPtr, err := workCtx.BuildPrompt()
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to build prompt: %w", err)
+		}
+		// Send initial message with a cache breakpoint, because the initial message tends to be very large and we are
+		// likely to need several back-and-forths after this
+		response, err := c.SendMessageAndSetCachePoint(ctx, anthropic.NewTextBlock(*promptPtr))
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to send initial message to AI: %w", err)
+		}
+		return c, response, nil
+	}
+}
+
+func (vd *VirtualDeveloper) rerunStatefulToolCalls(ctx context.Context, workCtx workContext, toolCtx *ToolContext, conversation *ClaudeConversation) error {
+	for turnNumber, turn := range conversation.messages {
+		if turnNumber == len(conversation.messages)-1 {
+			// Skip the last message in the conversation, since this message was not previously handled
+			break
+		}
+		for _, block := range turn.Response.Content {
+			switch toolUseBlock := block.AsAny().(type) {
+			case anthropic.ToolUseBlock:
+				err := vd.toolRegistry.ReplayToolUse(toolUseBlock, toolCtx)
+				if err != nil {
+					return err
+				}
+			}
+		}
+	}
+
+	return nil
 }

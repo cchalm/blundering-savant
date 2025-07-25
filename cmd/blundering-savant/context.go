@@ -52,7 +52,6 @@ type StyleGuide struct {
 	RepoStyle map[string]string // language -> style patterns
 }
 
-
 // GetMainLanguageInfo returns information about the main programming language
 func (ctx workContext) GetMainLanguageInfo() (string, map[string]string) {
 	if ctx.CodebaseInfo == nil {
@@ -92,14 +91,4 @@ func (ctx workContext) GetRepositoryStructure() string {
 	}
 
 	return structure.String()
-}
-
-// Utility functions
-
-// truncateString truncates a string to a maximum length
-func truncateString(s string, maxLen int) string {
-	if len(s) <= maxLen {
-		return s
-	}
-	return s[:maxLen] + "..."
 }
