@@ -62,10 +62,14 @@ ANTHROPIC_API_KEY=sk-ant-<your-anthropic-api-key>
 
 ### Running the Bot
 
-1. Build: `make build`
-1. Run: `make run`
-1. Logs: `make logs`
-1. Stop: `make stop`
+Prerequisites: Install [Just](https://github.com/casey/just) command runner.
+
+1. Build: `just build`
+1. Run: `just run`  
+1. Logs: `just logs`
+1. Stop: `just stop`
+
+Run `just` or `just help` to see all available commands.
 
 ## Usage
 
