@@ -947,10 +947,13 @@ func (vd *VirtualDeveloper) initConversation(ctx context.Context, workCtx workCo
 		c := NewClaudeConversation(vd.anthropicClient, model, maxTokens, tools, systemPrompt)
 
 		log.Printf("Sending initial message to AI")
-		prompt := workCtx.BuildPrompt()
+		promptPtr, err := BuildPrompt(workCtx)
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to build prompt: %w", err)
+		}
 		// Send initial message with a cache breakpoint, because the initial message tends to be very large and we are
 		// likely to need several back-and-forths after this
-		response, err := c.SendMessageAndSetCachePoint(ctx, anthropic.NewTextBlock(prompt))
+		response, err := c.SendMessageAndSetCachePoint(ctx, anthropic.NewTextBlock(*promptPtr))
 		if err != nil {
 			return nil, nil, fmt.Errorf("failed to send initial message to AI: %w", err)
 		}
