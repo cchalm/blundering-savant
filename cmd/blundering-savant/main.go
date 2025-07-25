@@ -129,16 +129,11 @@ func (gfsf *githubFileSystemFactory) NewFileSystem(owner, repo, branch string) (
 // Run starts the main loop
 func (vd *VirtualDeveloper) Run() {
 	ctx := context.Background()
-	ticker := time.NewTicker(vd.config.CheckInterval)
-	defer ticker.Stop()
 
-	// Initial check
-	vd.checkAndProcessWorkItems(ctx)
-
-	log.Printf("Sleeping for %s", vd.config.CheckInterval)
-	for range ticker.C {
+	for {
 		vd.checkAndProcessWorkItems(ctx)
 		log.Printf("Sleeping for %s", vd.config.CheckInterval)
+		time.Sleep(vd.config.CheckInterval)
 	}
 }
 
