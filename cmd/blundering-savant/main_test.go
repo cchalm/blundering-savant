@@ -150,7 +150,7 @@ func TestBuildPrompt_BasicTemplate(t *testing.T) {
 		},
 	}
 
-	promptPtr, err := ctx.BuildPrompt()
+	promptPtr, err := BuildPrompt(ctx)
 	require.NoError(t, err)
 	prompt := *promptPtr
 
@@ -180,7 +180,7 @@ func TestBuildPrompt_WithPullRequest(t *testing.T) {
 		},
 	}
 
-	promptPtr, err := ctx.BuildPrompt()
+	promptPtr, err := BuildPrompt(ctx)
 	require.NoError(t, err)
 	prompt := *promptPtr
 
@@ -205,7 +205,7 @@ func TestBuildPrompt_WithStyleGuide(t *testing.T) {
 		},
 	}
 
-	promptPtr, err := ctx.BuildPrompt()
+	promptPtr, err := BuildPrompt(ctx)
 	require.NoError(t, err)
 	prompt := *promptPtr
 
@@ -229,7 +229,7 @@ func TestBuildPrompt_WithFileTree(t *testing.T) {
 		},
 	}
 
-	promptPtr, err := ctx.BuildPrompt()
+	promptPtr, err := BuildPrompt(ctx)
 	require.NoError(t, err)
 	prompt := *promptPtr
 
@@ -261,7 +261,7 @@ func TestBuildPrompt_WithCommentsRequiringResponses(t *testing.T) {
 		},
 	}
 
-	promptPtr, err := ctx.BuildPrompt()
+	promptPtr, err := BuildPrompt(ctx)
 	require.NoError(t, err)
 	prompt := *promptPtr
 
@@ -282,7 +282,7 @@ func TestBuildTemplateData_TruncatesLongFileTree(t *testing.T) {
 		},
 	}
 
-	data := ctx.buildTemplateData()
+	data := buildTemplateData(ctx)
 
 	require.Len(t, data.FileTree, 20)
 	require.True(t, data.FileTreeTruncated)
@@ -297,7 +297,7 @@ func TestBuildTemplateData_DoesNotTruncateShortFileTree(t *testing.T) {
 		},
 	}
 
-	data := ctx.buildTemplateData()
+	data := buildTemplateData(ctx)
 
 	require.Len(t, data.FileTree, 3)
 	require.False(t, data.FileTreeTruncated)

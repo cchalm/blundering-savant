@@ -84,8 +84,8 @@ type promptTemplateData struct {
 }
 
 // BuildPrompt generates the complete prompt for Claude based on the context
-func (ctx workContext) BuildPrompt() (*string, error) {
-	data := ctx.buildTemplateData()
+func BuildPrompt(ctx workContext) (*string, error) {
+	data := buildTemplateData(ctx)
 
 	// Create template with helper functions
 	funcMap := template.FuncMap{
@@ -226,7 +226,7 @@ func derefOr[T any](ptr *T, defaultVal T) T {
 }
 
 // buildTemplateData creates the data structure for template rendering
-func (ctx workContext) buildTemplateData() promptTemplateData {
+func buildTemplateData(ctx workContext) promptTemplateData {
 	data := promptTemplateData{}
 
 	// Basic repository and issue information

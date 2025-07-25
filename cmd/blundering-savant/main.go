@@ -947,7 +947,7 @@ func (vd *VirtualDeveloper) initConversation(ctx context.Context, workCtx workCo
 		c := NewClaudeConversation(vd.anthropicClient, model, maxTokens, tools, systemPrompt)
 
 		log.Printf("Sending initial message to AI")
-		promptPtr, err := workCtx.BuildPrompt()
+		promptPtr, err := BuildPrompt(workCtx)
 		if err != nil {
 			return nil, nil, fmt.Errorf("failed to build prompt: %w", err)
 		}
