@@ -72,7 +72,9 @@ func TestBuildPrompt_WithStyleGuide(t *testing.T) {
 			Body:   github.Ptr("Test description"),
 		},
 		StyleGuide: &StyleGuide{
-			Content: "Use tabs for indentation",
+			Guides: map[string]string{
+				"style_guide.md": "Use tabs for indentation",
+			},
 		},
 		CodebaseInfo: &CodebaseInfo{
 			MainLanguage: "Go",
@@ -83,7 +85,8 @@ func TestBuildPrompt_WithStyleGuide(t *testing.T) {
 	require.NoError(t, err)
 	prompt := *promptPtr
 
-	require.Contains(t, prompt, "Style Guide:")
+	require.Contains(t, prompt, "Style Guides:")
+	require.Contains(t, prompt, "style_guide.md")
 	require.Contains(t, prompt, "Use tabs for indentation")
 }
 

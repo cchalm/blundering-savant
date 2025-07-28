@@ -47,30 +47,7 @@ type CodebaseInfo struct {
 
 // StyleGuide represents coding style information
 type StyleGuide struct {
-	Content   string
-	FilePath  string
-	RepoStyle map[string]string // language -> style patterns
-}
-
-// GetMainLanguageInfo returns information about the main programming language
-func (tsk task) GetMainLanguageInfo() (string, map[string]string) {
-	if tsk.CodebaseInfo == nil {
-		return "unknown", make(map[string]string)
-	}
-
-	lang := tsk.CodebaseInfo.MainLanguage
-	if lang == "" {
-		lang = "unknown"
-	}
-
-	styleInfo := make(map[string]string)
-	if tsk.StyleGuide != nil && tsk.StyleGuide.RepoStyle != nil {
-		if info, exists := tsk.StyleGuide.RepoStyle[strings.ToLower(lang)]; exists {
-			styleInfo[lang] = info
-		}
-	}
-
-	return lang, styleInfo
+	Guides map[string]string // repo path -> style guide content
 }
 
 // GetRepositoryStructure returns a formatted view of the repository structure

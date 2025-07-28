@@ -8,10 +8,14 @@ Issue Description:
 
 Pull Request #{{.PullRequestNumber}} is open for this issue.
 {{- end}}
-{{- if .StyleGuideContent}}
+{{- if .StyleGuides}}
 
-Style Guide:
-{{.StyleGuideContent}}
+Style Guides:
+{{- range $path, $content := .StyleGuides}}
+
+--- {{$path}} ---
+{{$content}}
+{{- end}}
 {{- end}}
 {{- if .ReadmeContent}}
 

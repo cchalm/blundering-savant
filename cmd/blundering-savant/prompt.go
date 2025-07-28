@@ -67,7 +67,7 @@ type promptTemplateData struct {
 	IssueTitle             string
 	IssueBody              string
 	PullRequestNumber      *int
-	StyleGuideContent      string
+	StyleGuides            map[string]string // path -> content
 	ReadmeContent          string
 	FileTree               []string
 	FileTreeTruncated      bool
@@ -264,9 +264,9 @@ func buildTemplateData(tsk task) promptTemplateData {
 		data.PullRequestNumber = tsk.PullRequest.Number
 	}
 
-	// Style guide content
-	if tsk.StyleGuide != nil && tsk.StyleGuide.Content != "" {
-		data.StyleGuideContent = tsk.StyleGuide.Content
+	// Style guides
+	if tsk.StyleGuide != nil {
+		data.StyleGuides = tsk.StyleGuide.Guides
 	}
 
 	// Codebase information

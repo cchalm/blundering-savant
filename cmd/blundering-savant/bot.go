@@ -656,10 +656,11 @@ func getPullRequest(ctx context.Context, githubClient *github.Client, owner, rep
 // findStyleGuides searches for coding style documentation
 func (b *Bot) findStyleGuides(ctx context.Context, owner, repo string) (*StyleGuide, error) {
 	styleGuide := &StyleGuide{
-		RepoStyle: make(map[string]string),
+		Guides: map[string]string{},
 	}
 
-	patterns := []string{
+	paths := []string{
+		"STYLE_GUIDE.md",
 		"CONTRIBUTING.md",
 		"STYLE.md",
 		"CODING_STYLE.md",
@@ -667,18 +668,17 @@ func (b *Bot) findStyleGuides(ctx context.Context, owner, repo string) (*StyleGu
 		"docs/CONTRIBUTING.md",
 	}
 
-	for _, pattern := range patterns {
-		content, _, _, err := b.githubClient.Repositories.GetContents(ctx, owner, repo, pattern, nil)
+	for _, path := range paths {
+		content, _, _, err := b.githubClient.Repositories.GetContents(ctx, owner, repo, path, nil)
 		if err == nil && content != nil {
 			decodedContent, err := content.GetContent()
 			if err == nil {
-				styleGuide.Content += fmt.Sprintf("\n\n--- %s ---\n%s", pattern, decodedContent)
-				styleGuide.FilePath = pattern
+				styleGuide.Guides[path] = decodedContent
 			}
 		}
 	}
 
-	if styleGuide.Content == "" {
+	if len(styleGuide.Guides) == 0 {
 		return nil, fmt.Errorf("no style guides found")
 	}
 
