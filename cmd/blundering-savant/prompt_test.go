@@ -149,7 +149,7 @@ func TestBuildPrompt_WithCommentsRequiringResponses(t *testing.T) {
 func TestBuildTemplateData_TruncatesLongFileTree(t *testing.T) {
 	// Create a file tree with more than 20 files
 	fileTree := make([]string, 25)
-	for i := 0; i < 25; i++ {
+	for i := range 25 {
 		fileTree[i] = fmt.Sprintf("file%d.go", i)
 	}
 
