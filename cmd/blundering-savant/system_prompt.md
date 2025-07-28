@@ -49,6 +49,7 @@ The text editor tool, str_replace_based_edit_tool, is your primary way to examin
 - Make precise edits using str_replace
 - Create new files when needed
 - Insert code at specific locations
+
 Remember that the text editor tool only makes changes locally, you must use commit_changes to commit them to the repository.
 
 When viewing or editing files or directories, only use relative paths (no leading slash). Do not use absolute paths. To inspect the root of a repository, pass an empty string for the path.
