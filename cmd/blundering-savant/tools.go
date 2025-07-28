@@ -135,13 +135,13 @@ func (t *TextEditorTool) run(ctx context.Context, block anthropic.ToolUseBlock, 
 			// No side effects to replay
 			return nil, nil
 		}
-		result, err = t.executeView(input, toolCtx.FileSystem)
+		result, err = t.executeView(ctx, input, toolCtx.FileSystem)
 	case "str_replace":
-		result, err = t.executeStrReplace(input, toolCtx.FileSystem)
+		result, err = t.executeStrReplace(ctx, input, toolCtx.FileSystem)
 	case "create":
-		result, err = t.executeCreate(input, toolCtx.FileSystem)
+		result, err = t.executeCreate(ctx, input, toolCtx.FileSystem)
 	case "insert":
-		result, err = t.executeInsert(input, toolCtx.FileSystem)
+		result, err = t.executeInsert(ctx, input, toolCtx.FileSystem)
 	case "undo_edit":
 		result = ""
 		err = ToolInputError{fmt.Errorf("undo_edit not supported")}
@@ -157,18 +157,18 @@ func (t *TextEditorTool) run(ctx context.Context, block anthropic.ToolUseBlock, 
 }
 
 // Implementation methods for each command
-func (t *TextEditorTool) executeView(input *TextEditorInput, fs *GitHubFileSystem) (string, error) {
+func (t *TextEditorTool) executeView(ctx context.Context, input *TextEditorInput, fs *GitHubFileSystem) (string, error) {
 	if fs == nil {
 		return "", fmt.Errorf("file system not initialized")
 	}
 
-	isDir, err := fs.IsDirectory(input.Path)
+	isDir, err := fs.IsDirectory(ctx, input.Path)
 	if err != nil {
 		return "", fmt.Errorf("error checking path: %w", err)
 	}
 
 	if isDir {
-		files, err := fs.ListDirectory(input.Path)
+		files, err := fs.ListDirectory(ctx, input.Path)
 		if err != nil {
 			return "", fmt.Errorf("error listing directory: %w", err)
 		}
@@ -180,8 +180,10 @@ func (t *TextEditorTool) executeView(input *TextEditorInput, fs *GitHubFileSyste
 		return result, nil
 	}
 
-	content, err := fs.ReadFile(input.Path)
-	if err != nil {
+	content, err := fs.ReadFile(ctx, input.Path)
+	if errors.Is(err, ErrFileNotFound) {
+		return "", ToolInputError{err}
+	} else if err != nil {
 		return "", fmt.Errorf("error reading file: %w", err)
 	}
 
@@ -216,9 +218,11 @@ func (t *TextEditorTool) executeView(input *TextEditorInput, fs *GitHubFileSyste
 	return result.String(), nil
 }
 
-func (t *TextEditorTool) executeStrReplace(input *TextEditorInput, fs *GitHubFileSystem) (string, error) {
-	content, err := fs.ReadFile(input.Path)
-	if err != nil {
+func (t *TextEditorTool) executeStrReplace(ctx context.Context, input *TextEditorInput, fs *GitHubFileSystem) (string, error) {
+	content, err := fs.ReadFile(ctx, input.Path)
+	if errors.Is(err, ErrFileNotFound) {
+		return "", ToolInputError{err}
+	} else if err != nil {
 		return "", fmt.Errorf("error reading file: %w", err)
 	}
 
@@ -239,8 +243,8 @@ func (t *TextEditorTool) executeStrReplace(input *TextEditorInput, fs *GitHubFil
 	return fmt.Sprintf("Successfully replaced text in %s", input.Path), nil
 }
 
-func (t *TextEditorTool) executeCreate(input *TextEditorInput, fs *GitHubFileSystem) (string, error) {
-	exists, err := fs.FileExists(input.Path)
+func (t *TextEditorTool) executeCreate(ctx context.Context, input *TextEditorInput, fs *GitHubFileSystem) (string, error) {
+	exists, err := fs.FileExists(ctx, input.Path)
 	if err != nil {
 		return "", fmt.Errorf("error checking file existence: %w", err)
 	}
@@ -256,9 +260,11 @@ func (t *TextEditorTool) executeCreate(input *TextEditorInput, fs *GitHubFileSys
 	return fmt.Sprintf("Successfully created file %s", input.Path), nil
 }
 
-func (t *TextEditorTool) executeInsert(input *TextEditorInput, fs *GitHubFileSystem) (string, error) {
-	content, err := fs.ReadFile(input.Path)
-	if err != nil {
+func (t *TextEditorTool) executeInsert(ctx context.Context, input *TextEditorInput, fs *GitHubFileSystem) (string, error) {
+	content, err := fs.ReadFile(ctx, input.Path)
+	if errors.Is(err, ErrFileNotFound) {
+		return "", ToolInputError{err}
+	} else if err != nil {
 		return "", fmt.Errorf("error reading file: %w", err)
 	}
 
@@ -357,7 +363,7 @@ func (t *CommitChangesTool) Run(ctx context.Context, block anthropic.ToolUseBloc
 	}
 
 	// Commit the changes
-	_, err = toolCtx.FileSystem.CommitChanges(input.CommitMessage)
+	_, err = toolCtx.FileSystem.CommitChanges(ctx, input.CommitMessage)
 	if err != nil {
 		return nil, fmt.Errorf("failed to commit changes: %w", err)
 	}
@@ -472,7 +478,7 @@ Fixes #%d
 		}
 	}
 
-	_, err = toolCtx.FileSystem.CreatePullRequest(input.PullRequestTitle, input.PullRequestBody, targetBranch)
+	_, err = toolCtx.FileSystem.CreatePullRequest(ctx, input.PullRequestTitle, input.PullRequestBody, targetBranch)
 	if err != nil {
 		return nil, err
 	}

@@ -2,10 +2,16 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"net/http"
 	"strings"
 
 	"github.com/google/go-github/v72/github"
+)
+
+var (
+	ErrFileNotFound error = fmt.Errorf("file not found")
 )
 
 // GitHubFileSystem implements file edits via the GitHub API. It maintains a working tree in memory and can commit
@@ -24,9 +30,7 @@ type GitHubFileSystem struct {
 }
 
 // NewGitHubFileSystem creates a new GitHub file system that works on a specific branch
-func NewGitHubFileSystem(client *github.Client, owner, repo, branch string) (*GitHubFileSystem, error) {
-	ctx := context.Background()
-
+func NewGitHubFileSystem(ctx context.Context, client *github.Client, owner, repo, branch string) (*GitHubFileSystem, error) {
 	gfs := &GitHubFileSystem{
 		client:       client,
 		owner:        owner,
@@ -55,12 +59,12 @@ func NewGitHubFileSystem(client *github.Client, owner, repo, branch string) (*Gi
 }
 
 // ReadFile reads a file from the current state (working tree or GitHub)
-func (gfs *GitHubFileSystem) ReadFile(path string) (string, error) {
+func (gfs *GitHubFileSystem) ReadFile(ctx context.Context, path string) (string, error) {
 	path = normalizePath(path)
 
 	// Check if file is deleted
 	if gfs.deletedFiles[path] {
-		return "", fmt.Errorf("file not found: %s", path)
+		return "", fmt.Errorf("file is deleted: %w", ErrFileNotFound)
 	}
 
 	// Check working tree first
@@ -69,11 +73,13 @@ func (gfs *GitHubFileSystem) ReadFile(path string) (string, error) {
 	}
 
 	// Fall back to GitHub
-	ctx := context.Background()
-	fileContent, _, _, err := gfs.client.Repositories.GetContents(ctx, gfs.owner, gfs.repo, path, &github.RepositoryContentGetOptions{
+	fileContent, _, resp, err := gfs.client.Repositories.GetContents(ctx, gfs.owner, gfs.repo, path, &github.RepositoryContentGetOptions{
 		Ref: gfs.branch,
 	})
 	if err != nil {
+		if resp.StatusCode == http.StatusNotFound {
+			return "", ErrFileNotFound
+		}
 		return "", fmt.Errorf("failed to get file contents: %w", err)
 	}
 
@@ -110,7 +116,7 @@ func (gfs *GitHubFileSystem) DeleteFile(path string) error {
 }
 
 // FileExists checks if a file exists in the current state
-func (gfs *GitHubFileSystem) FileExists(path string) (bool, error) {
+func (gfs *GitHubFileSystem) FileExists(ctx context.Context, path string) (bool, error) {
 	path = normalizePath(path)
 
 	// Check if file is deleted
@@ -124,9 +130,9 @@ func (gfs *GitHubFileSystem) FileExists(path string) (bool, error) {
 	}
 
 	// Check GitHub
-	_, err := gfs.ReadFile(path)
+	_, err := gfs.ReadFile(ctx, path)
 	if err != nil {
-		if strings.Contains(err.Error(), "file not found") || strings.Contains(err.Error(), "404") {
+		if errors.Is(err, ErrFileNotFound) {
 			return false, nil
 		}
 		return false, err
@@ -135,8 +141,7 @@ func (gfs *GitHubFileSystem) FileExists(path string) (bool, error) {
 }
 
 // IsDirectory checks if a path is a directory
-func (gfs *GitHubFileSystem) IsDirectory(path string) (bool, error) {
-	ctx := context.Background()
+func (gfs *GitHubFileSystem) IsDirectory(ctx context.Context, path string) (bool, error) {
 	_, dirContents, _, err := gfs.client.Repositories.GetContents(ctx, gfs.owner, gfs.repo, path, &github.RepositoryContentGetOptions{
 		Ref: gfs.branch,
 	})
@@ -153,8 +158,7 @@ func (gfs *GitHubFileSystem) IsDirectory(path string) (bool, error) {
 }
 
 // ListDirectory lists contents of a directory
-func (gfs *GitHubFileSystem) ListDirectory(path string) ([]string, error) {
-	ctx := context.Background()
+func (gfs *GitHubFileSystem) ListDirectory(ctx context.Context, path string) ([]string, error) {
 	_, dirContents, _, err := gfs.client.Repositories.GetContents(ctx, gfs.owner, gfs.repo, path, &github.RepositoryContentGetOptions{
 		Ref: gfs.branch,
 	})
@@ -202,12 +206,10 @@ func (gfs *GitHubFileSystem) ClearChanges() {
 }
 
 // CommitChanges creates a commit with all changes in the working tree
-func (gfs *GitHubFileSystem) CommitChanges(commitMessage string) (*github.Commit, error) {
+func (gfs *GitHubFileSystem) CommitChanges(ctx context.Context, commitMessage string) (*github.Commit, error) {
 	if !gfs.HasChanges() {
 		return nil, fmt.Errorf("no changes to commit")
 	}
-
-	ctx := context.Background()
 
 	// Get the current tree
 	currentTree, _, err := gfs.client.Git.GetTree(ctx, gfs.owner, gfs.repo, gfs.currentTreeSHA, true)
@@ -300,12 +302,10 @@ func (gfs *GitHubFileSystem) CommitChanges(commitMessage string) (*github.Commit
 }
 
 // CreatePullRequest creates a PR from the current branch to the target branch
-func (gfs *GitHubFileSystem) CreatePullRequest(title, body, targetBranch string) (*github.PullRequest, error) {
+func (gfs *GitHubFileSystem) CreatePullRequest(ctx context.Context, title, body, targetBranch string) (*github.PullRequest, error) {
 	if gfs.HasChanges() {
 		return nil, fmt.Errorf("cannot create PR with uncommitted changes - call CommitChanges first")
 	}
-
-	ctx := context.Background()
 
 	pr := &github.NewPullRequest{
 		Title:               github.Ptr(title),
