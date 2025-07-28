@@ -306,7 +306,7 @@ func (b *Bot) processWithAI(ctx context.Context, workCtx workContext, owner, rep
 				log.Printf("    Executing tool: %s", toolUse.Name)
 
 				// Process the tool use with the registry
-				toolResult, err := b.toolRegistry.ProcessToolUse(toolUse, toolCtx)
+				toolResult, err := b.toolRegistry.ProcessToolUse(ctx, toolUse, toolCtx)
 				if err != nil {
 					return fmt.Errorf("failed to process tool use: %w", err)
 				}
@@ -926,7 +926,7 @@ func (b *Bot) rerunStatefulToolCalls(ctx context.Context, workCtx workContext, t
 		for _, block := range turn.Response.Content {
 			switch toolUseBlock := block.AsAny().(type) {
 			case anthropic.ToolUseBlock:
-				err := b.toolRegistry.ReplayToolUse(toolUseBlock, toolCtx)
+				err := b.toolRegistry.ReplayToolUse(ctx, toolUseBlock, toolCtx)
 				if err != nil {
 					return err
 				}

@@ -20,7 +20,7 @@ type AnthropicTool interface {
 	// Run takes a ToolUseBlock, performs the tool call, and returns a string result or an error. The error will be a
 	// ToolInputError if it is recoverable by fixing inputs. A call to Run has no side effects if it returns
 	// ToolInputError
-	Run(block anthropic.ToolUseBlock, ctx *ToolContext) (*string, error)
+	Run(ctx context.Context, block anthropic.ToolUseBlock, toolCtx *ToolContext) (*string, error)
 
 	// Replay is the same as Run, except that it skips actions with persistent side effects, e.g. pushing git commits to
 	// a remote. Persistent side effects also include anything persisted in the conversation, e.g. fetching the content
@@ -28,7 +28,7 @@ type AnthropicTool interface {
 	// Call this to restore local state changes of a previous tool call in a new environment.
 	// Note that this function does not return a string, because a response should already have been added to the
 	// conversation from the original run of this tool.
-	Replay(block anthropic.ToolUseBlock, ctx *ToolContext) error
+	Replay(ctx context.Context, block anthropic.ToolUseBlock, toolCtx *ToolContext) error
 }
 
 // ToolContext provides context needed by tools during execution
@@ -113,16 +113,16 @@ func (t *TextEditorTool) ParseToolUse(block anthropic.ToolUseBlock) (*TextEditor
 }
 
 // Run executes the text editor command
-func (t *TextEditorTool) Run(block anthropic.ToolUseBlock, ctx *ToolContext) (*string, error) {
-	return t.run(block, ctx, false)
+func (t *TextEditorTool) Run(ctx context.Context, block anthropic.ToolUseBlock, toolCtx *ToolContext) (*string, error) {
+	return t.run(ctx, block, toolCtx, false)
 }
 
-func (t *TextEditorTool) Replay(block anthropic.ToolUseBlock, ctx *ToolContext) error {
-	_, err := t.run(block, ctx, true)
+func (t *TextEditorTool) Replay(ctx context.Context, block anthropic.ToolUseBlock, toolCtx *ToolContext) error {
+	_, err := t.run(ctx, block, toolCtx, true)
 	return err
 }
 
-func (t *TextEditorTool) run(block anthropic.ToolUseBlock, ctx *ToolContext, replay bool) (*string, error) {
+func (t *TextEditorTool) run(ctx context.Context, block anthropic.ToolUseBlock, toolCtx *ToolContext, replay bool) (*string, error) {
 	input, err := t.ParseToolUse(block)
 	if err != nil {
 		return nil, fmt.Errorf("error parsing input: %w", err)
@@ -135,13 +135,13 @@ func (t *TextEditorTool) run(block anthropic.ToolUseBlock, ctx *ToolContext, rep
 			// No side effects to replay
 			return nil, nil
 		}
-		result, err = t.executeView(input, ctx.FileSystem)
+		result, err = t.executeView(input, toolCtx.FileSystem)
 	case "str_replace":
-		result, err = t.executeStrReplace(input, ctx.FileSystem)
+		result, err = t.executeStrReplace(input, toolCtx.FileSystem)
 	case "create":
-		result, err = t.executeCreate(input, ctx.FileSystem)
+		result, err = t.executeCreate(input, toolCtx.FileSystem)
 	case "insert":
-		result, err = t.executeInsert(input, ctx.FileSystem)
+		result, err = t.executeInsert(input, toolCtx.FileSystem)
 	case "undo_edit":
 		result = ""
 		err = ToolInputError{fmt.Errorf("undo_edit not supported")}
@@ -337,13 +337,13 @@ func (t *CommitChangesTool) ParseToolUse(block anthropic.ToolUseBlock) (*CommitC
 }
 
 // Run executes the create pull request command
-func (t *CommitChangesTool) Run(block anthropic.ToolUseBlock, ctx *ToolContext) (*string, error) {
+func (t *CommitChangesTool) Run(ctx context.Context, block anthropic.ToolUseBlock, toolCtx *ToolContext) (*string, error) {
 	input, err := t.ParseToolUse(block)
 	if err != nil {
 		return nil, fmt.Errorf("error parsing input: %w", err)
 	}
 
-	if ctx.FileSystem == nil {
+	if toolCtx.FileSystem == nil {
 		return nil, fmt.Errorf("file system not initialized")
 	}
 
@@ -352,12 +352,12 @@ func (t *CommitChangesTool) Run(block anthropic.ToolUseBlock, ctx *ToolContext) 
 	}
 
 	// Check if there are changes to commit
-	if !ctx.FileSystem.HasChanges() {
+	if !toolCtx.FileSystem.HasChanges() {
 		return nil, fmt.Errorf("no changes to commit")
 	}
 
 	// Commit the changes
-	_, err = ctx.FileSystem.CommitChanges(input.CommitMessage)
+	_, err = toolCtx.FileSystem.CommitChanges(input.CommitMessage)
 	if err != nil {
 		return nil, fmt.Errorf("failed to commit changes: %w", err)
 	}
@@ -365,9 +365,9 @@ func (t *CommitChangesTool) Run(block anthropic.ToolUseBlock, ctx *ToolContext) 
 	return nil, nil
 }
 
-func (t *CommitChangesTool) Replay(block anthropic.ToolUseBlock, ctx *ToolContext) error {
+func (t *CommitChangesTool) Replay(ctx context.Context, block anthropic.ToolUseBlock, toolCtx *ToolContext) error {
 	// Since all prior replayed file changes were persisted remotely by this commit call, we must clear them
-	ctx.FileSystem.ClearChanges()
+	toolCtx.FileSystem.ClearChanges()
 	return nil
 }
 
@@ -423,13 +423,13 @@ func (t *CreatePullRequestTool) ParseToolUse(block anthropic.ToolUseBlock) (*Cre
 }
 
 // Run executes the create pull request command
-func (t *CreatePullRequestTool) Run(block anthropic.ToolUseBlock, ctx *ToolContext) (*string, error) {
+func (t *CreatePullRequestTool) Run(ctx context.Context, block anthropic.ToolUseBlock, toolCtx *ToolContext) (*string, error) {
 	input, err := t.ParseToolUse(block)
 	if err != nil {
 		return nil, fmt.Errorf("error parsing input: %w", err)
 	}
 
-	if ctx.FileSystem == nil {
+	if toolCtx.FileSystem == nil {
 		return nil, fmt.Errorf("file system not initialized")
 	}
 
@@ -443,9 +443,9 @@ func (t *CreatePullRequestTool) Run(block anthropic.ToolUseBlock, ctx *ToolConte
 
 	// Determine target branch
 	var targetBranch string
-	if ctx.WorkContext.PullRequest == nil {
+	if toolCtx.WorkContext.PullRequest == nil {
 		// Get default branch for new PRs
-		repository, _, err := ctx.GithubClient.Repositories.Get(context.Background(), ctx.Owner, ctx.Repo)
+		repository, _, err := toolCtx.GithubClient.Repositories.Get(ctx, toolCtx.Owner, toolCtx.Repo)
 		if err != nil {
 			return nil, fmt.Errorf("failed to get repository: %w", err)
 		}
@@ -453,8 +453,8 @@ func (t *CreatePullRequestTool) Run(block anthropic.ToolUseBlock, ctx *ToolConte
 
 		// Add issue reference to PR body
 		issueNumber := 0
-		if ctx.WorkContext.Issue != nil && ctx.WorkContext.Issue.Number != nil {
-			issueNumber = *ctx.WorkContext.Issue.Number
+		if toolCtx.WorkContext.Issue != nil && toolCtx.WorkContext.Issue.Number != nil {
+			issueNumber = *toolCtx.WorkContext.Issue.Number
 		}
 
 		input.PullRequestBody = fmt.Sprintf(`%s
@@ -465,14 +465,14 @@ Fixes #%d
 *This PR was created by the Blundering Savant bot.*`, input.PullRequestBody, issueNumber)
 	} else {
 		// For existing PRs, use the same target branch
-		if ctx.WorkContext.PullRequest != nil && ctx.WorkContext.PullRequest.Base != nil && ctx.WorkContext.PullRequest.Base.Ref != nil {
-			targetBranch = *ctx.WorkContext.PullRequest.Base.Ref
+		if toolCtx.WorkContext.PullRequest != nil && toolCtx.WorkContext.PullRequest.Base != nil && toolCtx.WorkContext.PullRequest.Base.Ref != nil {
+			targetBranch = *toolCtx.WorkContext.PullRequest.Base.Ref
 		} else {
 			return nil, fmt.Errorf("could not determine target branch for existing PR")
 		}
 	}
 
-	_, err = ctx.FileSystem.CreatePullRequest(input.PullRequestTitle, input.PullRequestBody, targetBranch)
+	_, err = toolCtx.FileSystem.CreatePullRequest(input.PullRequestTitle, input.PullRequestBody, targetBranch)
 	if err != nil {
 		return nil, err
 	}
@@ -480,7 +480,7 @@ Fixes #%d
 	return nil, nil
 }
 
-func (t *CreatePullRequestTool) Replay(block anthropic.ToolUseBlock, ctx *ToolContext) error {
+func (t *CreatePullRequestTool) Replay(ctx context.Context, block anthropic.ToolUseBlock, toolCtx *ToolContext) error {
 	// No side effects to replay
 	return nil
 }
@@ -543,7 +543,7 @@ func (t *PostCommentTool) ParseToolUse(block anthropic.ToolUseBlock) (*PostComme
 }
 
 // Run executes the post comment command
-func (t *PostCommentTool) Run(block anthropic.ToolUseBlock, ctx *ToolContext) (*string, error) {
+func (t *PostCommentTool) Run(ctx context.Context, block anthropic.ToolUseBlock, toolCtx *ToolContext) (*string, error) {
 	input, err := t.ParseToolUse(block)
 	if err != nil {
 		return nil, fmt.Errorf("error parsing input: %w", err)
@@ -559,21 +559,21 @@ func (t *PostCommentTool) Run(block anthropic.ToolUseBlock, ctx *ToolContext) (*
 
 	switch input.CommentType {
 	case "issue":
-		if ctx.WorkContext.Issue != nil && ctx.WorkContext.Issue.Number != nil {
+		if toolCtx.WorkContext.Issue != nil && toolCtx.WorkContext.Issue.Number != nil {
 			comment := &github.IssueComment{
 				Body: github.Ptr(input.Body),
 			}
-			_, _, err = ctx.GithubClient.Issues.CreateComment(context.Background(), ctx.Owner, ctx.Repo, *ctx.WorkContext.Issue.Number, comment)
+			_, _, err = toolCtx.GithubClient.Issues.CreateComment(ctx, toolCtx.Owner, toolCtx.Repo, *toolCtx.WorkContext.Issue.Number, comment)
 			if err != nil {
 				return nil, err
 			}
 		}
 	case "pr":
-		if ctx.WorkContext.PullRequest != nil && ctx.WorkContext.PullRequest.Number != nil {
+		if toolCtx.WorkContext.PullRequest != nil && toolCtx.WorkContext.PullRequest.Number != nil {
 			comment := &github.IssueComment{
 				Body: github.Ptr(input.Body),
 			}
-			_, _, err = ctx.GithubClient.Issues.CreateComment(context.Background(), ctx.Owner, ctx.Repo, *ctx.WorkContext.PullRequest.Number, comment)
+			_, _, err = toolCtx.GithubClient.Issues.CreateComment(ctx, toolCtx.Owner, toolCtx.Repo, *toolCtx.WorkContext.PullRequest.Number, comment)
 			if err != nil {
 				return nil, err
 			}
@@ -582,11 +582,11 @@ func (t *PostCommentTool) Run(block anthropic.ToolUseBlock, ctx *ToolContext) (*
 		if input.InReplyTo == nil {
 			return nil, fmt.Errorf("InReplyTo must be specified for review comments. The bot is currently unable to create top-level review comments")
 		}
-		ctx.GithubClient.PullRequests.CreateCommentInReplyTo(
-			context.Background(),
-			ctx.Owner,
-			ctx.Repo,
-			*ctx.WorkContext.PullRequest.Number,
+		toolCtx.GithubClient.PullRequests.CreateCommentInReplyTo(
+			ctx,
+			toolCtx.Owner,
+			toolCtx.Repo,
+			*toolCtx.WorkContext.PullRequest.Number,
 			input.Body,
 			*input.InReplyTo,
 		)
@@ -595,7 +595,7 @@ func (t *PostCommentTool) Run(block anthropic.ToolUseBlock, ctx *ToolContext) (*
 	return nil, nil
 }
 
-func (t *PostCommentTool) Replay(block anthropic.ToolUseBlock, ctx *ToolContext) error {
+func (t *PostCommentTool) Replay(ctx context.Context, block anthropic.ToolUseBlock, toolCtx *ToolContext) error {
 	// No side effects to replay
 	return nil
 }
@@ -659,7 +659,7 @@ func (t *AddReactionTool) ParseToolUse(block anthropic.ToolUseBlock) (*AddReacti
 }
 
 // Run executes the add reaction command
-func (t *AddReactionTool) Run(block anthropic.ToolUseBlock, ctx *ToolContext) (*string, error) {
+func (t *AddReactionTool) Run(ctx context.Context, block anthropic.ToolUseBlock, toolCtx *ToolContext) (*string, error) {
 	input, err := t.ParseToolUse(block)
 	if err != nil {
 		return nil, fmt.Errorf("error parsing input: %w", err)
@@ -675,12 +675,12 @@ func (t *AddReactionTool) Run(block anthropic.ToolUseBlock, ctx *ToolContext) (*
 
 	switch input.CommentType {
 	case "issue", "PR":
-		_, _, err = ctx.GithubClient.Reactions.CreateIssueCommentReaction(context.Background(), ctx.Owner, ctx.Repo, input.CommentID, input.Reaction)
+		_, _, err = toolCtx.GithubClient.Reactions.CreateIssueCommentReaction(ctx, toolCtx.Owner, toolCtx.Repo, input.CommentID, input.Reaction)
 		if err != nil {
 			return nil, err
 		}
 	case "PR review":
-		_, _, err = ctx.GithubClient.Reactions.CreatePullRequestCommentReaction(context.Background(), ctx.Owner, ctx.Repo, input.CommentID, input.Reaction)
+		_, _, err = toolCtx.GithubClient.Reactions.CreatePullRequestCommentReaction(ctx, toolCtx.Owner, toolCtx.Repo, input.CommentID, input.Reaction)
 		if err != nil {
 			return nil, err
 		}
@@ -689,7 +689,7 @@ func (t *AddReactionTool) Run(block anthropic.ToolUseBlock, ctx *ToolContext) (*
 	return nil, nil
 }
 
-func (t *AddReactionTool) Replay(block anthropic.ToolUseBlock, ctx *ToolContext) error {
+func (t *AddReactionTool) Replay(ctx context.Context, block anthropic.ToolUseBlock, toolCtx *ToolContext) error {
 	// No side effects to replay
 	return nil
 }
@@ -747,7 +747,7 @@ func (t *RequestReviewTool) ParseToolUse(block anthropic.ToolUseBlock) (*Request
 }
 
 // Run executes the request review command
-func (t *RequestReviewTool) Run(block anthropic.ToolUseBlock, ctx *ToolContext) (*string, error) {
+func (t *RequestReviewTool) Run(ctx context.Context, block anthropic.ToolUseBlock, toolCtx *ToolContext) (*string, error) {
 	input, err := t.ParseToolUse(block)
 	if err != nil {
 		return nil, fmt.Errorf("error parsing input: %w", err)
@@ -765,11 +765,11 @@ func (t *RequestReviewTool) Run(block anthropic.ToolUseBlock, ctx *ToolContext) 
 		Reviewers: input.Usernames,
 	}
 
-	_, _, err = ctx.GithubClient.PullRequests.RequestReviewers(context.Background(), ctx.Owner, ctx.Repo, *ctx.WorkContext.PullRequest.Number, reviewRequest)
+	_, _, err = toolCtx.GithubClient.PullRequests.RequestReviewers(ctx, toolCtx.Owner, toolCtx.Repo, *toolCtx.WorkContext.PullRequest.Number, reviewRequest)
 	return nil, err
 }
 
-func (t *RequestReviewTool) Replay(block anthropic.ToolUseBlock, ctx *ToolContext) error {
+func (t *RequestReviewTool) Replay(ctx context.Context, block anthropic.ToolUseBlock, toolCtx *ToolContext) error {
 	// No side effects to replay
 	return nil
 }
@@ -818,13 +818,13 @@ func (r *ToolRegistry) GetAllToolParams() []anthropic.ToolParam {
 }
 
 // ProcessToolUse processes a tool use block with the appropriate tool
-func (r *ToolRegistry) ProcessToolUse(block anthropic.ToolUseBlock, ctx *ToolContext) (*anthropic.ToolResultBlockParam, error) {
+func (r *ToolRegistry) ProcessToolUse(ctx context.Context, block anthropic.ToolUseBlock, toolCtx *ToolContext) (*anthropic.ToolResultBlockParam, error) {
 	tool, ok := r.GetTool(block.Name)
 	if !ok {
 		return nil, fmt.Errorf("unknown tool: %s", block.Name)
 	}
 
-	response, err := tool.Run(block, ctx)
+	response, err := tool.Run(ctx, block, toolCtx)
 
 	var resultBlock anthropic.ToolResultBlockParam
 	var tie ToolInputError
@@ -843,13 +843,13 @@ func (r *ToolRegistry) ProcessToolUse(block anthropic.ToolUseBlock, ctx *ToolCon
 }
 
 // ReplayToolUse replays a tool use block with the appropriate tool
-func (r *ToolRegistry) ReplayToolUse(toolUseBlock anthropic.ToolUseBlock, ctx *ToolContext) error {
+func (r *ToolRegistry) ReplayToolUse(ctx context.Context, toolUseBlock anthropic.ToolUseBlock, toolCtx *ToolContext) error {
 	tool, ok := r.GetTool(toolUseBlock.Name)
 	if !ok {
 		return fmt.Errorf("unknown tool: %s", toolUseBlock.Name)
 	}
 
-	err := tool.Replay(toolUseBlock, ctx)
+	err := tool.Replay(ctx, toolUseBlock, toolCtx)
 
 	var tie ToolInputError
 	if errors.As(err, &tie) {
