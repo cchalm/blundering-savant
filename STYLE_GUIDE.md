@@ -300,10 +300,56 @@ func worker(ctx context.Context, jobs <-chan Job, results chan<- Result) {
 
 ## Testing
 
-### Test Structure
-Use the test harness approach for better tooling support:
+### Test Coverage
+
+Aim loosely for %80 test coverage. The final 20% tends to produce a lot of false positives, which slows down subsequent
+development. Invest in static analysis instead.
+
+Do not write tests for trivial functions:
 
 ```go
+func colorToString(color Color) string {
+    switch color {
+    case Red:
+        return "red"
+    case Green:
+        return "green"
+    case Blue:
+        return "blue"
+    default:
+        panic("unknown color")
+    }
+}
+
+// Do not write this test
+func TestColorToString(t *testing.T) {
+    require.Equal(t, colorToString(Red), "red")
+    require.Equal(t, colorToString(Green), "green")
+    require.Equal(t, colorToString(Blue), "blue")
+    require.Panics(t, func() { colorToString(None) })
+}
+```
+
+The test above is just as likely to contain errors as the code it tests, so it provides little-to-no real coverage.
+
+### Test Naming
+- Use `Test` prefix for test functions
+- Use underscores to split test names into phrases following the pattern `Test{Function}_{Condition}`
+    - e.g. `TestProcessIssue_Nil`
+- Use concise names. When testing complex conditions, add a descriptive comment within the test
+
+### Test Structure
+Prefer test harnesses over table-driven tests for better IDE support:
+
+```go
+// testProcessIssue is an example of a test harness
+func testProcessIssue(t *testing.T, wantErr bool, issue *github.Issue) {
+    err := processIssue(context.Background(), issue)
+    if (err != nil) != wantErr {
+        t.Errorf("processIssue() error = %v, wantErr %v", err, wantErr)
+    }
+}
+
 func TestProcessIssue_Valid(t *testing.T) {
     testProcessIssue(t,
         false, // wantErr
@@ -320,19 +366,7 @@ func TestProcessIssue_Nil(t *testing.T) {
         nil,
     )
 }
-
-func testProcessIssue(t *testing.T, wantErr bool, issue *github.Issue) {
-    err := processIssue(context.Background(), issue)
-    if (err != nil) != wantErr {
-        t.Errorf("processIssue() error = %v, wantErr %v", err, wantErr)
-    }
-}
 ```
-
-### Test Naming
-- Use `Test` prefix for test functions
-- Use descriptive names that explain what is being tested
-- Prefer test harness approach over table-driven tests for better IDE support
 
 ### Mocking with Interfaces
 Go's interfaces enable easy mocking for testing. Define interfaces for dependencies:
@@ -348,25 +382,36 @@ type GitHubClient interface {
 type githubClient struct {
     client *github.Client
 }
+```
 
-// Mock implementation for testing
-type mockGitHubClient struct {
+Then fake, stub, or mock the dependency ([learn about the difference](https://www.martinfowler.com/articles/mocksArentStubs.html#TheDifferenceBetweenMocksAndStubs)):
+
+```go
+// Stub implementation for testing
+//
+// Stubs can be implemented various ways, but this stub demonstrates common strategies for getters and setters,
+// respectively:
+// - Getters: return predetermined state, e.g. stored in memory or hard-coded in the stubbed function
+// - Setters: keep track of modifications in-memory for later state verification
+type stubGitHubClient struct {
     issues   map[int]*github.Issue
     comments []string
 }
 
-func (m *mockGitHubClient) GetIssue(ctx context.Context, number int) (*github.Issue, error) {
+func (m *stubGitHubClient) GetIssue(ctx context.Context, number int) (*github.Issue, error) {
     if issue, ok := m.issues[number]; ok {
         return issue, nil
     }
     return nil, fmt.Errorf("issue not found")
 }
 
-func (m *mockGitHubClient) CreateComment(ctx context.Context, number int, comment string) error {
+func (m *stubGitHubClient) CreateComment(ctx context.Context, number int, comment string) error {
     m.comments = append(m.comments, comment)
     return nil
 }
 ```
+
+Use [mockery](https://vektra.github.io/mockery/latest/) to generate mocks when needed.
 
 ## Documentation
 
