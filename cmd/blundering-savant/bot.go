@@ -151,23 +151,23 @@ func (b *Bot) processIssue(ctx context.Context, owner, repo string, issue *githu
 		return fmt.Errorf("failed to get bot user: %w", err)
 	}
 
-	// Build work context
-	workCtx, err := b.buildWorkContext(ctx, owner, repo, issue, botUser)
+	// Build task context
+	task, err := b.getTask(ctx, owner, repo, issue, botUser)
 	if err != nil {
-		return fmt.Errorf("failed to build work context: %w", err)
+		return fmt.Errorf("failed to build task context: %w", err)
 	}
 
 	// Create work branch, if it doesn't already exist
-	err = createBranch(b.githubClient, owner, repo, workCtx.TargetBranch, workCtx.WorkBranch)
+	err = createBranch(b.githubClient, owner, repo, task.TargetBranch, task.WorkBranch)
 
 	// Check if we need to do anything
-	if !b.needsAttention(*workCtx) {
+	if !b.needsAttention(*task) {
 		log.Printf("issue does not require attention")
 		return nil
 	}
 
 	// Let AI decide what to do with text editor tool support
-	err = b.processWithAI(ctx, *workCtx, owner, repo)
+	err = b.processWithAI(ctx, *task, owner, repo)
 	if err != nil {
 		return fmt.Errorf("failed to process with AI: %w", err)
 	}
@@ -236,13 +236,13 @@ func createBranch(client *github.Client, owner, repo, baseBranch, newBranch stri
 	return nil
 }
 
-// TODO look into merging owner, repo, and branch into workCtx
+// TODO look into merging owner, repo, and branch into task
 // processWithAI handles the AI interaction with text editor tool support
-func (b *Bot) processWithAI(ctx context.Context, workCtx workContext, owner, repo string) error {
+func (b *Bot) processWithAI(ctx context.Context, task task, owner, repo string) error {
 	maxIterations := 50
 
 	// fs may be nil if no branch name is given, e.g. if the issue is currently in the requirements clarification phase
-	fs, err := b.fileSystemFactory.NewFileSystem(owner, repo, workCtx.WorkBranch)
+	fs, err := b.fileSystemFactory.NewFileSystem(owner, repo, task.WorkBranch)
 	if err != nil {
 		return fmt.Errorf("failed to create file system: %w", err)
 	}
@@ -252,12 +252,12 @@ func (b *Bot) processWithAI(ctx context.Context, workCtx workContext, owner, rep
 		FileSystem:   fs,
 		Owner:        owner,
 		Repo:         repo,
-		WorkContext:  workCtx,
+		Task:         task,
 		GithubClient: b.githubClient,
 	}
 
 	// Initialize conversation
-	conversation, response, err := b.initConversation(ctx, workCtx, toolCtx)
+	conversation, response, err := b.initConversation(ctx, task, toolCtx)
 	if err != nil {
 		return fmt.Errorf("failed to initialize conversation: %w", err)
 	}
@@ -268,7 +268,7 @@ func (b *Bot) processWithAI(ctx context.Context, workCtx workContext, owner, rep
 			return fmt.Errorf("exceeded maximum iterations (%d) without completion", maxIterations)
 		}
 		// Persist the conversation history up to this point
-		b.resumableConversations.Set(strconv.Itoa(*workCtx.Issue.Number), conversation.History())
+		b.resumableConversations.Set(strconv.Itoa(*task.Issue.Number), conversation.History())
 
 		log.Printf("Processing AI response, iteration: %d", i+1)
 		for _, contentBlock := range response.Content {
@@ -331,7 +331,7 @@ func (b *Bot) processWithAI(ctx context.Context, workCtx workContext, owner, rep
 	}
 
 	// We're done! Delete the conversation history so that we don't try to resume it later
-	err = b.resumableConversations.Delete(strconv.Itoa(*workCtx.Issue.Number))
+	err = b.resumableConversations.Delete(strconv.Itoa(*task.Issue.Number))
 	if err != nil {
 		return fmt.Errorf("failed to delete conversation history for concluded conversation: %w", err)
 	}
@@ -343,15 +343,15 @@ func (b *Bot) processWithAI(ctx context.Context, workCtx workContext, owner, rep
 // Helper functions
 
 // needsAttention checks if a work item needs AI attention
-func (b *Bot) needsAttention(workCtx workContext) bool {
-	if len(workCtx.IssueComments) == 0 && workCtx.PullRequest == nil {
+func (b *Bot) needsAttention(task task) bool {
+	if len(task.IssueComments) == 0 && task.PullRequest == nil {
 		// If there are no issue comments and no pull request, this is a brand new issue and requires our attention
 		return true
 	}
 	// Check if there are comments needing responses
-	if len(workCtx.IssueCommentsRequiringResponses) > 0 ||
-		len(workCtx.PRCommentsRequiringResponses) > 0 ||
-		len(workCtx.PRReviewCommentsRequiringResponses) > 0 {
+	if len(task.IssueCommentsRequiringResponses) > 0 ||
+		len(task.PRCommentsRequiringResponses) > 0 ||
+		len(task.PRReviewCommentsRequiringResponses) > 0 {
 
 		return true
 	}
@@ -513,9 +513,9 @@ func (b *Bot) ensureLabelExists(ctx context.Context, owner, repo string, label g
 
 // Context building functions
 
-// buildWorkContext creates a complete work context
-func (b *Bot) buildWorkContext(ctx context.Context, owner, repo string, issue *github.Issue, botUser *github.User) (*workContext, error) {
-	workCtx := workContext{
+// getTask fetches and returns the context for a work task
+func (b *Bot) getTask(ctx context.Context, owner, repo string, issue *github.Issue, botUser *github.User) (*task, error) {
+	task := task{
 		BotUsername: b.config.GitHubUsername,
 		Issue:       issue,
 	}
@@ -528,37 +528,37 @@ func (b *Bot) buildWorkContext(ctx context.Context, owner, repo string, issue *g
 		return nil, fmt.Errorf("nil default branch")
 	}
 
-	workCtx.TargetBranch = *repoInfo.DefaultBranch
+	task.TargetBranch = *repoInfo.DefaultBranch
 	// We'll use this branch name to implicitly link the issue and the pull request 1-1
-	workCtx.WorkBranch = getWorkBranchName(issue)
+	task.WorkBranch = getWorkBranchName(issue)
 
 	// Get the existing pull request, if any
-	pr, err := getPullRequest(ctx, b.githubClient, owner, repo, workCtx.WorkBranch, workCtx.BotUsername)
+	pr, err := getPullRequest(ctx, b.githubClient, owner, repo, task.WorkBranch, task.BotUsername)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get pull request for branch: %w", err)
 	}
-	workCtx.PullRequest = pr
+	task.PullRequest = pr
 
 	// Get repository
 	repository, _, err := b.githubClient.Repositories.Get(ctx, owner, repo)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get repository: %w", err)
 	}
-	workCtx.Repository = repository
+	task.Repository = repository
 
 	// Get style guide
 	styleGuide, err := b.findStyleGuides(ctx, owner, repo)
 	if err != nil {
 		log.Printf("Warning: Could not find style guides: %v", err)
 	}
-	workCtx.StyleGuide = styleGuide
+	task.StyleGuide = styleGuide
 
 	// Get codebase info
 	codebaseInfo, err := b.analyzeCodebase(ctx, owner, repo)
 	if err != nil {
 		log.Printf("Warning: Could not analyze codebase: %v", err)
 	}
-	workCtx.CodebaseInfo = codebaseInfo
+	task.CodebaseInfo = codebaseInfo
 
 	// Get issue comments
 	if issue.Number != nil {
@@ -566,7 +566,7 @@ func (b *Bot) buildWorkContext(ctx context.Context, owner, repo string, issue *g
 		if err != nil {
 			log.Printf("Warning: Could not get issue comments: %v", err)
 		}
-		workCtx.IssueComments = comments
+		task.IssueComments = comments
 	}
 
 	// If there is a PR, get PR comments, reviews, and review comments
@@ -576,14 +576,14 @@ func (b *Bot) buildWorkContext(ctx context.Context, owner, repo string, issue *g
 		if err != nil {
 			return nil, fmt.Errorf("could not get pull request comments: %w", err)
 		}
-		workCtx.PRComments = comments
+		task.PRComments = comments
 
 		// Get reviews
 		reviews, err := b.getAllPRReviews(ctx, owner, repo, *pr.Number)
 		if err != nil {
 			return nil, fmt.Errorf("could not get PR reviews: %w", err)
 		}
-		workCtx.PRReviews = reviews
+		task.PRReviews = reviews
 
 		// Get PR review comment threads
 		reviewComments, err := b.getAllPRReviewComments(ctx, owner, repo, *pr.Number)
@@ -595,27 +595,27 @@ func (b *Bot) buildWorkContext(ctx context.Context, owner, repo string, issue *g
 			return nil, fmt.Errorf("could not organize review comments into threads: %w", err)
 		}
 
-		workCtx.PRReviewCommentThreads = reviewCommentThreads
+		task.PRReviewCommentThreads = reviewCommentThreads
 	}
 
 	// Get comments requiring responses
-	commentsReq, err := b.pickIssueCommentsRequiringResponse(ctx, owner, repo, workCtx.IssueComments, botUser)
+	commentsReq, err := b.pickIssueCommentsRequiringResponse(ctx, owner, repo, task.IssueComments, botUser)
 	if err != nil {
 		return nil, fmt.Errorf("could not get issue comments requiring response: %w", err)
 	}
-	prCommentsReq, err := b.pickIssueCommentsRequiringResponse(ctx, owner, repo, workCtx.PRComments, botUser)
+	prCommentsReq, err := b.pickIssueCommentsRequiringResponse(ctx, owner, repo, task.PRComments, botUser)
 	if err != nil {
 		return nil, fmt.Errorf("could not get PR comments requiring response: %w", err)
 	}
-	prReviewCommentsReq, err := b.pickPRReviewCommentsRequiringResponse(ctx, owner, repo, workCtx.PRReviewCommentThreads, botUser)
+	prReviewCommentsReq, err := b.pickPRReviewCommentsRequiringResponse(ctx, owner, repo, task.PRReviewCommentThreads, botUser)
 	if err != nil {
 		return nil, fmt.Errorf("could not get PR review comments requiring response: %w", err)
 	}
-	workCtx.IssueCommentsRequiringResponses = commentsReq
-	workCtx.PRCommentsRequiringResponses = prCommentsReq
-	workCtx.PRReviewCommentsRequiringResponses = prReviewCommentsReq
+	task.IssueCommentsRequiringResponses = commentsReq
+	task.PRCommentsRequiringResponses = prCommentsReq
+	task.PRReviewCommentsRequiringResponses = prReviewCommentsReq
 
-	return &workCtx, nil
+	return &task, nil
 }
 
 // getPullRequest returns a pull request by source branch and owner, if exactly one such pull request exists. If no such
@@ -855,11 +855,11 @@ func organizePRReviewCommentsIntoThreads(comments []*github.PullRequestComment) 
 var systemPrompt string
 
 // initConversation either constructs a new conversation or resumes a previous conversation
-func (b *Bot) initConversation(ctx context.Context, workCtx workContext, toolCtx *ToolContext) (*ClaudeConversation, *anthropic.Message, error) {
+func (b *Bot) initConversation(ctx context.Context, tsk task, toolCtx *ToolContext) (*ClaudeConversation, *anthropic.Message, error) {
 	model := anthropic.ModelClaudeSonnet4_0
 	var maxTokens int64 = 64000
 
-	conversationStr, err := b.resumableConversations.Get(strconv.Itoa(*workCtx.Issue.Number))
+	conversationStr, err := b.resumableConversations.Get(strconv.Itoa(*tsk.Issue.Number))
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to look up resumable conversation by issue number: %w", err)
 	}
@@ -871,7 +871,7 @@ func (b *Bot) initConversation(ctx context.Context, workCtx workContext, toolCtx
 			return nil, nil, fmt.Errorf("failed to resume conversation: %w", err)
 		}
 
-		err = b.rerunStatefulToolCalls(ctx, workCtx, toolCtx, conv)
+		err = b.rerunStatefulToolCalls(ctx, toolCtx, conv)
 		if err != nil {
 			return nil, nil, fmt.Errorf("failed to rerun stateful tool calls: %w", err)
 		}
@@ -903,7 +903,7 @@ func (b *Bot) initConversation(ctx context.Context, workCtx workContext, toolCtx
 		c := NewClaudeConversation(b.anthropicClient, model, maxTokens, tools, systemPrompt)
 
 		log.Printf("Sending initial message to AI")
-		promptPtr, err := BuildPrompt(workCtx)
+		promptPtr, err := BuildPrompt(tsk)
 		if err != nil {
 			return nil, nil, fmt.Errorf("failed to build prompt: %w", err)
 		}
@@ -917,7 +917,7 @@ func (b *Bot) initConversation(ctx context.Context, workCtx workContext, toolCtx
 	}
 }
 
-func (b *Bot) rerunStatefulToolCalls(ctx context.Context, workCtx workContext, toolCtx *ToolContext, conversation *ClaudeConversation) error {
+func (b *Bot) rerunStatefulToolCalls(ctx context.Context, toolCtx *ToolContext, conversation *ClaudeConversation) error {
 	for turnNumber, turn := range conversation.messages {
 		if turnNumber == len(conversation.messages)-1 {
 			// Skip the last message in the conversation, since this message was not previously handled

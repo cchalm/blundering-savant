@@ -84,8 +84,8 @@ type promptTemplateData struct {
 }
 
 // BuildPrompt generates the complete prompt for Claude based on the context
-func BuildPrompt(ctx workContext) (*string, error) {
-	data := buildTemplateData(ctx)
+func BuildPrompt(tsk task) (*string, error) {
+	data := buildTemplateData(tsk)
 
 	// Create template with helper functions
 	funcMap := template.FuncMap{
@@ -226,88 +226,88 @@ func derefOr[T any](ptr *T, defaultVal T) T {
 }
 
 // buildTemplateData creates the data structure for template rendering
-func buildTemplateData(ctx workContext) promptTemplateData {
+func buildTemplateData(tsk task) promptTemplateData {
 	data := promptTemplateData{}
 
 	// Basic repository and issue information
-	if ctx.Repository != nil && ctx.Repository.FullName != nil {
-		data.Repository = *ctx.Repository.FullName
+	if tsk.Repository != nil && tsk.Repository.FullName != nil {
+		data.Repository = *tsk.Repository.FullName
 	} else {
 		data.Repository = "unknown"
 	}
 
-	if ctx.CodebaseInfo != nil {
-		data.MainLanguage = ctx.CodebaseInfo.MainLanguage
+	if tsk.CodebaseInfo != nil {
+		data.MainLanguage = tsk.CodebaseInfo.MainLanguage
 	}
 	if data.MainLanguage == "" {
 		data.MainLanguage = "unknown"
 	}
 
-	if ctx.Issue != nil {
-		if ctx.Issue.Number != nil {
-			data.IssueNumber = *ctx.Issue.Number
+	if tsk.Issue != nil {
+		if tsk.Issue.Number != nil {
+			data.IssueNumber = *tsk.Issue.Number
 		}
-		if ctx.Issue.Title != nil {
-			data.IssueTitle = *ctx.Issue.Title
+		if tsk.Issue.Title != nil {
+			data.IssueTitle = *tsk.Issue.Title
 		} else {
 			data.IssueTitle = "No title"
 		}
-		if ctx.Issue.Body != nil {
-			data.IssueBody = *ctx.Issue.Body
+		if tsk.Issue.Body != nil {
+			data.IssueBody = *tsk.Issue.Body
 		} else {
 			data.IssueBody = "No description provided"
 		}
 	}
 
 	// Pull request information
-	if ctx.PullRequest != nil && ctx.PullRequest.Number != nil {
-		data.PullRequestNumber = ctx.PullRequest.Number
+	if tsk.PullRequest != nil && tsk.PullRequest.Number != nil {
+		data.PullRequestNumber = tsk.PullRequest.Number
 	}
 
 	// Style guide content
-	if ctx.StyleGuide != nil && ctx.StyleGuide.Content != "" {
-		data.StyleGuideContent = ctx.StyleGuide.Content
+	if tsk.StyleGuide != nil && tsk.StyleGuide.Content != "" {
+		data.StyleGuideContent = tsk.StyleGuide.Content
 	}
 
 	// Codebase information
-	if ctx.CodebaseInfo != nil {
-		if ctx.CodebaseInfo.ReadmeContent != "" {
-			data.ReadmeContent = truncateString(ctx.CodebaseInfo.ReadmeContent, 1000)
+	if tsk.CodebaseInfo != nil {
+		if tsk.CodebaseInfo.ReadmeContent != "" {
+			data.ReadmeContent = truncateString(tsk.CodebaseInfo.ReadmeContent, 1000)
 		}
 
-		if len(ctx.CodebaseInfo.FileTree) > 0 {
+		if len(tsk.CodebaseInfo.FileTree) > 0 {
 			maxFiles := 20
-			if len(ctx.CodebaseInfo.FileTree) > maxFiles {
-				data.FileTree = ctx.CodebaseInfo.FileTree[:maxFiles]
+			if len(tsk.CodebaseInfo.FileTree) > maxFiles {
+				data.FileTree = tsk.CodebaseInfo.FileTree[:maxFiles]
 				data.FileTreeTruncated = true
 			} else {
-				data.FileTree = ctx.CodebaseInfo.FileTree
+				data.FileTree = tsk.CodebaseInfo.FileTree
 			}
 		}
 	}
 
 	// Conversation history - convert GitHub types to template types
-	if len(ctx.IssueComments) > 0 || len(ctx.PRComments) > 0 || len(ctx.PRReviewCommentThreads) > 0 || len(ctx.PRReviews) > 0 {
+	if len(tsk.IssueComments) > 0 || len(tsk.PRComments) > 0 || len(tsk.PRReviewCommentThreads) > 0 || len(tsk.PRReviews) > 0 {
 		data.HasConversationHistory = true
-		data.BotUsername = ctx.BotUsername
+		data.BotUsername = tsk.BotUsername
 
 		// Convert issue comments
-		for _, comment := range ctx.IssueComments {
+		for _, comment := range tsk.IssueComments {
 			data.IssueComments = append(data.IssueComments, convertGitHubComment(comment))
 		}
 
 		// Convert PR comments
-		for _, comment := range ctx.PRComments {
+		for _, comment := range tsk.PRComments {
 			data.PRComments = append(data.PRComments, convertGitHubComment(comment))
 		}
 
 		// Convert PR reviews
-		for _, review := range ctx.PRReviews {
+		for _, review := range tsk.PRReviews {
 			data.PRReviews = append(data.PRReviews, convertGitHubReview(review))
 		}
 
 		// Convert PR review comment threads
-		for _, thread := range ctx.PRReviewCommentThreads {
+		for _, thread := range tsk.PRReviewCommentThreads {
 			var convertedThread reviewCommentThreadData
 			for _, comment := range thread {
 				convertedThread = append(convertedThread, convertGitHubReviewComment(comment))
@@ -317,15 +317,15 @@ func buildTemplateData(ctx workContext) promptTemplateData {
 	}
 
 	// Comments requiring responses - convert to template types
-	for _, comment := range ctx.IssueCommentsRequiringResponses {
+	for _, comment := range tsk.IssueCommentsRequiringResponses {
 		data.IssueCommentsRequiringResponses = append(data.IssueCommentsRequiringResponses, convertGitHubComment(comment))
 	}
 
-	for _, comment := range ctx.PRCommentsRequiringResponses {
+	for _, comment := range tsk.PRCommentsRequiringResponses {
 		data.PRCommentsRequiringResponses = append(data.PRCommentsRequiringResponses, convertGitHubComment(comment))
 	}
 
-	for _, comment := range ctx.PRReviewCommentsRequiringResponses {
+	for _, comment := range tsk.PRReviewCommentsRequiringResponses {
 		data.PRReviewCommentsRequiringResponses = append(data.PRReviewCommentsRequiringResponses, convertGitHubReviewComment(comment))
 	}
 

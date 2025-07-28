@@ -9,8 +9,8 @@ import (
 )
 
 func TestBuildPrompt_BasicTemplate(t *testing.T) {
-	// Create a minimal workContext for testing
-	ctx := workContext{
+	// Create a minimal task for testing
+	tsk := task{
 		Repository: &github.Repository{
 			FullName: github.Ptr("owner/repo"),
 		},
@@ -24,7 +24,7 @@ func TestBuildPrompt_BasicTemplate(t *testing.T) {
 		},
 	}
 
-	promptPtr, err := BuildPrompt(ctx)
+	promptPtr, err := BuildPrompt(tsk)
 	require.NoError(t, err)
 	prompt := *promptPtr
 
@@ -37,7 +37,7 @@ func TestBuildPrompt_BasicTemplate(t *testing.T) {
 }
 
 func TestBuildPrompt_WithPullRequest(t *testing.T) {
-	ctx := workContext{
+	tsk := task{
 		Repository: &github.Repository{
 			FullName: github.Ptr("owner/repo"),
 		},
@@ -54,7 +54,7 @@ func TestBuildPrompt_WithPullRequest(t *testing.T) {
 		},
 	}
 
-	promptPtr, err := BuildPrompt(ctx)
+	promptPtr, err := BuildPrompt(tsk)
 	require.NoError(t, err)
 	prompt := *promptPtr
 
@@ -62,7 +62,7 @@ func TestBuildPrompt_WithPullRequest(t *testing.T) {
 }
 
 func TestBuildPrompt_WithStyleGuide(t *testing.T) {
-	ctx := workContext{
+	tsk := task{
 		Repository: &github.Repository{
 			FullName: github.Ptr("owner/repo"),
 		},
@@ -79,7 +79,7 @@ func TestBuildPrompt_WithStyleGuide(t *testing.T) {
 		},
 	}
 
-	promptPtr, err := BuildPrompt(ctx)
+	promptPtr, err := BuildPrompt(tsk)
 	require.NoError(t, err)
 	prompt := *promptPtr
 
@@ -88,7 +88,7 @@ func TestBuildPrompt_WithStyleGuide(t *testing.T) {
 }
 
 func TestBuildPrompt_WithFileTree(t *testing.T) {
-	ctx := workContext{
+	tsk := task{
 		Repository: &github.Repository{
 			FullName: github.Ptr("owner/repo"),
 		},
@@ -103,7 +103,7 @@ func TestBuildPrompt_WithFileTree(t *testing.T) {
 		},
 	}
 
-	promptPtr, err := BuildPrompt(ctx)
+	promptPtr, err := BuildPrompt(tsk)
 	require.NoError(t, err)
 	prompt := *promptPtr
 
@@ -114,7 +114,7 @@ func TestBuildPrompt_WithFileTree(t *testing.T) {
 }
 
 func TestBuildPrompt_WithCommentsRequiringResponses(t *testing.T) {
-	ctx := workContext{
+	tsk := task{
 		Repository: &github.Repository{
 			FullName: github.Ptr("owner/repo"),
 		},
@@ -135,7 +135,7 @@ func TestBuildPrompt_WithCommentsRequiringResponses(t *testing.T) {
 		},
 	}
 
-	promptPtr, err := BuildPrompt(ctx)
+	promptPtr, err := BuildPrompt(tsk)
 	require.NoError(t, err)
 	prompt := *promptPtr
 
@@ -150,13 +150,13 @@ func TestBuildTemplateData_TruncatesLongFileTree(t *testing.T) {
 		fileTree[i] = fmt.Sprintf("file%d.go", i)
 	}
 
-	ctx := workContext{
+	tsk := task{
 		CodebaseInfo: &CodebaseInfo{
 			FileTree: fileTree,
 		},
 	}
 
-	data := buildTemplateData(ctx)
+	data := buildTemplateData(tsk)
 
 	require.Len(t, data.FileTree, 20)
 	require.True(t, data.FileTreeTruncated)
@@ -165,13 +165,13 @@ func TestBuildTemplateData_TruncatesLongFileTree(t *testing.T) {
 func TestBuildTemplateData_DoesNotTruncateShortFileTree(t *testing.T) {
 	fileTree := []string{"file1.go", "file2.go", "file3.go"}
 
-	ctx := workContext{
+	tsk := task{
 		CodebaseInfo: &CodebaseInfo{
 			FileTree: fileTree,
 		},
 	}
 
-	data := buildTemplateData(ctx)
+	data := buildTemplateData(tsk)
 
 	require.Len(t, data.FileTree, 3)
 	require.False(t, data.FileTreeTruncated)

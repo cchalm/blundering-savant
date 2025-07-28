@@ -36,7 +36,7 @@ type ToolContext struct {
 	FileSystem   *GitHubFileSystem
 	Owner        string
 	Repo         string
-	WorkContext  workContext
+	Task         task
 	GithubClient *github.Client
 }
 
@@ -443,7 +443,7 @@ func (t *CreatePullRequestTool) Run(ctx context.Context, block anthropic.ToolUse
 
 	// Determine target branch
 	var targetBranch string
-	if toolCtx.WorkContext.PullRequest == nil {
+	if toolCtx.Task.PullRequest == nil {
 		// Get default branch for new PRs
 		repository, _, err := toolCtx.GithubClient.Repositories.Get(ctx, toolCtx.Owner, toolCtx.Repo)
 		if err != nil {
@@ -453,8 +453,8 @@ func (t *CreatePullRequestTool) Run(ctx context.Context, block anthropic.ToolUse
 
 		// Add issue reference to PR body
 		issueNumber := 0
-		if toolCtx.WorkContext.Issue != nil && toolCtx.WorkContext.Issue.Number != nil {
-			issueNumber = *toolCtx.WorkContext.Issue.Number
+		if toolCtx.Task.Issue != nil && toolCtx.Task.Issue.Number != nil {
+			issueNumber = *toolCtx.Task.Issue.Number
 		}
 
 		input.PullRequestBody = fmt.Sprintf(`%s
@@ -465,8 +465,8 @@ Fixes #%d
 *This PR was created by the Blundering Savant bot.*`, input.PullRequestBody, issueNumber)
 	} else {
 		// For existing PRs, use the same target branch
-		if toolCtx.WorkContext.PullRequest != nil && toolCtx.WorkContext.PullRequest.Base != nil && toolCtx.WorkContext.PullRequest.Base.Ref != nil {
-			targetBranch = *toolCtx.WorkContext.PullRequest.Base.Ref
+		if toolCtx.Task.PullRequest != nil && toolCtx.Task.PullRequest.Base != nil && toolCtx.Task.PullRequest.Base.Ref != nil {
+			targetBranch = *toolCtx.Task.PullRequest.Base.Ref
 		} else {
 			return nil, fmt.Errorf("could not determine target branch for existing PR")
 		}
@@ -559,21 +559,21 @@ func (t *PostCommentTool) Run(ctx context.Context, block anthropic.ToolUseBlock,
 
 	switch input.CommentType {
 	case "issue":
-		if toolCtx.WorkContext.Issue != nil && toolCtx.WorkContext.Issue.Number != nil {
+		if toolCtx.Task.Issue != nil && toolCtx.Task.Issue.Number != nil {
 			comment := &github.IssueComment{
 				Body: github.Ptr(input.Body),
 			}
-			_, _, err = toolCtx.GithubClient.Issues.CreateComment(ctx, toolCtx.Owner, toolCtx.Repo, *toolCtx.WorkContext.Issue.Number, comment)
+			_, _, err = toolCtx.GithubClient.Issues.CreateComment(ctx, toolCtx.Owner, toolCtx.Repo, *toolCtx.Task.Issue.Number, comment)
 			if err != nil {
 				return nil, err
 			}
 		}
 	case "pr":
-		if toolCtx.WorkContext.PullRequest != nil && toolCtx.WorkContext.PullRequest.Number != nil {
+		if toolCtx.Task.PullRequest != nil && toolCtx.Task.PullRequest.Number != nil {
 			comment := &github.IssueComment{
 				Body: github.Ptr(input.Body),
 			}
-			_, _, err = toolCtx.GithubClient.Issues.CreateComment(ctx, toolCtx.Owner, toolCtx.Repo, *toolCtx.WorkContext.PullRequest.Number, comment)
+			_, _, err = toolCtx.GithubClient.Issues.CreateComment(ctx, toolCtx.Owner, toolCtx.Repo, *toolCtx.Task.PullRequest.Number, comment)
 			if err != nil {
 				return nil, err
 			}
@@ -586,7 +586,7 @@ func (t *PostCommentTool) Run(ctx context.Context, block anthropic.ToolUseBlock,
 			ctx,
 			toolCtx.Owner,
 			toolCtx.Repo,
-			*toolCtx.WorkContext.PullRequest.Number,
+			*toolCtx.Task.PullRequest.Number,
 			input.Body,
 			*input.InReplyTo,
 		)
@@ -765,7 +765,7 @@ func (t *RequestReviewTool) Run(ctx context.Context, block anthropic.ToolUseBloc
 		Reviewers: input.Usernames,
 	}
 
-	_, _, err = toolCtx.GithubClient.PullRequests.RequestReviewers(ctx, toolCtx.Owner, toolCtx.Repo, *toolCtx.WorkContext.PullRequest.Number, reviewRequest)
+	_, _, err = toolCtx.GithubClient.PullRequests.RequestReviewers(ctx, toolCtx.Owner, toolCtx.Repo, *toolCtx.Task.PullRequest.Number, reviewRequest)
 	return nil, err
 }
 
