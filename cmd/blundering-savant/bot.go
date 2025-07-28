@@ -78,8 +78,8 @@ type githubFileSystemFactory struct {
 	githubClient *github.Client
 }
 
-func (gfsf *githubFileSystemFactory) NewFileSystem(owner, repo, branch string) (*GitHubFileSystem, error) {
-	return NewGitHubFileSystem(gfsf.githubClient, owner, repo, branch)
+func (gfsf *githubFileSystemFactory) NewFileSystem(ctx context.Context, owner, repo, branch string) (*GitHubFileSystem, error) {
+	return NewGitHubFileSystem(ctx, gfsf.githubClient, owner, repo, branch)
 }
 
 // Run starts the main loop
@@ -242,7 +242,7 @@ func (b *Bot) processWithAI(ctx context.Context, task task, owner, repo string) 
 	maxIterations := 50
 
 	// fs may be nil if no branch name is given, e.g. if the issue is currently in the requirements clarification phase
-	fs, err := b.fileSystemFactory.NewFileSystem(owner, repo, task.WorkBranch)
+	fs, err := b.fileSystemFactory.NewFileSystem(ctx, owner, repo, task.WorkBranch)
 	if err != nil {
 		return fmt.Errorf("failed to create file system: %w", err)
 	}
