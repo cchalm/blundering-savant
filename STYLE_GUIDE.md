@@ -28,7 +28,7 @@ Keep these Go proverbs in mind:
 - Channels orchestrate; mutexes serialize
 - The bigger the interface, the weaker the abstraction
 - Make the zero value useful
-- interface{} says nothing
+- `interface{}` says nothing
 - Gofmt's style is no one's favorite, yet gofmt is everyone's favorite
 - A little copying is better than a little dependency
 - Syscall must always be guarded with build tags
@@ -302,8 +302,8 @@ func worker(ctx context.Context, jobs <-chan Job, results chan<- Result) {
 
 ### Test Coverage
 
-Aim loosely for %80 test coverage. The final 20% tends to produce a lot of false positives, which slows down subsequent
-development. Invest in static analysis instead.
+Aim loosely for %80 test coverage. The final 20% tends to produce false positives (test failures despite correct
+behavior), which slows down subsequent development. Invest in static analysis instead.
 
 Do not write tests for trivial functions:
 
