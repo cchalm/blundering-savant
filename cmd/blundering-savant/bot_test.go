@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strconv"
 	"testing"
 	"time"
@@ -139,36 +140,57 @@ func TestOrganizePRReviewCommentsIntoThreads_EmptyInput(t *testing.T) {
 
 // Test stubs and mocks for complex bot functionality tests
 
-// stubGitHubClient implements a minimal GitHub client interface for testing
+// stubGitHubClient implements a simple in-memory store for GitHub resources
+// It behaves as a simple store of prepopulated resources provided by the caller,
+// plus tracking functionality for modifications
 type stubGitHubClient struct {
-	// Getters return predetermined state
-	searchIssuesResults []*github.Issue
-	searchError         error
-	getRepoResult       *github.Repository
-	getRepoError        error
-	getUserResult       *github.User
-	getUserError        error
-	getRefResult        *github.Reference
-	getRefError         error
-	getContentsResult   *github.RepositoryContent
-	getContentsError    error
-	getIssueResult      *github.Issue
-	getIssueError       error
-	getPRResult         *github.PullRequest
-	getPRError          error
-	listCommentsResult  []*github.IssueComment
-	listCommentsError   error
-	listReviewsResult   []*github.PullRequestReview
-	listReviewsError    error
-	listReactionsResult []*github.Reaction
-	listReactionsError  error
+	// Predetermined resources
+	issues      map[string]*github.Issue  // key: "owner/repo/number"
+	users       map[string]*github.User   // key: login
+	repos       map[string]*github.Repository // key: "owner/repo"
+	refs        map[string]*github.Reference  // key: "owner/repo/ref"
+	contents    map[string]*github.RepositoryContent // key: "owner/repo/path"
+	comments    map[string][]*github.IssueComment // key: "owner/repo/number"
+	reviews     map[string][]*github.PullRequestReview // key: "owner/repo/number"
+	reactions   map[int64][]*github.Reaction // key: comment ID
+	pullRequests map[string]*github.PullRequest // key: "owner/repo/number"
 
-	// Setters track modifications for verification
-	labelsAdded         []string
-	labelsRemoved       []string
-	commentsCreated     []string
-	reactionsCreated    []reactionCall
-	refsCreated         []*github.Reference
+	// Error responses
+	searchError       error
+	getUserError      error
+	getRepoError      error
+	getRefError       error
+	getContentsError  error
+	listCommentsError error
+	listReviewsError  error
+	listReactionsError error
+
+	// Track modifications for verification
+	labelsAdded      []labelCall
+	labelsRemoved    []labelCall
+	commentsCreated  []commentCall
+	reactionsCreated []reactionCall
+	refsCreated      []refCall
+}
+
+type labelCall struct {
+	owner  string
+	repo   string
+	number int
+	label  string
+}
+
+type commentCall struct {
+	owner   string
+	repo    string
+	number  int
+	comment string
+}
+
+type refCall struct {
+	owner string
+	repo  string
+	ref   *github.Reference
 }
 
 type reactionCall struct {
@@ -176,70 +198,156 @@ type reactionCall struct {
 	reaction  string
 }
 
+// newStubGitHubClient creates a new stub with empty stores
+func newStubGitHubClient() *stubGitHubClient {
+	return &stubGitHubClient{
+		issues:       make(map[string]*github.Issue),
+		users:        make(map[string]*github.User),
+		repos:        make(map[string]*github.Repository),
+		refs:         make(map[string]*github.Reference),
+		contents:     make(map[string]*github.RepositoryContent),
+		comments:     make(map[string][]*github.IssueComment),
+		reviews:      make(map[string][]*github.PullRequestReview),
+		reactions:    make(map[int64][]*github.Reaction),
+		pullRequests: make(map[string]*github.PullRequest),
+	}
+}
+
 func (s *stubGitHubClient) SearchIssues(ctx context.Context, query string, opts *github.SearchOptions) (*github.IssuesSearchResult, *github.Response, error) {
-	return &github.IssuesSearchResult{Issues: s.searchIssuesResults}, nil, s.searchError
+	if s.searchError != nil {
+		return nil, nil, s.searchError
+	}
+	// Simple implementation - return all issues
+	var issues []*github.Issue
+	for _, issue := range s.issues {
+		issues = append(issues, issue)
+	}
+	return &github.IssuesSearchResult{Issues: issues}, nil, nil
 }
 
 func (s *stubGitHubClient) GetRepository(ctx context.Context, owner, repo string) (*github.Repository, *github.Response, error) {
-	return s.getRepoResult, nil, s.getRepoError
+	if s.getRepoError != nil {
+		return nil, nil, s.getRepoError
+	}
+	key := fmt.Sprintf("%s/%s", owner, repo)
+	if r, ok := s.repos[key]; ok {
+		return r, nil, nil
+	}
+	return nil, nil, fmt.Errorf("repository not found")
 }
 
 func (s *stubGitHubClient) GetUser(ctx context.Context, login string) (*github.User, *github.Response, error) {
-	return s.getUserResult, nil, s.getUserError
+	if s.getUserError != nil {
+		return nil, nil, s.getUserError
+	}
+	if user, ok := s.users[login]; ok {
+		return user, nil, nil
+	}
+	return nil, nil, fmt.Errorf("user not found")
 }
 
 func (s *stubGitHubClient) GetRef(ctx context.Context, owner, repo, ref string) (*github.Reference, *github.Response, error) {
-	return s.getRefResult, nil, s.getRefError
+	if s.getRefError != nil {
+		return nil, nil, s.getRefError
+	}
+	key := fmt.Sprintf("%s/%s/%s", owner, repo, ref)
+	if r, ok := s.refs[key]; ok {
+		return r, nil, nil
+	}
+	return nil, nil, fmt.Errorf("ref not found")
 }
 
 func (s *stubGitHubClient) CreateRef(ctx context.Context, owner, repo string, ref *github.Reference) (*github.Reference, *github.Response, error) {
-	s.refsCreated = append(s.refsCreated, ref)
+	s.refsCreated = append(s.refsCreated, refCall{owner: owner, repo: repo, ref: ref})
 	return ref, nil, nil
 }
 
 func (s *stubGitHubClient) GetContents(ctx context.Context, owner, repo, path string, opts *github.RepositoryContentGetOptions) (*github.RepositoryContent, []*github.RepositoryContent, *github.Response, error) {
-	return s.getContentsResult, nil, nil, s.getContentsError
+	if s.getContentsError != nil {
+		return nil, nil, nil, s.getContentsError
+	}
+	key := fmt.Sprintf("%s/%s/%s", owner, repo, path)
+	if content, ok := s.contents[key]; ok {
+		return &content, nil, nil, nil
+	}
+	return nil, nil, nil, fmt.Errorf("content not found")
 }
 
 func (s *stubGitHubClient) AddLabelsToIssue(ctx context.Context, owner, repo string, number int, labels []string) ([]*github.Label, *github.Response, error) {
-	s.labelsAdded = append(s.labelsAdded, labels...)
+	for _, label := range labels {
+		s.labelsAdded = append(s.labelsAdded, labelCall{owner: owner, repo: repo, number: number, label: label})
+	}
 	return nil, nil, nil
 }
 
 func (s *stubGitHubClient) RemoveLabelForIssue(ctx context.Context, owner, repo string, number int, label string) (*github.Response, error) {
-	s.labelsRemoved = append(s.labelsRemoved, label)
+	s.labelsRemoved = append(s.labelsRemoved, labelCall{owner: owner, repo: repo, number: number, label: label})
 	return nil, nil
 }
 
 func (s *stubGitHubClient) CreateComment(ctx context.Context, owner, repo string, number int, comment *github.IssueComment) (*github.IssueComment, *github.Response, error) {
 	if comment.Body != nil {
-		s.commentsCreated = append(s.commentsCreated, *comment.Body)
+		s.commentsCreated = append(s.commentsCreated, commentCall{owner: owner, repo: repo, number: number, comment: *comment.Body})
 	}
 	return comment, nil, nil
 }
 
 func (s *stubGitHubClient) GetIssue(ctx context.Context, owner, repo string, number int) (*github.Issue, *github.Response, error) {
-	return s.getIssueResult, nil, s.getIssueError
+	key := fmt.Sprintf("%s/%s/%d", owner, repo, number)
+	if issue, ok := s.issues[key]; ok {
+		return issue, nil, nil
+	}
+	return nil, nil, fmt.Errorf("issue not found")
 }
 
 func (s *stubGitHubClient) GetPullRequest(ctx context.Context, owner, repo string, number int) (*github.PullRequest, *github.Response, error) {
-	return s.getPRResult, nil, s.getPRError
+	key := fmt.Sprintf("%s/%s/%d", owner, repo, number)
+	if pr, ok := s.pullRequests[key]; ok {
+		return pr, nil, nil
+	}
+	return nil, nil, fmt.Errorf("pull request not found")
 }
 
 func (s *stubGitHubClient) ListComments(ctx context.Context, owner, repo string, number int, opts *github.IssueListCommentsOptions) ([]*github.IssueComment, *github.Response, error) {
-	return s.listCommentsResult, &github.Response{NextPage: 0}, s.listCommentsError
+	if s.listCommentsError != nil {
+		return nil, nil, s.listCommentsError
+	}
+	key := fmt.Sprintf("%s/%s/%d", owner, repo, number)
+	if comments, ok := s.comments[key]; ok {
+		return comments, &github.Response{NextPage: 0}, nil
+	}
+	return []*github.IssueComment{}, &github.Response{NextPage: 0}, nil
 }
 
 func (s *stubGitHubClient) ListReviews(ctx context.Context, owner, repo string, number int, opts *github.ListOptions) ([]*github.PullRequestReview, *github.Response, error) {
-	return s.listReviewsResult, nil, s.listReviewsError
+	if s.listReviewsError != nil {
+		return nil, nil, s.listReviewsError
+	}
+	key := fmt.Sprintf("%s/%s/%d", owner, repo, number)
+	if reviews, ok := s.reviews[key]; ok {
+		return reviews, nil, nil
+	}
+	return []*github.PullRequestReview{}, nil, nil
 }
 
 func (s *stubGitHubClient) ListIssueCommentReactions(ctx context.Context, owner, repo string, id int64, opts *github.ListOptions) ([]*github.Reaction, *github.Response, error) {
-	return s.listReactionsResult, nil, s.listReactionsError
+	if s.listReactionsError != nil {
+		return nil, nil, s.listReactionsError
+	}
+	if reactions, ok := s.reactions[id]; ok {
+		return reactions, nil, nil
+	}
+	return []*github.Reaction{}, nil, nil
 }
 
 func (s *stubGitHubClient) ListPullRequestCommentReactions(ctx context.Context, owner, repo string, id int64, opts *github.ListOptions) ([]*github.Reaction, *github.Response, error) {
-	return s.listReactionsResult, nil, s.listReactionsError
+	if s.listReactionsError != nil {
+		return nil, nil, s.listReactionsError
+	}
+	if reactions, ok := s.reactions[id]; ok {
+		return reactions, nil, nil
+	}
+	return []*github.Reaction{}, nil, nil
 }
 
 func (s *stubGitHubClient) CreateIssueCommentReaction(ctx context.Context, owner, repo string, id int64, reaction string) (*github.Reaction, *github.Response, error) {
@@ -248,6 +356,13 @@ func (s *stubGitHubClient) CreateIssueCommentReaction(ctx context.Context, owner
 }
 
 // Additional test stubs for more focused testing
+
+// Interface definitions for testing - these would normally be in the main code
+
+// FileSystemFactory interface for creating file systems
+type FileSystemFactory interface {
+	NewFileSystem(ctx context.Context, owner, repo, branch string) (*GitHubFileSystem, error)
+}
 
 // stubConversationHistoryStore implements ConversationHistoryStore for testing
 type stubConversationHistoryStore struct {
@@ -289,13 +404,13 @@ type stubFileSystemFactory struct {
 	error      error
 }
 
-func (f *stubFileSystemFactory) NewFileSystem(owner, repo, branch string) (*GitHubFileSystem, error) {
+func (f *stubFileSystemFactory) NewFileSystem(ctx context.Context, owner, repo, branch string) (*GitHubFileSystem, error) {
 	if f.error != nil {
 		return nil, f.error
 	}
-	// Return a real GitHubFileSystem with a stub client - this is a bit hacky but allows us to test the integration
+	// Return a stubbed filesystem instead of a real one for testing
 	return &GitHubFileSystem{
-		client:       nil, // We'll need to handle this carefully in tests
+		client:       nil, // We'll use the stub filesystem for testing
 		owner:        owner,
 		repo:         repo,
 		branch:       branch,
@@ -351,9 +466,18 @@ func (s *stubGitHubFileSystem) ClearChanges() {
 
 // stubToolRegistry provides a minimal tool registry for testing
 type stubToolRegistry struct {
-	toolResults map[string]*string
-	toolErrors  map[string]error
-	replayError error
+	toolResults       map[string]*string
+	toolErrors        map[string]error
+	replayError       error
+	processedToolUses []anthropic.ToolUseBlock
+	replayedToolUses  []anthropic.ToolUseBlock
+}
+
+func newStubToolRegistry() *stubToolRegistry {
+	return &stubToolRegistry{
+		toolResults: make(map[string]*string),
+		toolErrors:  make(map[string]error),
+	}
 }
 
 func (s *stubToolRegistry) GetAllToolParams() []anthropic.ToolParam {
@@ -368,6 +492,8 @@ func (s *stubToolRegistry) GetAllToolParams() []anthropic.ToolParam {
 }
 
 func (s *stubToolRegistry) ProcessToolUse(ctx context.Context, block anthropic.ToolUseBlock, toolCtx *ToolContext) (*anthropic.ToolResultBlockParam, error) {
+	s.processedToolUses = append(s.processedToolUses, block)
+	
 	if s.toolErrors != nil && s.toolErrors[block.Name] != nil {
 		return nil, s.toolErrors[block.Name]
 	}
@@ -387,6 +513,7 @@ func (s *stubToolRegistry) ProcessToolUse(ctx context.Context, block anthropic.T
 }
 
 func (s *stubToolRegistry) ReplayToolUse(ctx context.Context, block anthropic.ToolUseBlock, toolCtx *ToolContext) error {
+	s.replayedToolUses = append(s.replayedToolUses, block)
 	return s.replayError
 }
 
@@ -395,9 +522,9 @@ func (s *stubToolRegistry) ReplayToolUse(ctx context.Context, block anthropic.To
 func createTestBot(t *testing.T) (*Bot, *stubGitHubClient, *stubConversationHistoryStore, *stubToolRegistry) {
 	t.Helper()
 	
-	githubClient := &stubGitHubClient{}
+	githubClient := newStubGitHubClient()
 	conversationStore := &stubConversationHistoryStore{conversations: make(map[string]*conversationHistory)}
-	toolRegistry := &stubToolRegistry{}
+	toolRegistry := newStubToolRegistry()
 	fileSystemFactory := &stubFileSystemFactory{}
 	
 	bot := &Bot{
@@ -637,41 +764,42 @@ func TestIsBotComment_NilLogins(t *testing.T) {
 	require.False(t, result)
 }
 
-// Tests for resumable conversation functionality
+// Tests for resumable conversation functionality - conversation interruption and resumption
 
-func TestRerunStatefulToolCalls_EmptyConversation(t *testing.T) {
+func TestRerunStatefulToolCalls_ReplaysPreviousToolUses(t *testing.T) {
 	bot, _, _, toolRegistry := createTestBot(t)
 	
-	conversation := &ClaudeConversation{
-		messages: []conversationTurn{},
-	}
-	
-	toolCtx := &ToolContext{}
-	
-	err := bot.rerunStatefulToolCalls(context.Background(), toolCtx, conversation)
-	
-	require.NoError(t, err)
-}
-
-func TestRerunStatefulToolCalls_WithToolCalls(t *testing.T) {
-	bot, _, _, toolRegistry := createTestBot(t)
-	
-	// Create a conversation with tool calls
+	// Create a conversation with multiple tool calls in previous turns
 	conversation := &ClaudeConversation{
 		messages: []conversationTurn{
 			{
-				UserMessage: anthropic.NewUserMessage(anthropic.NewTextBlock("Test message")),
+				UserMessage: anthropic.NewUserMessage(anthropic.NewTextBlock("First message")),
 				Response: &anthropic.Message{
 					Content: []anthropic.ContentBlock{
 						{OfToolUse: anthropic.ToolUseBlock{
 							ID:   "tool-1",
 							Name: "str_replace_based_edit_tool",
 						}},
+						{OfToolUse: anthropic.ToolUseBlock{
+							ID:   "tool-2", 
+							Name: "commit_changes",
+						}},
 					},
 				},
 			},
 			{
-				UserMessage: anthropic.NewUserMessage(anthropic.NewTextBlock("Another message")),
+				UserMessage: anthropic.NewUserMessage(anthropic.NewTextBlock("Second message")),
+				Response: &anthropic.Message{
+					Content: []anthropic.ContentBlock{
+						{OfToolUse: anthropic.ToolUseBlock{
+							ID:   "tool-3",
+							Name: "post_comment",
+						}},
+					},
+				},
+			},
+			{
+				UserMessage: anthropic.NewUserMessage(anthropic.NewTextBlock("Current message")),
 				// No response yet - this is the current message being processed
 			},
 		},
@@ -682,9 +810,14 @@ func TestRerunStatefulToolCalls_WithToolCalls(t *testing.T) {
 	err := bot.rerunStatefulToolCalls(context.Background(), toolCtx, conversation)
 	
 	require.NoError(t, err)
+	// Verify that all previous tool uses were replayed, but not the current turn
+	require.Len(t, toolRegistry.replayedToolUses, 3)
+	require.Equal(t, "tool-1", toolRegistry.replayedToolUses[0].Name)
+	require.Equal(t, "tool-2", toolRegistry.replayedToolUses[1].Name) 
+	require.Equal(t, "tool-3", toolRegistry.replayedToolUses[2].Name)
 }
 
-func TestRerunStatefulToolCalls_ToolReplayError(t *testing.T) {
+func TestRerunStatefulToolCalls_ReplayError(t *testing.T) {
 	bot, _, _, toolRegistry := createTestBot(t)
 	
 	// Setup tool registry to return an error during replay
@@ -719,145 +852,190 @@ func TestRerunStatefulToolCalls_ToolReplayError(t *testing.T) {
 
 // Tests for conversation history store integration
 
-func TestConversationPersistence_SetAndGet(t *testing.T) {
-	_, _, conversationStore, _ := createTestBot(t)
+func TestConversationPersistenceForResumption(t *testing.T) {
+	bot, _, conversationStore, _ := createTestBot(t)
 	
-	history := conversationHistory{
-		SystemPrompt: "Test prompt",
+	// Test the complete conversation persistence cycle that enables resumption
+	originalHistory := conversationHistory{
+		SystemPrompt: "Test system prompt",
 		Messages: []conversationTurn{
 			{
-				UserMessage: anthropic.NewUserMessage(anthropic.NewTextBlock("Test message")),
+				UserMessage: anthropic.NewUserMessage(anthropic.NewTextBlock("Initial request")),
+				Response: &anthropic.Message{
+					StopReason: anthropic.StopReasonToolUse,
+					Content: []anthropic.ContentBlock{
+						{OfToolUse: anthropic.ToolUseBlock{ID: "tool-1", Name: "str_replace_based_edit_tool"}},
+					},
+				},
 			},
 		},
 	}
 	
-	// Store conversation
-	err := conversationStore.Set("test-key", history)
+	// Store conversation (simulating interruption)
+	err := conversationStore.Set("123", originalHistory)
 	require.NoError(t, err)
 	
-	// Retrieve conversation
-	retrieved, err := conversationStore.Get("test-key")
+	// Later, retrieve for resumption  
+	retrieved, err := conversationStore.Get("123")
 	require.NoError(t, err)
 	require.NotNil(t, retrieved)
-	require.Equal(t, "Test prompt", retrieved.SystemPrompt)
+	
+	// Verify the conversation can be resumed with complete state
+	require.Equal(t, originalHistory.SystemPrompt, retrieved.SystemPrompt)
 	require.Len(t, retrieved.Messages, 1)
-}
-
-func TestConversationPersistence_GetNonExistent(t *testing.T) {
-	_, _, conversationStore, _ := createTestBot(t)
+	require.NotNil(t, retrieved.Messages[0].Response)
+	require.Equal(t, anthropic.StopReasonToolUse, retrieved.Messages[0].Response.StopReason)
 	
-	// Try to retrieve non-existent conversation
-	retrieved, err := conversationStore.Get("non-existent")
+	// Test completion cleanup - delete after successful completion
+	err = conversationStore.Delete("123")
+	require.NoError(t, err)
+	
+	// Verify conversation is cleaned up
+	retrieved, err = conversationStore.Get("123")
 	require.NoError(t, err)
 	require.Nil(t, retrieved)
 }
 
-func TestConversationPersistence_Delete(t *testing.T) {
-	_, _, conversationStore, _ := createTestBot(t)
-	
-	history := conversationHistory{
-		SystemPrompt: "Test prompt",
-		Messages:     []conversationTurn{},
-	}
-	
-	// Store and then delete conversation
-	err := conversationStore.Set("test-key", history)
-	require.NoError(t, err)
-	
-	err = conversationStore.Delete("test-key")
-	require.NoError(t, err)
-	
-	// Verify it's gone
-	retrieved, err := conversationStore.Get("test-key")
-	require.NoError(t, err)
-	require.Nil(t, retrieved)
-}
+// Tests for multiple tool calls in one message - testing how the bot handles multiple tools
 
-// Tests for multiple tool use scenarios - focusing on tool result handling
-
-func TestProcessMultipleToolResults_Success(t *testing.T) {
-	bot, _, _, toolRegistry := createTestBot(t)
+func TestProcessWithAI_MultipleToolCallsInOneMessage(t *testing.T) {
+	bot, githubClient, conversationStore, toolRegistry := createTestBot(t)
 	
-	// Setup tool registry with multiple tools
-	toolRegistry.toolResults = map[string]*string{
-		"str_replace_based_edit_tool": github.String("File edited successfully"),
-		"commit_changes":              github.String(""),
-		"post_comment":                github.String(""),
-	}
-	
-	toolCtx := &ToolContext{
-		Task: task{
-			Issue: createTestIssue(123, "Test issue"),
-		},
-	}
-	
-	// Create multiple tool use blocks
-	toolUses := []anthropic.ToolUseBlock{
-		{ID: "tool-1", Name: "str_replace_based_edit_tool"},
-		{ID: "tool-2", Name: "commit_changes"},
-		{ID: "tool-3", Name: "post_comment"},
-	}
-	
-	// Process each tool use
-	for _, toolUse := range toolUses {
-		result, err := toolRegistry.ProcessToolUse(context.Background(), toolUse, toolCtx)
-		require.NoError(t, err)
-		require.NotNil(t, result)
-		require.Equal(t, toolUse.ID, result.ToolUseID)
-		require.False(t, result.IsError.Value())
-	}
-}
-
-func TestProcessMultipleToolResults_MixedSuccessAndError(t *testing.T) {
-	bot, _, _, toolRegistry := createTestBot(t)
-	
-	// Setup tool registry with one successful tool and one error
-	toolRegistry.toolResults = map[string]*string{
-		"str_replace_based_edit_tool": github.String("File edited successfully"),
-	}
-	toolRegistry.toolErrors = map[string]error{
-		"commit_changes": errors.New("commit failed"),
-	}
-	
-	toolCtx := &ToolContext{
-		Task: task{
-			Issue: createTestIssue(123, "Test issue"),
-		},
-	}
-	
-	// Test successful tool
-	successResult, err := toolRegistry.ProcessToolUse(
-		context.Background(),
-		anthropic.ToolUseBlock{ID: "tool-1", Name: "str_replace_based_edit_tool"},
-		toolCtx,
-	)
-	require.NoError(t, err)
-	require.NotNil(t, successResult)
-	require.False(t, successResult.IsError.Value())
-	
-	// Test failing tool
-	_, err = toolRegistry.ProcessToolUse(
-		context.Background(),
-		anthropic.ToolUseBlock{ID: "tool-2", Name: "commit_changes"},
-		toolCtx,
-	)
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "commit failed")
-}
-
-// Test processIssue business logic without complex dependencies
-
-func TestProcessIssue_LabelManagement(t *testing.T) {
-	bot, githubClient, _, _ := createTestBot(t)
-	
-	// Setup GitHub client expectations
-	githubClient.getUserResult = createTestUser("test-bot")
-	githubClient.getRepoResult = createTestRepository("main")
-	githubClient.getRefResult = &github.Reference{
+	// Setup GitHub client with required data  
+	githubClient.users["test-bot"] = createTestUser("test-bot")
+	githubClient.repos["owner/repo"] = createTestRepository("main")
+	githubClient.refs["owner/repo/refs/heads/main"] = &github.Reference{
 		Object: &github.GitObject{SHA: github.String("abc123")},
 	}
 	
-	// Setup file system factory to avoid nil pointer
+	// Create test task
+	testTask := task{
+		Issue:        createTestIssue(123, "Test issue"),
+		Repository:   createTestRepository("main"),
+		TargetBranch: "main",
+		WorkBranch:   "fix/issue-123-test-issue",
+		BotUsername:  "test-bot",
+	}
+	
+	// Mock a conversation with multiple tool calls in previous turns
+	conversationStore.conversations["123"] = &conversationHistory{
+		SystemPrompt: "Test system prompt",
+		Messages: []conversationTurn{
+			{
+				UserMessage: anthropic.NewUserMessage(anthropic.NewTextBlock("Please edit files and commit")),
+				Response: &anthropic.Message{
+					StopReason: anthropic.StopReasonToolUse,
+					Content: []anthropic.ContentBlock{
+						{OfText: anthropic.TextBlock{Text: "I'll help you with that."}},
+						{OfToolUse: anthropic.ToolUseBlock{ID: "tool-1", Name: "str_replace_based_edit_tool"}},
+						{OfToolUse: anthropic.ToolUseBlock{ID: "tool-2", Name: "commit_changes"}},
+					},
+				},
+			},
+			{
+				UserMessage: anthropic.NewUserMessage(
+					anthropic.ContentBlockParamUnion{OfToolResult: &anthropic.ToolResultBlockParam{
+						ToolUseID: "tool-1",
+						Content: []anthropic.ToolResultBlockParamContentUnion{
+							{OfText: &anthropic.TextBlockParam{Text: "File edited"}},
+						},
+					}},
+					anthropic.ContentBlockParamUnion{OfToolResult: &anthropic.ToolResultBlockParam{
+						ToolUseID: "tool-2",
+						Content: []anthropic.ToolResultBlockParamContentUnion{
+							{OfText: &anthropic.TextBlockParam{Text: "Changes committed"}},
+						},
+					}},
+				),
+				Response: &anthropic.Message{
+					StopReason: anthropic.StopReasonToolUse,
+					Content: []anthropic.ContentBlock{
+						{OfText: anthropic.TextBlock{Text: "Now I'll post a comment."}},
+						{OfToolUse: anthropic.ToolUseBlock{ID: "tool-3", Name: "post_comment"}},
+					},
+				},
+			},
+			{
+				UserMessage: anthropic.NewUserMessage(
+					anthropic.ContentBlockParamUnion{OfToolResult: &anthropic.ToolResultBlockParam{
+						ToolUseID: "tool-3",
+						Content: []anthropic.ToolResultBlockParamContentUnion{
+							{OfText: &anthropic.TextBlockParam{Text: "Comment posted"}},
+						},
+					}},
+				),
+				// No response - this is where conversation was interrupted
+			},
+		},
+	}
+	
+	// Process with AI - this tests how multiple tool calls across turns are replayed
+	err := bot.processWithAI(context.Background(), testTask, "owner", "repo")
+	
+	// Expect error due to missing Anthropic client, but verify replay logic worked
+	require.Error(t, err)
+	
+	// Verify that all tools from previous turns were replayed, but not the current turn
+	require.Len(t, toolRegistry.replayedToolUses, 3, "All tools from completed turns should be replayed") 
+	require.Equal(t, "str_replace_based_edit_tool", toolRegistry.replayedToolUses[0].Name)
+	require.Equal(t, "commit_changes", toolRegistry.replayedToolUses[1].Name)
+	require.Equal(t, "post_comment", toolRegistry.replayedToolUses[2].Name)
+}
+
+func TestToolRegistry_ProcessesExpectedTools(t *testing.T) {
+	_, _, _, toolRegistry := createTestBot(t)
+	
+	// Test that the tool registry can handle the expected tools
+	expectedTools := []string{
+		"str_replace_based_edit_tool",
+		"commit_changes", 
+		"create_pull_request",
+		"post_comment",
+		"add_reaction",
+		"request_review",
+	}
+	
+	toolCtx := &ToolContext{
+		Task: task{Issue: createTestIssue(123, "Test issue")},
+	}
+	
+	// Verify all expected tools can be processed
+	for _, toolName := range expectedTools {
+		toolUse := anthropic.ToolUseBlock{
+			ID:   fmt.Sprintf("test-%s", toolName),
+			Name: toolName,
+		}
+		
+		result, err := toolRegistry.ProcessToolUse(context.Background(), toolUse, toolCtx)
+		
+		// We expect no error for tool processing (even if individual tools might have errors)
+		require.NoError(t, err)
+		require.NotNil(t, result)
+		require.Equal(t, toolUse.ID, result.ToolUseID)
+	}
+	
+	// Verify all tools were tracked as processed
+	require.Len(t, toolRegistry.processedToolUses, len(expectedTools))
+	
+	// Verify tool names match expectations
+	for i, toolUse := range toolRegistry.processedToolUses {
+		require.Equal(t, expectedTools[i], toolUse.Name) 
+	}
+}
+
+// Test processIssue business logic - conversation interruption and resumption
+
+func TestProcessIssue_ConversationResumption(t *testing.T) {
+	bot, githubClient, conversationStore, toolRegistry := createTestBot(t)
+	
+	// Setup GitHub client with required data
+	githubClient.users["test-bot"] = createTestUser("test-bot")
+	githubClient.repos["owner/repo"] = createTestRepository("main")
+	githubClient.refs["owner/repo/refs/heads/main"] = &github.Reference{
+		Object: &github.GitObject{SHA: github.String("abc123")},
+	}
+	
+	// Setup file system factory
 	bot.fileSystemFactory = &stubFileSystemFactory{
 		fileSystem: &stubGitHubFileSystem{},
 	}
@@ -865,129 +1043,94 @@ func TestProcessIssue_LabelManagement(t *testing.T) {
 	// Create test issue
 	issue := createTestIssue(1, "Test Issue")
 	
-	// The actual GitHub client calls are complex to mock properly, so let's test
-	// the label management logic specifically by calling the helper methods directly
-	
-	ctx := context.Background()
-	
-	// Test that we would add the working label
-	// Note: This requires a more sophisticated GitHub client mock to test fully
-	// For now, we verify the label constants are properly defined
-	require.Equal(t, "bot-working", *LabelWorking.Name)
-	require.Equal(t, "bot-blocked", *LabelBlocked.Name)
-	require.Equal(t, "bot-turn", *LabelBotTurn.Name)
-	
-	// Test label descriptions exist
-	require.NotNil(t, LabelWorking.Description)
-	require.NotNil(t, LabelBlocked.Description)
-	require.NotNil(t, LabelBotTurn.Description)
-	
-	// Test label colors are valid hex colors (without # prefix)
-	require.Equal(t, "fbca04", *LabelWorking.Color)
-	require.Equal(t, "f03010", *LabelBlocked.Color)
-	require.Equal(t, "2020f0", *LabelBotTurn.Color)
-}
-
-// Tests for pickIssueCommentsRequiringResponse method
-
-func testPickIssueCommentsRequiringResponse(t *testing.T, comments []*github.IssueComment, botUser *github.User, botReactions map[int64]bool, expectedCount int) {
-	t.Helper()
-	
-	bot, githubClient, _, _ := createTestBot(t)
-	
-	// Setup reactions response based on botReactions map
-	githubClient.listReactionsResult = []*github.Reaction{}
-	if botUser != nil && botUser.Login != nil {
-		for commentID, hasReaction := range botReactions {
-			if hasReaction {
-				githubClient.listReactionsResult = append(githubClient.listReactionsResult, &github.Reaction{
-					User: botUser,
-				})
-			}
-		}
+	// Store a previous conversation that was interrupted
+	conversationStore.conversations["1"] = &conversationHistory{
+		SystemPrompt: "Test system prompt",
+		Messages: []conversationTurn{
+			{
+				UserMessage: anthropic.NewUserMessage(anthropic.NewTextBlock("Original request")),
+				Response: &anthropic.Message{
+					StopReason: anthropic.StopReasonToolUse,
+					Content: []anthropic.ContentBlock{
+						{OfToolUse: anthropic.ToolUseBlock{ID: "tool-1", Name: "str_replace_based_edit_tool"}},
+					},
+				},
+			},
+			{
+				UserMessage: anthropic.NewUserMessage(
+					anthropic.ContentBlockParamUnion{OfToolResult: &anthropic.ToolResultBlockParam{
+						ToolUseID: "tool-1",
+						Content: []anthropic.ToolResultBlockParamContentUnion{
+							{OfText: &anthropic.TextBlockParam{Text: "File edited"}},
+						},
+					}},
+				),
+				// No response - this is where the conversation was interrupted
+			},
+		},
 	}
 	
-	// Mock the GitHub client methods we need
 	ctx := context.Background()
 	
-	// Since pickIssueCommentsRequiringResponse calls GitHub API methods, we'd need
-	// to further mock the client. For this test, let's focus on the logic we can test
-	// without complex GitHub API mocking.
+	// Process the issue - this should attempt to resume the conversation
+	err := bot.processIssue(ctx, "owner", "repo", issue)
 	
-	// Verify the method exists and can be called (even if we can't test full functionality
-	// without a more sophisticated GitHub client mock)
-	result, err := bot.pickIssueCommentsRequiringResponse(ctx, "owner", "repo", comments, botUser)
+	// We expect an error due to missing Anthropic client, but verify resumption logic was triggered
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "failed to process with AI")
 	
-	// The actual assertion would depend on proper GitHub client mocking
-	// For now, we verify no panic occurs and the method signature is correct
-	require.NotNil(t, result)
-	require.NoError(t, err)
+	// Verify that the tool was replayed from the stored conversation
+	require.Len(t, toolRegistry.replayedToolUses, 1)
+	require.Equal(t, "str_replace_based_edit_tool", toolRegistry.replayedToolUses[0].Name)
 }
 
-func TestPickIssueCommentsRequiringResponse_EmptyComments(t *testing.T) {
-	testPickIssueCommentsRequiringResponse(t,
-		[]*github.IssueComment{},
-		createTestUser("test-bot"),
-		map[int64]bool{},
-		0,
-	)
-}
+// Tests for comment filtering logic - this tests non-trivial business logic
 
-func TestPickIssueCommentsRequiringResponse_BotOwnComments(t *testing.T) {
+func TestPickIssueCommentsRequiringResponse_FiltersCorrectly(t *testing.T) {
+	bot, githubClient, _, _ := createTestBot(t)
+	
 	botUser := createTestUser("test-bot")
+	otherUser := createTestUser("other-user")
+	
+	// Setup comments with mixed ownership
 	comments := []*github.IssueComment{
 		{
 			ID:   github.Int64(1),
 			User: botUser, // Bot's own comment - should be filtered out
 			Body: github.String("Bot comment"),
 		},
-	}
-	
-	testPickIssueCommentsRequiringResponse(t,
-		comments,
-		botUser,
-		map[int64]bool{},
-		0, // Expect 0 because bot's own comments are filtered out
-	)
-}
-
-func TestPickIssueCommentsRequiringResponse_MixedComments(t *testing.T) {
-	botUser := createTestUser("test-bot")
-	otherUser := createTestUser("other-user")
-	
-	comments := []*github.IssueComment{
-		{
-			ID:   github.Int64(1),
-			User: botUser, // Bot's own comment
-			Body: github.String("Bot comment"),
-		},
 		{
 			ID:   github.Int64(2),
-			User: otherUser, // Other user's comment
-			Body: github.String("User comment"),
+			User: otherUser, // Other user's comment, no bot reaction
+			Body: github.String("User comment needing response"),
+		},
+		{
+			ID:   github.Int64(3),
+			User: otherUser, // Other user's comment, bot already reacted
+			Body: github.String("User comment already handled"),
 		},
 	}
 	
-	testPickIssueCommentsRequiringResponse(t,
-		comments,
-		botUser,
-		map[int64]bool{
-			2: false, // No reaction to other user's comment
-		},
-		1, // Expect 1 comment requiring response
-	)
+	// Setup reactions - bot reacted to comment 3 but not 2
+	githubClient.reactions[3] = []*github.Reaction{
+		{User: botUser}, // Bot reacted to comment 3
+	}
+	
+	ctx := context.Background()
+	result, err := bot.pickIssueCommentsRequiringResponse(ctx, "owner", "repo", comments, botUser)
+	
+	require.NoError(t, err)
+	require.Len(t, result, 1, "Should return only comment 2 (not bot's own comment and not already reacted to)")
+	require.Equal(t, int64(2), *result[0].ID)
 }
 
-// Tests for processIssue error handling scenarios
+// Tests for processIssue error handling and label management
 
-func TestProcessIssue_GetUserError(t *testing.T) {
+func TestProcessIssue_ErrorHandling(t *testing.T) {
 	bot, githubClient, _, _ := createTestBot(t)
 	
 	// Setup GitHub client to return an error when getting bot user
 	githubClient.getUserError = errors.New("failed to get user")
-	
-	// Setup other required responses
-	githubClient.getRepoResult = createTestRepository("main")
 	
 	issue := createTestIssue(1, "Test Issue")
 	
@@ -995,132 +1138,104 @@ func TestProcessIssue_GetUserError(t *testing.T) {
 	
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "failed to get bot user")
+	
+	// Verify that the working label would have been removed and blocked label added on error
+	// (This tests the defer function's error handling logic)
+	require.Eventually(t, func() bool {
+		for _, call := range githubClient.labelsRemoved {
+			if call.label == "bot-working" {
+				return true
+			}
+		}
+		return false
+	}, time.Second, 10*time.Millisecond)
+	
+	require.Eventually(t, func() bool {
+		for _, call := range githubClient.labelsAdded {
+			if call.label == "bot-blocked" {
+				return true
+			}
+		}
+		return false
+	}, time.Second, 10*time.Millisecond)
 }
 
-func TestProcessIssue_GetTaskError(t *testing.T) {
-	bot, githubClient, _, _ := createTestBot(t)
-	
-	// Setup GitHub client responses
-	githubClient.getUserResult = createTestUser("test-bot")
-	githubClient.getRepoError = errors.New("failed to get repository")
-	
-	issue := createTestIssue(1, "Test Issue")
-	
-	err := bot.processIssue(context.Background(), "owner", "repo", issue)
-	
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "failed to build task context")
-}
+// Tests for conversation interruption and clean conversation completion
 
-// Tests for createBranch function
-
-func TestCreateBranch_Success(t *testing.T) {
-	githubClient := &stubGitHubClient{
-		getRefResult: &github.Reference{
-			Object: &github.GitObject{SHA: github.String("abc123")},
+func TestInitConversation_ResumesFromAssistantMessage(t *testing.T) {
+	bot, _, conversationStore, _ := createTestBot(t)
+	
+	// Store a conversation that was interrupted after an assistant response
+	conversationStore.conversations["123"] = &conversationHistory{
+		SystemPrompt: "Test system prompt",
+		Messages: []conversationTurn{
+			{
+				UserMessage: anthropic.NewUserMessage(anthropic.NewTextBlock("Please help me")),
+				Response: &anthropic.Message{
+					StopReason: anthropic.StopReasonEndTurn,
+					Content: []anthropic.ContentBlock{
+						{OfText: anthropic.TextBlock{Text: "I can help you with that."}},
+					},
+				},
+			},
 		},
 	}
 	
-	// Mock the GitHub client interface - this is tricky without interface definitions
-	// For now, we test that the function signature exists and can be called
-	// In a real implementation, we'd need proper GitHub client interface mocking
-	
-	err := createBranch(nil, "owner", "repo", "main", "feature-branch")
-	
-	// We expect an error because we passed nil client, but this verifies the function exists
-	require.Error(t, err)
-}
-
-// Tests for file system factory error handling
-
-func TestFileSystemFactory_CreationError(t *testing.T) {
-	factory := &stubFileSystemFactory{
-		error: errors.New("filesystem creation failed"),
-	}
-	
-	fs, err := factory.NewFileSystem("owner", "repo", "branch")
-	
-	require.Error(t, err)
-	require.Nil(t, fs)
-	require.Contains(t, err.Error(), "filesystem creation failed")
-}
-
-func TestFileSystemFactory_Success(t *testing.T) {
-	factory := &stubFileSystemFactory{
-		fileSystem: &stubGitHubFileSystem{
-			files: map[string]string{"test.txt": "content"},
-		},
-	}
-	
-	fs, err := factory.NewFileSystem("owner", "repo", "branch")
-	
-	require.NoError(t, err)
-	require.NotNil(t, fs)
-	require.Equal(t, "owner", fs.owner)
-	require.Equal(t, "repo", fs.repo)
-	require.Equal(t, "branch", fs.branch)
-}
-
-// Test conversation turn handling for resumption scenarios
-
-func TestConversationTurn_ResponseHandling(t *testing.T) {
-	// Test that conversation turns can store and retrieve responses properly
-	userMessage := anthropic.NewUserMessage(anthropic.NewTextBlock("Test message"))
-	response := &anthropic.Message{
-		StopReason: anthropic.StopReasonEndTurn,
-		Content: []anthropic.ContentBlock{
-			{OfText: anthropic.TextBlock{Text: "Test response"}},
-		},
-	}
-	
-	turn := conversationTurn{
-		UserMessage: userMessage,
-		Response:    response,
-	}
-	
-	require.NotNil(t, turn.UserMessage)
-	require.NotNil(t, turn.Response)
-	require.Equal(t, anthropic.StopReasonEndTurn, turn.Response.StopReason)
-}
-
-func TestConversationTurn_NoResponse(t *testing.T) {
-	// Test that conversation turns can represent user messages without responses (for resumption)
-	userMessage := anthropic.NewUserMessage(anthropic.NewTextBlock("Test message"))
-	
-	turn := conversationTurn{
-		UserMessage: userMessage,
-		Response:    nil,
-	}
-	
-	require.NotNil(t, turn.UserMessage)
-	require.Nil(t, turn.Response)
-}
-
-// Test tool context creation and usage
-
-func TestToolContext_Creation(t *testing.T) {
-	fileSystem := &GitHubFileSystem{
-		owner:  "test-owner",
-		repo:   "test-repo",
-		branch: "test-branch",
-	}
-	
-	task := task{
-		Issue:      createTestIssue(123, "Test issue"),
+	testTask := task{
+		Issue:      createTestIssue(123, "Test Issue"),
 		Repository: createTestRepository("main"),
 	}
 	
 	toolCtx := &ToolContext{
-		FileSystem:   fileSystem,
-		Owner:        "test-owner",
-		Repo:         "test-repo",
-		Task:         task,
-		GithubClient: nil,
+		Task: testTask,
 	}
 	
-	require.NotNil(t, toolCtx.FileSystem)
-	require.Equal(t, "test-owner", toolCtx.Owner)
-	require.Equal(t, "test-repo", toolCtx.Repo)
-	require.NotNil(t, toolCtx.Task.Issue)
-	require.Equal(t, 123, *toolCtx.Task.Issue.Number)
+	// Try to initialize/resume the conversation
+	_, response, err := bot.initConversation(context.Background(), testTask, toolCtx)
+	
+	// We expect this to fail due to missing Anthropic client
+	// But we can verify the conversation resumption logic was attempted
+	require.Error(t, err)
+	require.Nil(t, response)
+	require.Contains(t, err.Error(), "failed to resume conversation")
+}
+
+func TestInitConversation_ResumesFromUserMessage(t *testing.T) {
+	bot, _, conversationStore, _ := createTestBot(t)
+	
+	// Store a conversation that was interrupted after a user message (no assistant response yet)
+	conversationStore.conversations["123"] = &conversationHistory{
+		SystemPrompt: "Test system prompt", 
+		Messages: []conversationTurn{
+			{
+				UserMessage: anthropic.NewUserMessage(anthropic.NewTextBlock("Initial request")),
+				Response: &anthropic.Message{
+					StopReason: anthropic.StopReasonEndTurn,
+					Content: []anthropic.ContentBlock{
+						{OfText: anthropic.TextBlock{Text: "Got it."}},
+					},
+				},
+			},
+			{
+				UserMessage: anthropic.NewUserMessage(anthropic.NewTextBlock("Follow up request")),
+				Response:    nil, // No response yet - conversation was interrupted here
+			},
+		},
+	}
+	
+	testTask := task{
+		Issue:      createTestIssue(123, "Test Issue"),
+		Repository: createTestRepository("main"),
+	}
+	
+	toolCtx := &ToolContext{
+		Task: testTask,
+	}
+	
+	// Try to initialize/resume the conversation
+	_, response, err := bot.initConversation(context.Background(), testTask, toolCtx)
+	
+	// We expect this to fail due to missing Anthropic client
+	require.Error(t, err)
+	require.Nil(t, response)
 }
