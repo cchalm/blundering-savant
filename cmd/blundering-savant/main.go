@@ -1,8 +1,10 @@
 package main
 
 import (
+	"context"
 	"log"
 	"os"
+	"os/signal"
 	"time"
 
 	"github.com/joho/godotenv"
@@ -18,6 +20,19 @@ type Config struct {
 }
 
 func main() {
+	ctx, cancel := context.WithCancel(context.Background())
+
+	// Set up graceful shutdown on interrupt
+	interrupt := make(chan os.Signal, 1)
+	signal.Notify(interrupt, os.Interrupt)
+	go func() {
+		<-interrupt
+		log.Println("Interrupt signal detected, shutting down gracefully. Interrupt again to force shutdown")
+		cancel()
+		<-interrupt
+		log.Fatal("Forcing shutdown")
+	}()
+
 	// Load environment variables
 	if err := godotenv.Load(); err != nil {
 		log.Println("No .env file found, using environment variables")
@@ -42,10 +57,10 @@ func main() {
 		}
 	}
 
-	b := NewVirtualDeveloper(config)
+	b := NewBot(config)
 
 	log.Printf("Bot started. Monitoring issues for @%s every %s", config.GitHubUsername, config.CheckInterval)
 
 	// Start the main loop
-	b.Run()
+	b.Run(ctx)
 }

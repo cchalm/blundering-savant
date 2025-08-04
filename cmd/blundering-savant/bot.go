@@ -35,7 +35,8 @@ var (
 	}
 )
 
-// Bot represents our bot
+// Bot represents an AI developer capable of addressing GitHub issues by creating and updating PRs and responding to
+// comments from other users
 type Bot struct {
 	config                 *Config
 	githubClient           *github.Client
@@ -46,8 +47,7 @@ type Bot struct {
 	botName                string
 }
 
-// NewVirtualDeveloper creates a new instance
-func NewVirtualDeveloper(config *Config) *Bot {
+func NewBot(config *Config) *Bot {
 	ctx := context.Background()
 	ts := oauth2.StaticTokenSource(
 		&oauth2.Token{AccessToken: config.GitHubToken},
@@ -83,24 +83,29 @@ func (gfsf *githubFileSystemFactory) NewFileSystem(ctx context.Context, owner, r
 }
 
 // Run starts the main loop
-func (b *Bot) Run() {
-	ctx := context.Background()
-
+func (b *Bot) Run(ctx context.Context) error {
 	for {
-		b.checkAndProcessWorkItems(ctx)
+		err := b.checkAndProcessWorkItems(ctx)
+		if err != nil {
+			return err
+		}
+
 		log.Printf("Sleeping for %s", b.config.CheckInterval)
-		time.Sleep(b.config.CheckInterval)
+		select {
+		case <-time.After(b.config.CheckInterval):
+		case <-ctx.Done():
+			return context.Canceled
+		}
 	}
 }
 
 // checkAndProcessWorkItems checks for work items that need attention
-func (b *Bot) checkAndProcessWorkItems(ctx context.Context) {
+func (b *Bot) checkAndProcessWorkItems(ctx context.Context) error {
 	// Search for issues assigned to the bot that are not being worked on and are not blocked
 	query := fmt.Sprintf("assignee:%s is:issue is:open -label:%s -label:%s", b.config.GitHubUsername, *LabelWorking.Name, *LabelBlocked.Name)
 	result, _, err := b.githubClient.Search.Issues(ctx, query, nil)
 	if err != nil {
-		log.Printf("Error searching issues: %v", err)
-		return
+		return fmt.Errorf("error searching issues: %w", err)
 	}
 	log.Printf("Found %d issue(s)", len(result.Issues))
 
@@ -123,9 +128,11 @@ func (b *Bot) checkAndProcessWorkItems(ctx context.Context) {
 
 		// Process this issue
 		if err := b.processIssue(ctx, owner, repo, issue); err != nil {
-			log.Printf("Error processing issue #%d: %v", *issue.Number, err)
+			return fmt.Errorf("error processing issue #%d: %w", *issue.Number, err)
 		}
 	}
+
+	return nil
 }
 
 // processIssue processes a single issue
