@@ -14,10 +14,10 @@ func TestBuildPrompt_BasicTemplate(t *testing.T) {
 		Repository: &github.Repository{
 			FullName: github.Ptr("owner/repo"),
 		},
-		Issue: &github.Issue{
-			Number: github.Ptr(123),
-			Title:  github.Ptr("Test Issue"),
-			Body:   github.Ptr("This is a test issue description"),
+		Issue: githubIssue{
+			number: 123,
+			title:  "Test Issue",
+			body:   "This is a test issue description",
 		},
 		CodebaseInfo: &CodebaseInfo{
 			MainLanguage: "Go",
@@ -41,13 +41,13 @@ func TestBuildPrompt_WithPullRequest(t *testing.T) {
 		Repository: &github.Repository{
 			FullName: github.Ptr("owner/repo"),
 		},
-		Issue: &github.Issue{
-			Number: github.Ptr(123),
-			Title:  github.Ptr("Test Issue"),
-			Body:   github.Ptr("This is a test issue description"),
+		Issue: githubIssue{
+			number: 123,
+			title:  "Test Issue",
+			body:   "This is a test issue description",
 		},
-		PullRequest: &github.PullRequest{
-			Number: github.Ptr(456),
+		PullRequest: &githubPullRequest{
+			number: 456,
 		},
 		CodebaseInfo: &CodebaseInfo{
 			MainLanguage: "Go",
@@ -66,10 +66,10 @@ func TestBuildPrompt_WithStyleGuide(t *testing.T) {
 		Repository: &github.Repository{
 			FullName: github.Ptr("owner/repo"),
 		},
-		Issue: &github.Issue{
-			Number: github.Ptr(123),
-			Title:  github.Ptr("Test Issue"),
-			Body:   github.Ptr("Test description"),
+		Issue: githubIssue{
+			number: 123,
+			title:  "Test Issue",
+			body:   "Test description",
 		},
 		StyleGuide: &StyleGuide{
 			Guides: map[string]string{
@@ -95,10 +95,10 @@ func TestBuildPrompt_WithFileTree(t *testing.T) {
 		Repository: &github.Repository{
 			FullName: github.Ptr("owner/repo"),
 		},
-		Issue: &github.Issue{
-			Number: github.Ptr(123),
-			Title:  github.Ptr("Test Issue"),
-			Body:   github.Ptr("Test description"),
+		Issue: githubIssue{
+			number: 123,
+			title:  "Test Issue",
+			body:   "Test description",
 		},
 		CodebaseInfo: &CodebaseInfo{
 			MainLanguage: "Go",
@@ -121,10 +121,10 @@ func TestBuildPrompt_WithCommentsRequiringResponses(t *testing.T) {
 		Repository: &github.Repository{
 			FullName: github.Ptr("owner/repo"),
 		},
-		Issue: &github.Issue{
-			Number: github.Ptr(123),
-			Title:  github.Ptr("Test Issue"),
-			Body:   github.Ptr("Test description"),
+		Issue: githubIssue{
+			number: 123,
+			title:  "Test Issue",
+			body:   "Test description",
 		},
 		CodebaseInfo: &CodebaseInfo{
 			MainLanguage: "Go",

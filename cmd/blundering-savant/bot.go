@@ -6,15 +6,11 @@ import (
 	"fmt"
 	"log"
 	"net/http"
-	"slices"
 	"strconv"
-	"strings"
-	"time"
 
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/option"
 	"github.com/google/go-github/v72/github"
-	"golang.org/x/oauth2"
 )
 
 var (
@@ -38,7 +34,7 @@ var (
 // Bot represents an AI developer capable of addressing GitHub issues by creating and updating PRs and responding to
 // comments from other users
 type Bot struct {
-	config                 *Config
+	config                 Config
 	githubClient           *github.Client
 	anthropicClient        anthropic.Client
 	toolRegistry           *ToolRegistry
@@ -47,13 +43,7 @@ type Bot struct {
 	botName                string
 }
 
-func NewBot(config *Config) *Bot {
-	ctx := context.Background()
-	ts := oauth2.StaticTokenSource(
-		&oauth2.Token{AccessToken: config.GitHubToken},
-	)
-	tc := oauth2.NewClient(ctx, ts)
-	githubClient := github.NewClient(tc)
+func NewBot(config Config, githubClient *github.Client) *Bot {
 	rateLimitedHTTPClient := &http.Client{
 		Transport: WithRateLimiting(nil),
 	}
@@ -83,98 +73,53 @@ func (gfsf *githubFileSystemFactory) NewFileSystem(ctx context.Context, owner, r
 }
 
 // Run starts the main loop
-func (b *Bot) Run(ctx context.Context) error {
-	for {
-		err := b.checkAndProcessWorkItems(ctx)
+func (b *Bot) Run(ctx context.Context, tasks <-chan taskOrError) error {
+	for taskOrError := range tasks {
+		tsk, err := taskOrError.task, taskOrError.err
 		if err != nil {
 			return err
 		}
 
-		log.Printf("Sleeping for %s", b.config.CheckInterval)
-		select {
-		case <-time.After(b.config.CheckInterval):
-		case <-ctx.Done():
-			return context.Canceled
-		}
-	}
-}
-
-// checkAndProcessWorkItems checks for work items that need attention
-func (b *Bot) checkAndProcessWorkItems(ctx context.Context) error {
-	// Search for issues assigned to the bot that are not being worked on and are not blocked
-	query := fmt.Sprintf("assignee:%s is:issue is:open -label:%s -label:%s", b.config.GitHubUsername, *LabelWorking.Name, *LabelBlocked.Name)
-	result, _, err := b.githubClient.Search.Issues(ctx, query, nil)
-	if err != nil {
-		return fmt.Errorf("error searching issues: %w", err)
-	}
-	log.Printf("Found %d issue(s)", len(result.Issues))
-
-	for _, issue := range result.Issues {
-		if issue == nil || issue.RepositoryURL == nil || issue.Number == nil {
-			log.Print("Warning: unexpected nil")
-			continue
+		if err := b.addLabel(ctx, tsk.Issue, LabelWorking); err != nil {
+			log.Printf("failed to add in-progress label: %v", err)
 		}
 
-		// Extract owner and repo
-		parts := strings.Split(*issue.RepositoryURL, "/")
-		if len(parts) < 2 {
-			log.Print("Warning: failed to parse repo URL")
-			continue
+		err = b.doTask(ctx, tsk)
+
+		if err := b.removeLabel(ctx, tsk.Issue, LabelWorking); err != nil {
+			log.Printf("failed to remove in-progress label: %v", err)
 		}
-		owner := parts[len(parts)-2]
-		repo := parts[len(parts)-1]
 
-		log.Printf("Processing issue #%d in %s/%s: %s (%s)", *issue.Number, owner, repo, *issue.Title, *issue.URL)
+		if err != nil {
+			// Add blocked label if there is an error, to tell the bot not to pick up this item again
+			if err := b.addLabel(ctx, tsk.Issue, LabelBlocked); err != nil {
+				log.Printf("failed to add blocked label: %v", err)
+			}
+			// Post sanitized error comment
+			err = b.postIssueComment(ctx, tsk.Issue, "❌ I encountered an error while working on this issue.")
+			if err != nil {
+				log.Printf("failed to post error comment: %v", err)
+			}
+		}
 
-		// Process this issue
-		if err := b.processIssue(ctx, owner, repo, issue); err != nil {
-			return fmt.Errorf("error processing issue #%d: %w", *issue.Number, err)
+		if err != nil {
+			// Log the error and continue processing other tasks
+			log.Printf("failed to process task for issue %d: %v", tsk.Issue.number, err)
 		}
 	}
 
 	return nil
 }
 
-// processIssue processes a single issue
-func (b *Bot) processIssue(ctx context.Context, owner, repo string, issue *github.Issue) (err error) {
-	// Add in-progress label
-	if err := b.addLabel(ctx, owner, repo, *issue.Number, LabelWorking); err != nil {
-		return fmt.Errorf("failed to add in-progress label: %w", err)
-	}
-	// Remove in-progress label when done
-	defer func() {
-		b.removeLabel(ctx, owner, repo, *issue.Number, LabelWorking)
-		if err != nil {
-			// Add blocked label if there is an error, to tell the bot not to pick up this item again
-			b.addLabel(ctx, owner, repo, *issue.Number, LabelBlocked)
-			// Post sanitized error comment
-			b.postIssueComment(ctx, owner, repo, *issue.Number,
-				"❌ I encountered an error while working on this issue.")
-		}
-	}()
-
-	botUser, _, err := b.githubClient.Users.Get(ctx, b.botName)
-	if err != nil {
-		return fmt.Errorf("failed to get bot user: %w", err)
-	}
-
-	// Build task context
-	task, err := b.getTask(ctx, owner, repo, issue, botUser)
-	if err != nil {
-		return fmt.Errorf("failed to build task context: %w", err)
-	}
-
+func (b *Bot) doTask(ctx context.Context, tsk task) (err error) {
 	// Create work branch, if it doesn't already exist
-	err = createBranch(b.githubClient, owner, repo, task.TargetBranch, task.WorkBranch)
-
-	// Check if we need to do anything
-	if !b.needsAttention(*task) {
-		log.Printf("issue does not require attention")
-		return nil
+	err = b.createBranch(ctx, tsk)
+	if err != nil {
+		return fmt.Errorf("failed to create work branch '%s': %w", tsk.WorkBranch, err)
 	}
 
-	// Let AI decide what to do with text editor tool support
-	err = b.processWithAI(ctx, *task, owner, repo)
+	// Let the AI do its thing
+	err = b.processWithAI(ctx, tsk)
 	if err != nil {
 		return fmt.Errorf("failed to process with AI: %w", err)
 	}
@@ -182,60 +127,21 @@ func (b *Bot) processIssue(ctx context.Context, owner, repo string, issue *githu
 	return nil
 }
 
-func getWorkBranchName(issue *github.Issue) string {
-	var branchName string
-	if issue.Title != nil {
-		branchName = fmt.Sprintf("fix/issue-%d-%s", *issue.Number, sanitizeForBranchName(*issue.Title))
-	} else {
-		branchName = fmt.Sprintf("fix/issue-%d", *issue.Number)
-	}
-
-	return normalizeBranchName(branchName)
-}
-
-func sanitizeForBranchName(s string) string {
-	// Convert to lowercase and replace invalid characters
-	s = strings.ToLower(s)
-	s = strings.ReplaceAll(s, " ", "-")
-	s = strings.ReplaceAll(s, "_", "-")
-
-	// Remove invalid characters for git branch names
-	invalidChars := []string{"~", "^", ":", "?", "*", "[", "]", "\\", "..", "@{", "/.", "//"}
-	for _, char := range invalidChars {
-		s = strings.ReplaceAll(s, char, "")
-	}
-
-	return s
-}
-
-func normalizeBranchName(s string) string {
-	// Limit length
-	if len(s) > 70 {
-		s = s[:70]
-	}
-	// Clean up trailing separators
-	s = strings.Trim(s, "-.")
-
-	return s
-}
-
-// CreateBranch creates a new branch from the default branch
-func createBranch(client *github.Client, owner, repo, baseBranch, newBranch string) error {
-	ctx := context.Background()
-
+// CreateBranch creates a new branch from the default branch, if it doesn't already exist
+func (b *Bot) createBranch(ctx context.Context, tsk task) error {
 	// Get the base branch reference
-	baseRef, _, err := client.Git.GetRef(ctx, owner, repo, fmt.Sprintf("refs/heads/%s", baseBranch))
+	baseRef, _, err := b.githubClient.Git.GetRef(ctx, tsk.Issue.owner, tsk.Issue.repo, fmt.Sprintf("refs/heads/%s", tsk.TargetBranch))
 	if err != nil {
 		return fmt.Errorf("failed to get base branch ref: %w", err)
 	}
 
 	// Create new branch reference
 	newRef := &github.Reference{
-		Ref:    github.Ptr(fmt.Sprintf("refs/heads/%s", newBranch)),
+		Ref:    github.Ptr(fmt.Sprintf("refs/heads/%s", tsk.WorkBranch)),
 		Object: &github.GitObject{SHA: baseRef.Object.SHA},
 	}
 
-	_, _, err = client.Git.CreateRef(ctx, owner, repo, newRef)
+	_, _, err = b.githubClient.Git.CreateRef(ctx, tsk.Issue.owner, tsk.Issue.repo, newRef)
 	if err != nil {
 		return fmt.Errorf("failed to create branch: %w", err)
 	}
@@ -243,10 +149,10 @@ func createBranch(client *github.Client, owner, repo, baseBranch, newBranch stri
 	return nil
 }
 
-// TODO look into merging owner, repo, and branch into task
 // processWithAI handles the AI interaction with text editor tool support
-func (b *Bot) processWithAI(ctx context.Context, task task, owner, repo string) error {
+func (b *Bot) processWithAI(ctx context.Context, task task) error {
 	maxIterations := 50
+	owner, repo := task.Issue.owner, task.Issue.repo
 
 	// fs may be nil if no branch name is given, e.g. if the issue is currently in the requirements clarification phase
 	fs, err := b.fileSystemFactory.NewFileSystem(ctx, owner, repo, task.WorkBranch)
@@ -275,7 +181,7 @@ func (b *Bot) processWithAI(ctx context.Context, task task, owner, repo string) 
 			return fmt.Errorf("exceeded maximum iterations (%d) without completion", maxIterations)
 		}
 		// Persist the conversation history up to this point
-		b.resumableConversations.Set(strconv.Itoa(*task.Issue.Number), conversation.History())
+		b.resumableConversations.Set(strconv.Itoa(task.Issue.number), conversation.History())
 
 		log.Printf("Processing AI response, iteration: %d", i+1)
 		for _, contentBlock := range response.Content {
@@ -338,7 +244,7 @@ func (b *Bot) processWithAI(ctx context.Context, task task, owner, repo string) 
 	}
 
 	// We're done! Delete the conversation history so that we don't try to resume it later
-	err = b.resumableConversations.Delete(strconv.Itoa(*task.Issue.Number))
+	err = b.resumableConversations.Delete(strconv.Itoa(task.Issue.number))
 	if err != nil {
 		return fmt.Errorf("failed to delete conversation history for concluded conversation: %w", err)
 	}
@@ -349,158 +255,36 @@ func (b *Bot) processWithAI(ctx context.Context, task task, owner, repo string) 
 
 // Helper functions
 
-// needsAttention checks if a work item needs AI attention
-func (b *Bot) needsAttention(task task) bool {
-	if len(task.IssueComments) == 0 && task.PullRequest == nil {
-		// If there are no issue comments and no pull request, this is a brand new issue and requires our attention
-		return true
-	}
-	// Check if there are comments needing responses
-	if len(task.IssueCommentsRequiringResponses) > 0 ||
-		len(task.PRCommentsRequiringResponses) > 0 ||
-		len(task.PRReviewCommentsRequiringResponses) > 0 {
-
-		return true
-	}
-
-	return false
-}
-
-// GitHub API helper functions
-
-// pickIssueCommentsRequiringResponse gets regular issue/PR comments that haven't been reacted to by the bot
-func (b *Bot) pickIssueCommentsRequiringResponse(ctx context.Context, owner, repo string, comments []*github.IssueComment, botUser *github.User) ([]*github.IssueComment, error) {
-	var commentsRequiringResponse []*github.IssueComment
-
-	for _, comment := range comments {
-		// Skip if this is the bot's own comment
-		if b.isBotComment(comment.User, botUser) {
-			continue
-		}
-
-		// Check if bot has reacted to this comment
-		hasReacted, err := b.hasBotReactedToIssueComment(ctx, owner, repo, *comment.ID, botUser)
-		if err != nil {
-			return nil, fmt.Errorf("failed to check reactions for comment %d: %w", *comment.ID, err)
-		}
-		if hasReacted {
-			continue
-		}
-
-		commentsRequiringResponse = append(commentsRequiringResponse, comment)
-	}
-
-	return commentsRequiringResponse, nil
-}
-
-// getReviewComments gets PR review comments that haven't been replied to or reacted to by the bot
-func (b *Bot) pickPRReviewCommentsRequiringResponse(ctx context.Context, owner, repo string, commentThreads [][]*github.PullRequestComment, botUser *github.User) ([]*github.PullRequestComment, error) {
-	var commentsRequiringResponse []*github.PullRequestComment
-
-	for _, thread := range commentThreads {
-		// Look at every comment, not just the last comment in each thread. Multiple replies may have been added to a
-		// chain since the bot last looked at it, and for other contributors' peace of mind the bot should explicitly
-		// acknolwedge that it has seen every comment in the chain, even if it only replied to the last one
-		for _, comment := range thread {
-			// Skip if this is the bot's own comment
-			if b.isBotComment(comment.User, botUser) {
-				continue
-			}
-
-			// Check if bot has reacted to this comment
-			hasReacted, err := b.hasBotReactedToReviewComment(ctx, owner, repo, *comment.ID, botUser)
-			if err != nil {
-				return nil, fmt.Errorf("failed to check reactions for review comment %d: %w", *comment.ID, err)
-			}
-			if hasReacted {
-				continue
-			}
-
-			commentsRequiringResponse = append(commentsRequiringResponse, comment)
-		}
-	}
-
-	return commentsRequiringResponse, nil
-}
-
-// isBotComment checks if a comment was made by the bot
-func (b *Bot) isBotComment(commentUser, botUser *github.User) bool {
-	return commentUser != nil && botUser.Login != nil &&
-		commentUser.Login != nil && *commentUser.Login == *botUser.Login
-}
-
-// hasBotReactedToIssueComment checks if the bot has reacted to an issue comment
-func (b *Bot) hasBotReactedToIssueComment(ctx context.Context, owner, repo string, commentID int64, botUser *github.User) (bool, error) {
-	if botUser.Login == nil {
-		return false, nil
-	}
-
-	reactions, _, err := b.githubClient.Reactions.ListIssueCommentReactions(ctx, owner, repo, commentID, nil)
-	if err != nil {
-		return false, fmt.Errorf("failed to list reactions: %w", err)
-	}
-
-	for _, reaction := range reactions {
-		if reaction.User != nil && reaction.User.Login != nil &&
-			*reaction.User.Login == *botUser.Login {
-			return true, nil
-		}
-	}
-
-	return false, nil
-}
-
-// hasBotReactedToReviewComment checks if the bot has reacted to a review comment
-func (b *Bot) hasBotReactedToReviewComment(ctx context.Context, owner, repo string, commentID int64, botUser *github.User) (bool, error) {
-	if botUser.Login == nil {
-		return false, nil
-	}
-
-	reactions, _, err := b.githubClient.Reactions.ListPullRequestCommentReactions(ctx, owner, repo, commentID, nil)
-	if err != nil {
-		return false, fmt.Errorf("failed to list reactions: %w", err)
-	}
-
-	for _, reaction := range reactions {
-		if reaction.User != nil && reaction.User.Login != nil &&
-			*reaction.User.Login == *botUser.Login {
-			return true, nil
-		}
-	}
-
-	return false, nil
-}
-
-func (b *Bot) postIssueComment(ctx context.Context, owner, repo string, number int, body string) error {
+func (b *Bot) postIssueComment(ctx context.Context, issue githubIssue, body string) error {
 	comment := &github.IssueComment{
 		Body: github.Ptr(body),
 	}
-	_, _, err := b.githubClient.Issues.CreateComment(ctx, owner, repo, number, comment)
+	_, _, err := b.githubClient.Issues.CreateComment(ctx, issue.owner, issue.repo, issue.number, comment)
 	return err
 }
 
 // Label management functions
 
 // addLabel adds a label to an issue
-func (b *Bot) addLabel(ctx context.Context, owner, repo string, issueNumber int, label github.Label) error {
+func (b *Bot) addLabel(ctx context.Context, issue githubIssue, label github.Label) error {
 	if label.Name == nil {
 		return fmt.Errorf("cannot add label with nil name")
 	}
-	if err := b.ensureLabelExists(ctx, owner, repo, label); err != nil {
+	if err := b.ensureLabelExists(ctx, issue.owner, issue.repo, label); err != nil {
 		log.Printf("Warning: Could not ensure label exists: %v", err)
 	}
 
 	labels := []string{*label.Name}
-	_, _, err := b.githubClient.Issues.AddLabelsToIssue(ctx, owner, repo, issueNumber, labels)
+	_, _, err := b.githubClient.Issues.AddLabelsToIssue(ctx, issue.owner, issue.repo, issue.number, labels)
 	return err
 }
 
 // removeLabel removes a label from an issue
-func (b *Bot) removeLabel(ctx context.Context, owner, repo string, issueNumber int, label github.Label) error {
+func (b *Bot) removeLabel(ctx context.Context, issue githubIssue, label github.Label) error {
 	if label.Name == nil {
 		return fmt.Errorf("cannot remove label with nil name")
 	}
-	_, err := b.githubClient.Issues.RemoveLabelForIssue(ctx, owner, repo, issueNumber, *label.Name)
+	_, err := b.githubClient.Issues.RemoveLabelForIssue(ctx, issue.owner, issue.repo, issue.number, *label.Name)
 	return err
 }
 
@@ -518,344 +302,6 @@ func (b *Bot) ensureLabelExists(ctx context.Context, owner, repo string, label g
 	return err
 }
 
-// Context building functions
-
-// getTask fetches and returns the context for a work task
-func (b *Bot) getTask(ctx context.Context, owner, repo string, issue *github.Issue, botUser *github.User) (*task, error) {
-	task := task{
-		BotUsername: b.config.GitHubUsername,
-		Issue:       issue,
-	}
-
-	repoInfo, _, err := b.githubClient.Repositories.Get(ctx, owner, repo)
-	if err != nil {
-		return nil, fmt.Errorf("failed to fetch repo info: %w", err)
-	}
-	if repoInfo.DefaultBranch == nil {
-		return nil, fmt.Errorf("nil default branch")
-	}
-
-	task.TargetBranch = *repoInfo.DefaultBranch
-	// We'll use this branch name to implicitly link the issue and the pull request 1-1
-	task.WorkBranch = getWorkBranchName(issue)
-
-	// Get the existing pull request, if any
-	pr, err := getPullRequest(ctx, b.githubClient, owner, repo, task.WorkBranch, task.BotUsername)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get pull request for branch: %w", err)
-	}
-	task.PullRequest = pr
-
-	// Get repository
-	repository, _, err := b.githubClient.Repositories.Get(ctx, owner, repo)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get repository: %w", err)
-	}
-	task.Repository = repository
-
-	// Get style guide
-	styleGuide, err := b.findStyleGuides(ctx, owner, repo)
-	if err != nil {
-		log.Printf("Warning: Could not find style guides: %v", err)
-	}
-	task.StyleGuide = styleGuide
-
-	// Get codebase info
-	codebaseInfo, err := b.analyzeCodebase(ctx, owner, repo)
-	if err != nil {
-		log.Printf("Warning: Could not analyze codebase: %v", err)
-	}
-	task.CodebaseInfo = codebaseInfo
-
-	// Get issue comments
-	if issue.Number != nil {
-		comments, err := b.getAllIssueComments(ctx, owner, repo, *issue.Number)
-		if err != nil {
-			log.Printf("Warning: Could not get issue comments: %v", err)
-		}
-		task.IssueComments = comments
-	}
-
-	// If there is a PR, get PR comments, reviews, and review comments
-	if pr != nil && pr.Number != nil {
-		// Get PR comments
-		comments, err := b.getAllIssueComments(ctx, owner, repo, *pr.Number)
-		if err != nil {
-			return nil, fmt.Errorf("could not get pull request comments: %w", err)
-		}
-		task.PRComments = comments
-
-		// Get reviews
-		reviews, err := b.getAllPRReviews(ctx, owner, repo, *pr.Number)
-		if err != nil {
-			return nil, fmt.Errorf("could not get PR reviews: %w", err)
-		}
-		task.PRReviews = reviews
-
-		// Get PR review comment threads
-		reviewComments, err := b.getAllPRReviewComments(ctx, owner, repo, *pr.Number)
-		if err != nil {
-			return nil, fmt.Errorf("could not get PR comments: %w", err)
-		}
-		reviewCommentThreads, err := organizePRReviewCommentsIntoThreads(reviewComments)
-		if err != nil {
-			return nil, fmt.Errorf("could not organize review comments into threads: %w", err)
-		}
-
-		task.PRReviewCommentThreads = reviewCommentThreads
-	}
-
-	// Get comments requiring responses
-	commentsReq, err := b.pickIssueCommentsRequiringResponse(ctx, owner, repo, task.IssueComments, botUser)
-	if err != nil {
-		return nil, fmt.Errorf("could not get issue comments requiring response: %w", err)
-	}
-	prCommentsReq, err := b.pickIssueCommentsRequiringResponse(ctx, owner, repo, task.PRComments, botUser)
-	if err != nil {
-		return nil, fmt.Errorf("could not get PR comments requiring response: %w", err)
-	}
-	prReviewCommentsReq, err := b.pickPRReviewCommentsRequiringResponse(ctx, owner, repo, task.PRReviewCommentThreads, botUser)
-	if err != nil {
-		return nil, fmt.Errorf("could not get PR review comments requiring response: %w", err)
-	}
-	task.IssueCommentsRequiringResponses = commentsReq
-	task.PRCommentsRequiringResponses = prCommentsReq
-	task.PRReviewCommentsRequiringResponses = prReviewCommentsReq
-
-	return &task, nil
-}
-
-// getPullRequest returns a pull request by source branch and owner, if exactly one such pull request exists. If no such
-// pull request exists, returns (nil, nil). If more than one such pull request exists, returns an error
-func getPullRequest(ctx context.Context, githubClient *github.Client, owner, repo, branch, author string) (*github.PullRequest, error) {
-	query := fmt.Sprintf("type:pr repo:%s/%s head:%s author:%s", owner, repo, branch, author)
-
-	opts := &github.SearchOptions{
-		Sort:        "created",
-		Order:       "desc",
-		ListOptions: github.ListOptions{PerPage: 50},
-	}
-
-	result, _, err := githubClient.Search.Issues(ctx, query, opts)
-	if err != nil {
-		return nil, fmt.Errorf("failed to search issues: %w", err)
-	}
-	if len(result.Issues) > 1 {
-		return nil, fmt.Errorf("found %d pull requests, expected 0 or 1", len(result.Issues))
-	}
-
-	if len(result.Issues) == 0 {
-		// Expected, return nil
-		return nil, nil
-	}
-
-	issue := result.Issues[0]
-	pr, _, err := githubClient.PullRequests.Get(ctx, owner, repo, *issue.Number)
-	if err != nil {
-		return nil, fmt.Errorf("failed to fetch pull request: %w", err)
-	}
-
-	return pr, nil
-}
-
-// Repository analysis functions
-
-// findStyleGuides searches for coding style documentation
-func (b *Bot) findStyleGuides(ctx context.Context, owner, repo string) (*StyleGuide, error) {
-	styleGuide := &StyleGuide{
-		Guides: map[string]string{},
-	}
-
-	paths := []string{
-		"STYLE_GUIDE.md",
-		"CONTRIBUTING.md",
-		"STYLE.md",
-		"CODING_STYLE.md",
-		".github/CONTRIBUTING.md",
-		"docs/CONTRIBUTING.md",
-	}
-
-	for _, path := range paths {
-		content, _, _, err := b.githubClient.Repositories.GetContents(ctx, owner, repo, path, nil)
-		if err == nil && content != nil {
-			decodedContent, err := content.GetContent()
-			if err == nil {
-				styleGuide.Guides[path] = decodedContent
-			}
-		}
-	}
-
-	if len(styleGuide.Guides) == 0 {
-		return nil, fmt.Errorf("no style guides found")
-	}
-
-	return styleGuide, nil
-}
-
-// analyzeCodebase examines the repository structure
-func (b *Bot) analyzeCodebase(ctx context.Context, owner, repo string) (*CodebaseInfo, error) {
-	info := &CodebaseInfo{
-		PackageInfo: make(map[string]string),
-	}
-
-	// Get repository languages
-	languages, _, err := b.githubClient.Repositories.ListLanguages(ctx, owner, repo)
-	if err != nil {
-		return nil, fmt.Errorf("failed to list languages: %w", err)
-	}
-
-	// Find main language
-	maxBytes := 0
-	for lang, bytes := range languages {
-		if bytes > maxBytes {
-			maxBytes = bytes
-			info.MainLanguage = lang
-		}
-	}
-
-	// Get file tree
-	tree, _, err := b.githubClient.Git.GetTree(ctx, owner, repo, "HEAD", false)
-	if err != nil {
-		log.Printf("Warning: Could not get file tree: %v", err)
-	} else {
-		for _, entry := range tree.Entries {
-			if entry.Path != nil {
-				info.FileTree = append(info.FileTree, *entry.Path)
-			}
-		}
-	}
-
-	// Get README
-	readme, _, err := b.githubClient.Repositories.GetReadme(ctx, owner, repo, nil)
-	if err == nil {
-		content, err := readme.GetContent()
-		if err == nil {
-			info.ReadmeContent = content
-		}
-	}
-
-	return info, nil
-}
-
-// Comment retrieval functions
-
-// getAllIssueComments retrieves all comments on an issue
-func (b *Bot) getAllIssueComments(ctx context.Context, owner, repo string, issueNumber int) ([]*github.IssueComment, error) {
-	var allComments []*github.IssueComment
-
-	opts := &github.IssueListCommentsOptions{
-		Sort:      github.Ptr("created"),
-		Direction: github.Ptr("asc"),
-		ListOptions: github.ListOptions{
-			PerPage: 100,
-		},
-	}
-
-	for {
-		comments, resp, err := b.githubClient.Issues.ListComments(ctx, owner, repo, issueNumber, opts)
-		if err != nil {
-			return nil, err
-		}
-		allComments = append(allComments, comments...)
-
-		if resp.NextPage == 0 {
-			break
-		}
-		opts.Page = resp.NextPage
-	}
-
-	return allComments, nil
-}
-
-// getAllPRReviews retrieves all reviews on a PR, sorted chronologically
-func (b *Bot) getAllPRReviews(ctx context.Context, owner, repo string, prNumber int) ([]*github.PullRequestReview, error) {
-	var allReviews []*github.PullRequestReview
-
-	reviews, _, err := b.githubClient.PullRequests.ListReviews(ctx, owner, repo, prNumber, nil)
-	if err != nil {
-		return nil, err
-	}
-
-	for _, review := range reviews {
-		if review == nil {
-			continue
-		}
-
-		allReviews = append(allReviews, review)
-	}
-
-	return allReviews, nil
-}
-
-// getAllPRComments retrieves all review comments on a PR, sorted chronologically
-func (b *Bot) getAllPRReviewComments(ctx context.Context, owner, repo string, prNumber int) ([]*github.PullRequestComment, error) {
-	var allComments []*github.PullRequestComment
-
-	opts := &github.PullRequestListCommentsOptions{
-		Sort:      "created",
-		Direction: "asc",
-		ListOptions: github.ListOptions{
-			PerPage: 100,
-		},
-	}
-
-	for {
-		comments, resp, err := b.githubClient.PullRequests.ListComments(ctx, owner, repo, prNumber, opts)
-		if err != nil {
-			return nil, err
-		}
-
-		for _, comment := range comments {
-			if comment == nil || comment.ID == nil {
-				log.Println("Warning: comment or comment.ID unexpectedly nil")
-				continue
-			}
-
-			allComments = append(allComments, comment)
-		}
-
-		if resp.NextPage == 0 {
-			break
-		}
-		opts.Page = resp.NextPage
-	}
-
-	return allComments, nil
-}
-
-// organizePRReviewCommentsIntoThreads takes a list of pull request review comments and returns a list of comment
-// threads, where each thread is a list of comments that reply to the next
-func organizePRReviewCommentsIntoThreads(comments []*github.PullRequestComment) ([][]*github.PullRequestComment, error) {
-	// In github, it appears that all comments in a thread are replies to the top comment, rather than replies to each
-	// other in a chain. Therefore we will simply collect all replies to a comment and sort them by date to form a chain
-
-	// threadsMap maps a comment ID to that comment and all of its replies
-	threadsMap := map[int64][]*github.PullRequestComment{}
-
-	for _, comment := range comments {
-		if comment == nil || comment.ID == nil {
-			return nil, fmt.Errorf("unexpected nil comment or comment.ID")
-		}
-		if comment.InReplyTo == nil {
-			// Top-level comment
-			threadsMap[*comment.ID] = append(threadsMap[*comment.ID], comment)
-		} else {
-			// Reply comment
-			threadsMap[*comment.InReplyTo] = append(threadsMap[*comment.InReplyTo], comment)
-		}
-	}
-
-	threads := [][]*github.PullRequestComment{}
-	for _, thread := range threadsMap {
-		slices.SortFunc(thread, func(a, b *github.PullRequestComment) int {
-			return a.CreatedAt.Compare(b.CreatedAt.Time)
-		})
-		threads = append(threads, thread)
-	}
-
-	return threads, nil
-}
-
 // Utility functions
 
 //go:embed system_prompt.md
@@ -866,7 +312,7 @@ func (b *Bot) initConversation(ctx context.Context, tsk task, toolCtx *ToolConte
 	model := anthropic.ModelClaudeSonnet4_0
 	var maxTokens int64 = 64000
 
-	conversationStr, err := b.resumableConversations.Get(strconv.Itoa(*tsk.Issue.Number))
+	conversationStr, err := b.resumableConversations.Get(strconv.Itoa(tsk.Issue.number))
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to look up resumable conversation by issue number: %w", err)
 	}

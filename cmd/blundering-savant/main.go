@@ -7,7 +7,9 @@ import (
 	"os/signal"
 	"time"
 
+	"github.com/google/go-github/v72/github"
 	"github.com/joho/godotenv"
+	"golang.org/x/oauth2"
 )
 
 // Config holds the configuration for the bot
@@ -38,7 +40,7 @@ func main() {
 		log.Println("No .env file found, using environment variables")
 	}
 
-	config := &Config{
+	config := Config{
 		GitHubToken:               os.Getenv("GITHUB_TOKEN"),
 		AnthropicAPIKey:           os.Getenv("ANTHROPIC_API_KEY"),
 		GitHubUsername:            os.Getenv("GITHUB_USERNAME"),
@@ -57,10 +59,22 @@ func main() {
 		}
 	}
 
-	b := NewBot(config)
+	tokenSource := oauth2.StaticTokenSource(
+		&oauth2.Token{AccessToken: config.GitHubToken},
+	)
+	httpClient := oauth2.NewClient(ctx, tokenSource)
+	githubClient := github.NewClient(httpClient)
+
+	taskGen := newTaskGenerator(config, githubClient)
+	b := NewBot(config, githubClient)
 
 	log.Printf("Bot started. Monitoring issues for @%s every %s", config.GitHubUsername, config.CheckInterval)
 
-	// Start the main loop
-	b.Run(ctx)
+	// Start generating tasks asynchronously
+	tasks := taskGen.generate(ctx)
+	// Start the bot, which will consume tasks. This is a synchronous call
+	err := b.Run(ctx, tasks)
+	if err != nil {
+		log.Fatalf("Bot encountered an error: %v", err)
+	}
 }

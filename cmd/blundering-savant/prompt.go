@@ -243,25 +243,13 @@ func buildTemplateData(tsk task) promptTemplateData {
 		data.MainLanguage = "unknown"
 	}
 
-	if tsk.Issue != nil {
-		if tsk.Issue.Number != nil {
-			data.IssueNumber = *tsk.Issue.Number
-		}
-		if tsk.Issue.Title != nil {
-			data.IssueTitle = *tsk.Issue.Title
-		} else {
-			data.IssueTitle = "No title"
-		}
-		if tsk.Issue.Body != nil {
-			data.IssueBody = *tsk.Issue.Body
-		} else {
-			data.IssueBody = "No description provided"
-		}
-	}
+	data.IssueNumber = tsk.Issue.number
+	data.IssueTitle = tsk.Issue.title
+	data.IssueBody = tsk.Issue.body
 
 	// Pull request information
-	if tsk.PullRequest != nil && tsk.PullRequest.Number != nil {
-		data.PullRequestNumber = tsk.PullRequest.Number
+	if tsk.PullRequest != nil {
+		data.PullRequestNumber = &tsk.PullRequest.number
 	}
 
 	// Style guides
