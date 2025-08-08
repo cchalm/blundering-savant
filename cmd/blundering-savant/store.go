@@ -22,8 +22,8 @@ type FileSystemConversationHistoryStore struct {
 	dir string // The directory keys will be relative to
 }
 
-func (fskvs FileSystemConversationHistoryStore) Get(key string) (*conversationHistory, error) {
-	path := path.Join(fskvs.dir, key)
+func (fschv FileSystemConversationHistoryStore) Get(key string) (*conversationHistory, error) {
+	path := path.Join(fschv.dir, key)
 	b, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
 		// The file doesn't exist so nothing is stored at this key
@@ -39,12 +39,12 @@ func (fskvs FileSystemConversationHistoryStore) Get(key string) (*conversationHi
 	return &value, nil
 }
 
-func (fskvs FileSystemConversationHistoryStore) Set(key string, value conversationHistory) error {
+func (fschv FileSystemConversationHistoryStore) Set(key string, value conversationHistory) error {
 	b, err := json.Marshal(value)
 	if err != nil {
 		return fmt.Errorf("failed to marshal conversation history: %w", err)
 	}
-	path := path.Join(fskvs.dir, key)
+	path := path.Join(fschv.dir, key)
 	err = os.WriteFile(path, b, 0666)
 	if err != nil {
 		return fmt.Errorf("failed to write file: %w", err)
@@ -52,8 +52,8 @@ func (fskvs FileSystemConversationHistoryStore) Set(key string, value conversati
 	return nil
 }
 
-func (fskvs FileSystemConversationHistoryStore) Delete(key string) error {
-	path := path.Join(fskvs.dir, key)
+func (fschv FileSystemConversationHistoryStore) Delete(key string) error {
+	path := path.Join(fschv.dir, key)
 	err := os.Remove(path)
 	if err != nil {
 		return fmt.Errorf("failed to delete file: %w", err)
