@@ -11,7 +11,7 @@ import (
 )
 
 var (
-	ErrFileNotFound error = fmt.Errorf("file not found")
+// ErrFileNotFound error = fmt.Errorf("file not found")
 )
 
 // GitHubFileSystem implements file edits via the GitHub API. It maintains a working tree in memory and can commit

@@ -33,9 +33,7 @@ type AnthropicTool interface {
 
 // ToolContext provides context needed by tools during execution
 type ToolContext struct {
-	FileSystem   *GitHubFileSystem
-	Owner        string
-	Repo         string
+	Workspace    Workspace
 	Task         task
 	GithubClient *github.Client
 }
@@ -135,13 +133,13 @@ func (t *TextEditorTool) run(ctx context.Context, block anthropic.ToolUseBlock, 
 			// No side effects to replay
 			return nil, nil
 		}
-		result, err = t.executeView(ctx, input, toolCtx.FileSystem)
+		result, err = t.executeView(ctx, input, toolCtx.Workspace)
 	case "str_replace":
-		result, err = t.executeStrReplace(ctx, input, toolCtx.FileSystem)
+		result, err = t.executeStrReplace(ctx, input, toolCtx.Workspace)
 	case "create":
-		result, err = t.executeCreate(ctx, input, toolCtx.FileSystem)
+		result, err = t.executeCreate(ctx, input, toolCtx.Workspace)
 	case "insert":
-		result, err = t.executeInsert(ctx, input, toolCtx.FileSystem)
+		result, err = t.executeInsert(ctx, input, toolCtx.Workspace)
 	case "undo_edit":
 		result = ""
 		err = ToolInputError{fmt.Errorf("undo_edit not supported")}
@@ -157,18 +155,18 @@ func (t *TextEditorTool) run(ctx context.Context, block anthropic.ToolUseBlock, 
 }
 
 // Implementation methods for each command
-func (t *TextEditorTool) executeView(ctx context.Context, input *TextEditorInput, fs *GitHubFileSystem) (string, error) {
+func (t *TextEditorTool) executeView(ctx context.Context, input *TextEditorInput, fs FileSystem) (string, error) {
 	if fs == nil {
 		return "", fmt.Errorf("file system not initialized")
 	}
 
-	isDir, err := fs.IsDirectory(ctx, input.Path)
+	isDir, err := fs.IsDir(ctx, input.Path)
 	if err != nil {
 		return "", fmt.Errorf("error checking path: %w", err)
 	}
 
 	if isDir {
-		files, err := fs.ListDirectory(ctx, input.Path)
+		files, err := fs.ListDir(ctx, input.Path)
 		if err != nil {
 			return "", fmt.Errorf("error listing directory: %w", err)
 		}
@@ -180,7 +178,7 @@ func (t *TextEditorTool) executeView(ctx context.Context, input *TextEditorInput
 		return result, nil
 	}
 
-	content, err := fs.ReadFile(ctx, input.Path)
+	content, err := fs.Read(ctx, input.Path)
 	if errors.Is(err, ErrFileNotFound) {
 		return "", ToolInputError{err}
 	} else if err != nil {
@@ -218,8 +216,8 @@ func (t *TextEditorTool) executeView(ctx context.Context, input *TextEditorInput
 	return result.String(), nil
 }
 
-func (t *TextEditorTool) executeStrReplace(ctx context.Context, input *TextEditorInput, fs *GitHubFileSystem) (string, error) {
-	content, err := fs.ReadFile(ctx, input.Path)
+func (t *TextEditorTool) executeStrReplace(ctx context.Context, input *TextEditorInput, fs FileSystem) (string, error) {
+	content, err := fs.Read(ctx, input.Path)
 	if errors.Is(err, ErrFileNotFound) {
 		return "", ToolInputError{err}
 	} else if err != nil {
@@ -235,7 +233,7 @@ func (t *TextEditorTool) executeStrReplace(ctx context.Context, input *TextEdito
 	}
 
 	newContent := strings.Replace(content, input.OldStr, input.NewStr, 1)
-	err = fs.WriteFile(input.Path, newContent)
+	err = fs.Write(ctx, input.Path, newContent)
 	if err != nil {
 		return "", fmt.Errorf("error writing file: %w", err)
 	}
@@ -243,7 +241,7 @@ func (t *TextEditorTool) executeStrReplace(ctx context.Context, input *TextEdito
 	return fmt.Sprintf("Successfully replaced text in %s", input.Path), nil
 }
 
-func (t *TextEditorTool) executeCreate(ctx context.Context, input *TextEditorInput, fs *GitHubFileSystem) (string, error) {
+func (t *TextEditorTool) executeCreate(ctx context.Context, input *TextEditorInput, fs FileSystem) (string, error) {
 	exists, err := fs.FileExists(ctx, input.Path)
 	if err != nil {
 		return "", fmt.Errorf("error checking file existence: %w", err)
@@ -252,7 +250,7 @@ func (t *TextEditorTool) executeCreate(ctx context.Context, input *TextEditorInp
 		return "", fmt.Errorf("file already exists: %s", input.Path)
 	}
 
-	err = fs.WriteFile(input.Path, input.FileText)
+	err = fs.Write(ctx, input.Path, input.FileText)
 	if err != nil {
 		return "", fmt.Errorf("error creating file: %w", err)
 	}
@@ -260,8 +258,8 @@ func (t *TextEditorTool) executeCreate(ctx context.Context, input *TextEditorInp
 	return fmt.Sprintf("Successfully created file %s", input.Path), nil
 }
 
-func (t *TextEditorTool) executeInsert(ctx context.Context, input *TextEditorInput, fs *GitHubFileSystem) (string, error) {
-	content, err := fs.ReadFile(ctx, input.Path)
+func (t *TextEditorTool) executeInsert(ctx context.Context, input *TextEditorInput, fs FileSystem) (string, error) {
+	content, err := fs.Read(ctx, input.Path)
 	if errors.Is(err, ErrFileNotFound) {
 		return "", ToolInputError{err}
 	} else if err != nil {
@@ -288,7 +286,7 @@ func (t *TextEditorTool) executeInsert(ctx context.Context, input *TextEditorInp
 	}
 
 	newContent := strings.Join(result, "\n")
-	err = fs.WriteFile(input.Path, newContent)
+	err = fs.Write(ctx, input.Path, newContent)
 	if err != nil {
 		return "", fmt.Errorf("error writing file: %w", err)
 	}
@@ -349,21 +347,17 @@ func (t *CommitChangesTool) Run(ctx context.Context, block anthropic.ToolUseBloc
 		return nil, fmt.Errorf("error parsing input: %w", err)
 	}
 
-	if toolCtx.FileSystem == nil {
-		return nil, fmt.Errorf("file system not initialized")
-	}
-
 	if input.CommitMessage == "" {
 		return nil, ToolInputError{fmt.Errorf("commit_message is required")}
 	}
 
 	// Check if there are changes to commit
-	if !toolCtx.FileSystem.HasChanges() {
+	if !toolCtx.Workspace.HasChanges(ctx) {
 		return nil, fmt.Errorf("no changes to commit")
 	}
 
 	// Commit the changes
-	_, err = toolCtx.FileSystem.CommitChanges(ctx, input.CommitMessage)
+	err = toolCtx.Workspace.PublishChanges(ctx, input.CommitMessage)
 	if err != nil {
 		return nil, fmt.Errorf("failed to commit changes: %w", err)
 	}
@@ -373,7 +367,7 @@ func (t *CommitChangesTool) Run(ctx context.Context, block anthropic.ToolUseBloc
 
 func (t *CommitChangesTool) Replay(ctx context.Context, block anthropic.ToolUseBlock, toolCtx *ToolContext) error {
 	// Since all prior replayed file changes were persisted remotely by this commit call, we must clear them
-	toolCtx.FileSystem.ClearChanges()
+	toolCtx.Workspace.ClearChanges(ctx)
 	return nil
 }
 
@@ -435,10 +429,6 @@ func (t *CreatePullRequestTool) Run(ctx context.Context, block anthropic.ToolUse
 		return nil, fmt.Errorf("error parsing input: %w", err)
 	}
 
-	if toolCtx.FileSystem == nil {
-		return nil, fmt.Errorf("file system not initialized")
-	}
-
 	if input.PullRequestTitle == "" {
 		return nil, ToolInputError{fmt.Errorf("pull_request_title is required")}
 	}
@@ -451,7 +441,7 @@ func (t *CreatePullRequestTool) Run(ctx context.Context, block anthropic.ToolUse
 	var targetBranch string
 	if toolCtx.Task.PullRequest == nil {
 		// Get default branch for new PRs
-		repository, _, err := toolCtx.GithubClient.Repositories.Get(ctx, toolCtx.Owner, toolCtx.Repo)
+		repository, _, err := toolCtx.GithubClient.Repositories.Get(ctx, toolCtx.Task.Issue.owner, toolCtx.Task.Issue.repo)
 		if err != nil {
 			return nil, fmt.Errorf("failed to get repository: %w", err)
 		}
@@ -561,7 +551,7 @@ func (t *PostCommentTool) Run(ctx context.Context, block anthropic.ToolUseBlock,
 		comment := &github.IssueComment{
 			Body: github.Ptr(input.Body),
 		}
-		_, _, err = toolCtx.GithubClient.Issues.CreateComment(ctx, toolCtx.Owner, toolCtx.Repo, toolCtx.Task.Issue.number, comment)
+		_, _, err = toolCtx.GithubClient.Issues.CreateComment(ctx, toolCtx.Task.Issue.owner, toolCtx.Task.Issue.repo, toolCtx.Task.Issue.number, comment)
 		if err != nil {
 			return nil, err
 		}
@@ -570,7 +560,7 @@ func (t *PostCommentTool) Run(ctx context.Context, block anthropic.ToolUseBlock,
 			comment := &github.IssueComment{
 				Body: github.Ptr(input.Body),
 			}
-			_, _, err = toolCtx.GithubClient.Issues.CreateComment(ctx, toolCtx.Owner, toolCtx.Repo, toolCtx.Task.PullRequest.number, comment)
+			_, _, err = toolCtx.GithubClient.Issues.CreateComment(ctx, toolCtx.Task.Issue.owner, toolCtx.Task.Issue.repo, toolCtx.Task.PullRequest.number, comment)
 			if err != nil {
 				return nil, err
 			}
@@ -581,8 +571,8 @@ func (t *PostCommentTool) Run(ctx context.Context, block anthropic.ToolUseBlock,
 		}
 		toolCtx.GithubClient.PullRequests.CreateCommentInReplyTo(
 			ctx,
-			toolCtx.Owner,
-			toolCtx.Repo,
+			toolCtx.Task.Issue.owner,
+			toolCtx.Task.Issue.repo,
 			toolCtx.Task.PullRequest.number,
 			input.Body,
 			*input.InReplyTo,
@@ -672,12 +662,12 @@ func (t *AddReactionTool) Run(ctx context.Context, block anthropic.ToolUseBlock,
 
 	switch input.CommentType {
 	case "issue", "PR":
-		_, _, err = toolCtx.GithubClient.Reactions.CreateIssueCommentReaction(ctx, toolCtx.Owner, toolCtx.Repo, input.CommentID, input.Reaction)
+		_, _, err = toolCtx.GithubClient.Reactions.CreateIssueCommentReaction(ctx, toolCtx.Task.Issue.owner, toolCtx.Task.Issue.repo, input.CommentID, input.Reaction)
 		if err != nil {
 			return nil, err
 		}
 	case "PR review":
-		_, _, err = toolCtx.GithubClient.Reactions.CreatePullRequestCommentReaction(ctx, toolCtx.Owner, toolCtx.Repo, input.CommentID, input.Reaction)
+		_, _, err = toolCtx.GithubClient.Reactions.CreatePullRequestCommentReaction(ctx, toolCtx.Task.Issue.owner, toolCtx.Task.Issue.repo, input.CommentID, input.Reaction)
 		if err != nil {
 			return nil, err
 		}
@@ -762,7 +752,7 @@ func (t *RequestReviewTool) Run(ctx context.Context, block anthropic.ToolUseBloc
 		Reviewers: input.Usernames,
 	}
 
-	_, _, err = toolCtx.GithubClient.PullRequests.RequestReviewers(ctx, toolCtx.Owner, toolCtx.Repo, toolCtx.Task.PullRequest.number, reviewRequest)
+	_, _, err = toolCtx.GithubClient.PullRequests.RequestReviewers(ctx, toolCtx.Task.Issue.owner, toolCtx.Task.Issue.repo, toolCtx.Task.PullRequest.number, reviewRequest)
 	return nil, err
 }
 

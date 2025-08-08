@@ -38,9 +38,65 @@ type Bot struct {
 	githubClient           *github.Client
 	anthropicClient        anthropic.Client
 	toolRegistry           *ToolRegistry
-	fileSystemFactory      githubFileSystemFactory
-	resumableConversations FileSystemConversationHistoryStore
+	workspaceFactory       WorkspaceFactory
+	resumableConversations ConversationHistoryStore
 	botName                string
+}
+
+type ConversationHistoryStore interface {
+	// Get returns the conversation history stored at the given key, or nil if there is nothing stored at that key
+	Get(key string) (*conversationHistory, error)
+	// Set stores a conversation history with a key
+	Set(key string, value conversationHistory) error
+	// Delete deletes the conversation history stored at the given key
+	Delete(key string) error
+}
+
+type FileSystem interface {
+	// Read reads the content of a file at the given path
+	Read(ctx context.Context, path string) (string, error)
+	// Write writes the content to a file at the given path, creating the file if it doesn't exist
+	Write(ctx context.Context, path string, content string) error
+	// Delete deletes a file at the given path
+	Delete(ctx context.Context, path string) error
+
+	// FileExists returns true if the file at the given path exists, false otherwise
+	FileExists(ctx context.Context, path string) (bool, error)
+
+	// IsDir returns true if the given path is a directory, false otherwise
+	IsDir(ctx context.Context, dir string) (bool, error)
+	// List lists all files in the given directory
+	ListDir(ctx context.Context, dir string) ([]string, error)
+}
+
+var (
+	ErrFileNotFound error = fmt.Errorf("file not found")
+)
+
+type Workspace interface {
+	FileSystem
+
+	// HasChanges returns true if there are unpublished changes in the workspace
+	HasChanges(ctx context.Context) (bool, error)
+	// ClearChanges clears any unvalidated changes in the workspace
+	ClearChanges(ctx context.Context)
+
+	// ValidateChanges validates the changes in the workspace and returns the results. The commit message may be used to
+	// describe the changes in version control depending on the implementation
+	ValidateChanges(ctx context.Context, commitMessage string) (ValidationResult, error)
+	// PublishChanges publishes the changes to a location where they can be reviewed. If a pull request has already been
+	// created, publishing will update it automatically; otherwise, a pull request must be created separately after this
+	// call
+	PublishChanges(ctx context.Context, commitMessage string) error
+}
+
+type WorkspaceFactory interface {
+	NewWorkspace(ctx context.Context, owner, repo, branch string) (*Workspace, error)
+}
+
+type ValidationResult struct {
+	TestOutput string // Output from running tests
+	LintOutput string // Output from running linters
 }
 
 func NewBot(config Config, githubClient *github.Client) *Bot {
@@ -58,7 +114,7 @@ func NewBot(config Config, githubClient *github.Client) *Bot {
 		githubClient:           githubClient,
 		anthropicClient:        anthropicClient,
 		toolRegistry:           NewToolRegistry(),
-		fileSystemFactory:      githubFileSystemFactory{githubClient: githubClient},
+		workspaceFactory:       remoteValidationWorkspaceFactory{githubClient: githubClient},
 		resumableConversations: FileSystemConversationHistoryStore{dir: config.ResumableConversationsDir},
 		botName:                config.GitHubUsername,
 	}
@@ -112,14 +168,13 @@ func (b *Bot) Run(ctx context.Context, tasks <-chan taskOrError) error {
 }
 
 func (b *Bot) doTask(ctx context.Context, tsk task) (err error) {
-	// Create work branch, if it doesn't already exist
-	err = b.createBranch(ctx, tsk)
+	workspace, err := b.workspaceFactory.NewWorkspace(ctx, tsk.Issue.owner, tsk.Issue.repo, tsk.WorkBranch)
 	if err != nil {
-		return fmt.Errorf("failed to create work branch '%s': %w", tsk.WorkBranch, err)
+		return fmt.Errorf("failed to create workspace: %w", err)
 	}
 
 	// Let the AI do its thing
-	err = b.processWithAI(ctx, tsk)
+	err = b.processWithAI(ctx, tsk, *workspace)
 	if err != nil {
 		return fmt.Errorf("failed to process with AI: %w", err)
 	}
@@ -150,21 +205,12 @@ func (b *Bot) createBranch(ctx context.Context, tsk task) error {
 }
 
 // processWithAI handles the AI interaction with text editor tool support
-func (b *Bot) processWithAI(ctx context.Context, task task) error {
+func (b *Bot) processWithAI(ctx context.Context, task task, workspace Workspace) error {
 	maxIterations := 50
-	owner, repo := task.Issue.owner, task.Issue.repo
-
-	// fs may be nil if no branch name is given, e.g. if the issue is currently in the requirements clarification phase
-	fs, err := b.fileSystemFactory.NewFileSystem(ctx, owner, repo, task.WorkBranch)
-	if err != nil {
-		return fmt.Errorf("failed to create file system: %w", err)
-	}
 
 	// Create tool context
 	toolCtx := &ToolContext{
-		FileSystem:   fs,
-		Owner:        owner,
-		Repo:         repo,
+		Workspace:    workspace,
 		Task:         task,
 		GithubClient: b.githubClient,
 	}

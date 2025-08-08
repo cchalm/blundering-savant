@@ -8,15 +8,6 @@ import (
 	"path"
 )
 
-type ConversationHistoryStore interface {
-	// Get returns the conversation history stored at the given key, or nil if there is nothing stored at that key
-	Get(key string) (*conversationHistory, error)
-	// Set stores a conversation history with a key
-	Set(key string, value conversationHistory) error
-	// Delete deletes the conversation history stored at the given key
-	Delete(key string) error
-}
-
 // FileSystemConversationHistoryStore implements ConversationHistoryStore using the OS file system
 type FileSystemConversationHistoryStore struct {
 	dir string // The directory keys will be relative to
