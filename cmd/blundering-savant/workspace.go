@@ -38,6 +38,12 @@ type remoteValidationWorkspace struct {
 
 	// Git objects
 	currentTreeSHA string // Current tree SHA we're building on
+
+	validator CommitValidator
+}
+
+type CommitValidator interface {
+	ValidateCommit(commitSHA string) (ValidationResult, error)
 }
 
 func NewRemoteValidationWorkspace(
@@ -81,6 +87,8 @@ func NewRemoteValidationWorkspace(
 	if err != nil {
 		return nil, fmt.Errorf("failed to get commit: %w", err)
 	}
+
+	// TODO construct validator
 
 	return &remoteValidationWorkspace{
 		githubClient: githubClient,
@@ -298,15 +306,18 @@ func (rvw *remoteValidationWorkspace) ValidateChanges(ctx context.Context, commi
 	}
 
 	// Commit changes to the work branch
-	_, err = rvw.commitToWorkBranch(ctx, commitMessage)
+	commit, err := rvw.commitToWorkBranch(ctx, commitMessage)
 	if err != nil {
 		return ValidationResult{}, fmt.Errorf("failed to commit changes to work branch: %w", err)
 	}
 
-	// TODO run validation workflows
-	result := ValidationResult{
-		TestOutput: "Validation not yet implemented", // TODO
-		LintOutput: "Validation not yet implemented", // TODO
+	if rvw.validator == nil {
+		return ValidationResult{}, fmt.Errorf("failed to validate commit, no validator provided")
+	}
+
+	result, err := rvw.validator.ValidateCommit(*commit.SHA)
+	if err != nil {
+		return ValidationResult{}, fmt.Errorf("failed to validate commit: %w", err)
 	}
 
 	return result, nil
