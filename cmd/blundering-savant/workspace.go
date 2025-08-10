@@ -240,9 +240,27 @@ func (rvw remoteValidationWorkspace) ListDir(ctx context.Context, path string) (
 
 // HasChanges returns true if there are uncommitted changes in-memory OR changes in the working branch that have not
 // been merged to the review branch
-func (rvw remoteValidationWorkspace) HasChanges(_ context.Context) (bool, error) {
-	// TODO diff the working branch against the review branch
-	return rvw.hasChangesInMemory(), nil
+func (rvw remoteValidationWorkspace) HasChanges(ctx context.Context) (bool, error) {
+	// Check in-memory changes first
+	if rvw.hasChangesInMemory() {
+		return true, nil
+	}
+
+	// Compare the working branch against the review branch
+	comparison, _, err := rvw.githubClient.Repositories.CompareCommits(
+		ctx,
+		rvw.owner,
+		rvw.repo,
+		rvw.reviewBranch,
+		rvw.workBranch,
+		&github.ListOptions{},
+	)
+	if err != nil {
+		return false, fmt.Errorf("failed to compare branches %s..%s: %w", rvw.reviewBranch, rvw.workBranch, err)
+	}
+
+	// If there are commits ahead, then there are unmerged changes
+	return *comparison.AheadBy > 0, nil
 }
 
 func (rvw remoteValidationWorkspace) hasChangesInMemory() bool {
