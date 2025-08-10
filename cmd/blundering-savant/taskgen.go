@@ -141,7 +141,7 @@ func (tg *taskGenerator) searchIssues(ctx context.Context) ([]githubIssue, error
 }
 
 func (tg *taskGenerator) buildTask(ctx context.Context, issue githubIssue, botUser *github.User) (*task, error) {
-	task := task{
+	tsk := task{
 		BotUsername: tg.config.GitHubUsername,
 		Issue:       issue,
 	}
@@ -156,43 +156,42 @@ func (tg *taskGenerator) buildTask(ctx context.Context, issue githubIssue, botUs
 		return nil, fmt.Errorf("nil default branch")
 	}
 
-	task.TargetBranch = *repoInfo.DefaultBranch
-	// We'll use this branch name to implicitly link the issue and the pull request 1-1
-	task.WorkBranch = getWorkBranchName(issue)
+	tsk.TargetBranch = *repoInfo.DefaultBranch
+	tsk.SourceBranch = getSourceBranchName(issue)
 
 	// Get the existing pull request, if any
-	pr, err := getPullRequest(ctx, tg.githubClient, owner, repo, task.WorkBranch, task.BotUsername)
+	pr, err := getPullRequest(ctx, tg.githubClient, owner, repo, tsk.SourceBranch, tsk.BotUsername)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get pull request for branch: %w", err)
 	}
-	task.PullRequest = pr
+	tsk.PullRequest = pr
 
 	// Get repository
 	repository, _, err := tg.githubClient.Repositories.Get(ctx, owner, repo)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get repository: %w", err)
 	}
-	task.Repository = repository
+	tsk.Repository = repository
 
 	// Get style guide
 	styleGuide, err := tg.findStyleGuides(ctx, owner, repo)
 	if err != nil {
 		log.Printf("Warning: Could not find style guides: %v", err)
 	}
-	task.StyleGuide = styleGuide
+	tsk.StyleGuide = styleGuide
 
 	// Get codebase info
 	codebaseInfo, err := tg.analyzeCodebase(ctx, owner, repo)
 	if err != nil {
 		log.Printf("Warning: Could not analyze codebase: %v", err)
 	}
-	task.CodebaseInfo = codebaseInfo
+	tsk.CodebaseInfo = codebaseInfo
 
 	comments, err := tg.getAllIssueComments(ctx, owner, repo, issue.number)
 	if err != nil {
 		log.Printf("Warning: Could not get issue comments: %v", err)
 	}
-	task.IssueComments = comments
+	tsk.IssueComments = comments
 
 	// If there is a PR, get PR comments, reviews, and review comments
 	if pr != nil {
@@ -201,14 +200,14 @@ func (tg *taskGenerator) buildTask(ctx context.Context, issue githubIssue, botUs
 		if err != nil {
 			return nil, fmt.Errorf("could not get pull request comments: %w", err)
 		}
-		task.PRComments = comments
+		tsk.PRComments = comments
 
 		// Get reviews
 		reviews, err := tg.getAllPRReviews(ctx, owner, repo, pr.number)
 		if err != nil {
 			return nil, fmt.Errorf("could not get PR reviews: %w", err)
 		}
-		task.PRReviews = reviews
+		tsk.PRReviews = reviews
 
 		// Get PR review comment threads
 		reviewComments, err := tg.getAllPRReviewComments(ctx, owner, repo, pr.number)
@@ -220,27 +219,27 @@ func (tg *taskGenerator) buildTask(ctx context.Context, issue githubIssue, botUs
 			return nil, fmt.Errorf("could not organize review comments into threads: %w", err)
 		}
 
-		task.PRReviewCommentThreads = reviewCommentThreads
+		tsk.PRReviewCommentThreads = reviewCommentThreads
 	}
 
 	// Get comments requiring responses
-	commentsReq, err := tg.pickIssueCommentsRequiringResponse(ctx, owner, repo, task.IssueComments, botUser)
+	commentsReq, err := tg.pickIssueCommentsRequiringResponse(ctx, owner, repo, tsk.IssueComments, botUser)
 	if err != nil {
 		return nil, fmt.Errorf("could not get issue comments requiring response: %w", err)
 	}
-	prCommentsReq, err := tg.pickIssueCommentsRequiringResponse(ctx, owner, repo, task.PRComments, botUser)
+	prCommentsReq, err := tg.pickIssueCommentsRequiringResponse(ctx, owner, repo, tsk.PRComments, botUser)
 	if err != nil {
 		return nil, fmt.Errorf("could not get PR comments requiring response: %w", err)
 	}
-	prReviewCommentsReq, err := tg.pickPRReviewCommentsRequiringResponse(ctx, owner, repo, task.PRReviewCommentThreads, botUser)
+	prReviewCommentsReq, err := tg.pickPRReviewCommentsRequiringResponse(ctx, owner, repo, tsk.PRReviewCommentThreads, botUser)
 	if err != nil {
 		return nil, fmt.Errorf("could not get PR review comments requiring response: %w", err)
 	}
-	task.IssueCommentsRequiringResponses = commentsReq
-	task.PRCommentsRequiringResponses = prCommentsReq
-	task.PRReviewCommentsRequiringResponses = prReviewCommentsReq
+	tsk.IssueCommentsRequiringResponses = commentsReq
+	tsk.PRCommentsRequiringResponses = prCommentsReq
+	tsk.PRReviewCommentsRequiringResponses = prReviewCommentsReq
 
-	return &task, nil
+	return &tsk, nil
 }
 
 func (tg *taskGenerator) needsAttention(task task) bool {
@@ -529,11 +528,6 @@ func (tg *taskGenerator) hasBotReactedToReviewComment(ctx context.Context, owner
 	return false, nil
 }
 
-func getWorkBranchName(issue githubIssue) string {
-	branchName := fmt.Sprintf("fix/issue-%d-%s", issue.number, sanitizeForBranchName(issue.title))
-	return normalizeBranchName(branchName)
-}
-
 // getPullRequest returns a pull request by source branch and owner, if exactly one such pull request exists. If no such
 // pull request exists, returns (nil, nil). If more than one such pull request exists, returns an error
 func getPullRequest(ctx context.Context, githubClient *github.Client, owner, repo, branch, author string) (*githubPullRequest, error) {
@@ -611,30 +605,4 @@ func organizePRReviewCommentsIntoThreads(comments []*github.PullRequestComment) 
 	}
 
 	return threads, nil
-}
-
-func sanitizeForBranchName(s string) string {
-	// Convert to lowercase and replace invalid characters
-	s = strings.ToLower(s)
-	s = strings.ReplaceAll(s, " ", "-")
-	s = strings.ReplaceAll(s, "_", "-")
-
-	// Remove invalid characters for git branch names
-	invalidChars := []string{"~", "^", ":", "?", "*", "[", "]", "\\", "..", "@{", "/.", "//"}
-	for _, char := range invalidChars {
-		s = strings.ReplaceAll(s, char, "")
-	}
-
-	return s
-}
-
-func normalizeBranchName(s string) string {
-	// Limit length
-	if len(s) > 70 {
-		s = s[:70]
-	}
-	// Clean up trailing separators
-	s = strings.Trim(s, "-.")
-
-	return s
 }

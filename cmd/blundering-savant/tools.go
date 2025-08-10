@@ -352,7 +352,11 @@ func (t *CommitChangesTool) Run(ctx context.Context, block anthropic.ToolUseBloc
 	}
 
 	// Check if there are changes to commit
-	if !toolCtx.Workspace.HasChanges(ctx) {
+	hasChanges, err := toolCtx.Workspace.HasChanges(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("error checking for local changes: %w", err)
+	}
+	if !hasChanges {
 		return nil, fmt.Errorf("no changes to commit")
 	}
 
@@ -440,12 +444,8 @@ func (t *CreatePullRequestTool) Run(ctx context.Context, block anthropic.ToolUse
 	// Determine target branch
 	var targetBranch string
 	if toolCtx.Task.PullRequest == nil {
-		// Get default branch for new PRs
-		repository, _, err := toolCtx.GithubClient.Repositories.Get(ctx, toolCtx.Task.Issue.owner, toolCtx.Task.Issue.repo)
-		if err != nil {
-			return nil, fmt.Errorf("failed to get repository: %w", err)
-		}
-		targetBranch = repository.GetDefaultBranch()
+		// For new PRs use the target branch specified in the task
+		targetBranch = toolCtx.Task.TargetBranch
 
 		// Add issue reference to PR body
 		issueNumber := toolCtx.Task.Issue.number
@@ -461,9 +461,17 @@ Fixes #%d
 		targetBranch = toolCtx.Task.PullRequest.baseBranch
 	}
 
-	_, err = toolCtx.FileSystem.CreatePullRequest(ctx, input.PullRequestTitle, input.PullRequestBody, targetBranch)
+	pr := &github.NewPullRequest{
+		Title:               github.Ptr(input.PullRequestTitle),
+		Body:                github.Ptr(input.PullRequestBody),
+		Head:                github.Ptr(toolCtx.Task.SourceBranch),
+		Base:                github.Ptr(targetBranch),
+		MaintainerCanModify: github.Ptr(true),
+	}
+
+	_, _, err = toolCtx.GithubClient.PullRequests.Create(ctx, toolCtx.Task.Issue.owner, toolCtx.Task.Issue.repo, pr)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to create pull request: %w", err)
 	}
 
 	return nil, nil

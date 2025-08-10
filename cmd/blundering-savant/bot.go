@@ -91,7 +91,7 @@ type Workspace interface {
 }
 
 type WorkspaceFactory interface {
-	NewWorkspace(ctx context.Context, owner, repo, branch string) (*Workspace, error)
+	NewWorkspace(ctx context.Context, tsk task) (Workspace, error)
 }
 
 type ValidationResult struct {
@@ -118,14 +118,6 @@ func NewBot(config Config, githubClient *github.Client) *Bot {
 		resumableConversations: FileSystemConversationHistoryStore{dir: config.ResumableConversationsDir},
 		botName:                config.GitHubUsername,
 	}
-}
-
-type githubFileSystemFactory struct {
-	githubClient *github.Client
-}
-
-func (gfsf *githubFileSystemFactory) NewFileSystem(ctx context.Context, owner, repo, branch string) (*GitHubFileSystem, error) {
-	return NewGitHubFileSystem(ctx, gfsf.githubClient, owner, repo, branch)
 }
 
 // Run starts the main loop
@@ -168,37 +160,15 @@ func (b *Bot) Run(ctx context.Context, tasks <-chan taskOrError) error {
 }
 
 func (b *Bot) doTask(ctx context.Context, tsk task) (err error) {
-	workspace, err := b.workspaceFactory.NewWorkspace(ctx, tsk.Issue.owner, tsk.Issue.repo, tsk.WorkBranch)
+	workspace, err := b.workspaceFactory.NewWorkspace(ctx, tsk)
 	if err != nil {
 		return fmt.Errorf("failed to create workspace: %w", err)
 	}
 
 	// Let the AI do its thing
-	err = b.processWithAI(ctx, tsk, *workspace)
+	err = b.processWithAI(ctx, tsk, workspace)
 	if err != nil {
 		return fmt.Errorf("failed to process with AI: %w", err)
-	}
-
-	return nil
-}
-
-// CreateBranch creates a new branch from the default branch, if it doesn't already exist
-func (b *Bot) createBranch(ctx context.Context, tsk task) error {
-	// Get the base branch reference
-	baseRef, _, err := b.githubClient.Git.GetRef(ctx, tsk.Issue.owner, tsk.Issue.repo, fmt.Sprintf("refs/heads/%s", tsk.TargetBranch))
-	if err != nil {
-		return fmt.Errorf("failed to get base branch ref: %w", err)
-	}
-
-	// Create new branch reference
-	newRef := &github.Reference{
-		Ref:    github.Ptr(fmt.Sprintf("refs/heads/%s", tsk.WorkBranch)),
-		Object: &github.GitObject{SHA: baseRef.Object.SHA},
-	}
-
-	_, _, err = b.githubClient.Git.CreateRef(ctx, tsk.Issue.owner, tsk.Issue.repo, newRef)
-	if err != nil {
-		return fmt.Errorf("failed to create branch: %w", err)
 	}
 
 	return nil

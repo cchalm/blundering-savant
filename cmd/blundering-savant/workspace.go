@@ -10,6 +10,15 @@ import (
 	"github.com/google/go-github/v72/github"
 )
 
+// remoteValidationWorkspaceFactory creates instances of remoteValidationWorkspace
+type remoteValidationWorkspaceFactory struct {
+	githubClient *github.Client
+}
+
+func (rvwf remoteValidationWorkspaceFactory) NewWorkspace(ctx context.Context, tsk task) (Workspace, error) {
+	return NewRemoteValidationWorkspace(ctx, rvwf.githubClient, tsk)
+}
+
 // remoteValidationWorkspace is a workspace that tracks working changes in-memory until they need to be validated. For
 // validation, changes are committed to a "work branch" and pushed to GitHub, where GitHub Actions run validation
 // workflows. For publishing, the changes are merged from the "work branch" into a "review branch", from which a PR to
@@ -20,7 +29,6 @@ type remoteValidationWorkspace struct {
 	owner        string
 	repo         string
 
-	baseBranch   string
 	workBranch   string
 	reviewBranch string
 
@@ -35,9 +43,10 @@ type remoteValidationWorkspace struct {
 func NewRemoteValidationWorkspace(
 	ctx context.Context,
 	githubClient *github.Client,
-	owner string,
-	repo string,
+	tsk task,
 ) (*remoteValidationWorkspace, error) {
+	owner, repo := tsk.Issue.owner, tsk.Issue.repo
+
 	// Get default branch
 	repoInfo, _, err := githubClient.Repositories.Get(ctx, owner, repo)
 	if err != nil {
@@ -48,12 +57,15 @@ func NewRemoteValidationWorkspace(
 	}
 	baseBranch := *repoInfo.DefaultBranch
 
+	workBranch := getWorkBranchName(tsk.Issue)
+	reviewBranch := tsk.SourceBranch
+
 	// Create the work and review branches if they don't exist
-	err = createBranchIfNotExist(ctx, githubClient, baseBranch, workBranch)
+	err = createBranchIfNotExist(ctx, githubClient, owner, repo, baseBranch, workBranch)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create work branch: %w", err)
 	}
-	err = createBranchIfNotExist(ctx, githubClient, baseBranch, reviewBranch)
+	err = createBranchIfNotExist(ctx, githubClient, owner, repo, baseBranch, reviewBranch)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create review branch: %w", err)
 	}
@@ -230,7 +242,7 @@ func (rvw remoteValidationWorkspace) ListDir(ctx context.Context, path string) (
 // been merged to the review branch
 func (rvw remoteValidationWorkspace) HasChanges(_ context.Context) (bool, error) {
 	// TODO diff the working branch against the review branch
-	return rvw.hasChangesInMemory()
+	return rvw.hasChangesInMemory(), nil
 }
 
 func (rvw remoteValidationWorkspace) hasChangesInMemory() bool {
@@ -259,23 +271,24 @@ func (rvw *remoteValidationWorkspace) ClearChanges(_ context.Context) {
 }
 
 func (rvw *remoteValidationWorkspace) ValidateChanges(ctx context.Context, commitMessage string) (ValidationResult, error) {
-	// TODO are the results from prior validation runs still available? Should we allow this to be run to fetch those
-	// results even if we don't commit anything?
-	if !rvw.HasChanges() {
-		return nil, fmt.Errorf("no changes to validate")
+	hasChanges, err := rvw.HasChanges(ctx)
+	if err != nil {
+		return ValidationResult{}, fmt.Errorf("failed to check changes: %w", err)
+	}
+	if !hasChanges {
+		return ValidationResult{}, fmt.Errorf("no changes to validate")
 	}
 
 	// Commit changes to the work branch
-	_, err := rvw.commitToWorkBranch(ctx, commitMessage)
+	_, err = rvw.commitToWorkBranch(ctx, commitMessage)
 	if err != nil {
-		return nil, fmt.Errorf("failed to commit changes to work branch: %w", err)
+		return ValidationResult{}, fmt.Errorf("failed to commit changes to work branch: %w", err)
 	}
 
-	// Run validation workflows (this is a placeholder - actual implementation would depend on your CI setup)
-	// For now, we assume validation always passes
-	result := &ValidationResult{
+	// TODO run validation workflows
+	result := ValidationResult{
 		TestOutput: "Validation not yet implemented", // TODO
-		LintOutput: "Validation not yet implemented", // TODO:
+		LintOutput: "Validation not yet implemented", // TODO
 	}
 
 	return result, nil
@@ -371,7 +384,7 @@ func (rvw *remoteValidationWorkspace) commitToWorkBranch(ctx context.Context, co
 	// Update our state
 	rvw.baseCommit = createdCommit
 	rvw.currentTreeSHA = *createdTree.SHA
-	rvw.ClearChanges()
+	rvw.ClearChanges(ctx)
 
 	return createdCommit, nil
 }
@@ -384,8 +397,7 @@ func (rvw *remoteValidationWorkspace) PublishChanges(ctx context.Context, commit
 }
 
 func (rvw *remoteValidationWorkspace) mergeWorkBranchToReviewBranch(ctx context.Context, commitMessage string) (*github.Commit, error) {
-	// Check if there are uncommitted changes
-	if rvw.HasChanges() {
+	if rvw.hasChangesInMemory() {
 		return nil, fmt.Errorf("cannot merge from the work branch to the review branch while there are uncommitted changes in-memory")
 	}
 
@@ -443,32 +455,6 @@ func (rvw *remoteValidationWorkspace) mergeWorkBranchToReviewBranch(ctx context.
 	return createdMergeCommit, nil
 }
 
-// CreatePullRequest creates a PR from the review branch to the target branch
-func (rvw remoteValidationWorkspace) CreatePullRequest(ctx context.Context, title, body, targetBranch string) (*github.PullRequest, error) {
-	pr := &github.NewPullRequest{
-		Title:               github.Ptr(title),
-		Body:                github.Ptr(body),
-		Head:                github.Ptr(rvw.reviewBranch),
-		Base:                github.Ptr(targetBranch),
-		MaintainerCanModify: github.Ptr(true),
-	}
-
-	createdPR, _, err := rvw.githubClient.PullRequests.Create(ctx, rvw.owner, rvw.repo, pr)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create pull request: %w", err)
-	}
-
-	return createdPR, nil
-}
-
-func (rvw remoteValidationWorkspace) GetWorkBranch() string {
-	return rvw.workBranch
-}
-
-func (rvw remoteValidationWorkspace) GetReviewBranch() string {
-	return rvw.reviewBranch
-}
-
 // GetCommitSHA returns the current commit SHA
 func (rvw remoteValidationWorkspace) GetCommitSHA() string {
 	if rvw.baseCommit != nil && rvw.baseCommit.SHA != nil {
@@ -482,11 +468,38 @@ func normalizePath(path string) string {
 	return strings.TrimPrefix(path, "/")
 }
 
-// remoteValidationWorkspaceFactory creates instances of remoteValidationWorkspace
-type remoteValidationWorkspaceFactory struct {
-	githubClient *github.Client
+func getWorkBranchName(issue githubIssue) string {
+	branchName := fmt.Sprintf("wip/issue-%d-%s", issue.number, sanitizeForBranchName(issue.title))
+	return normalizeBranchName(branchName)
 }
 
-func (rvwf remoteValidationWorkspaceFactory) NewWorkspace(ctx context.Context, owner string, repo string) (Workspace, error) {
-	return NewRemoteValidationWorkspace(ctx, rvwf.githubClient, owner, repo)
+func getSourceBranchName(issue githubIssue) string {
+	branchName := fmt.Sprintf("fix/issue-%d-%s", issue.number, sanitizeForBranchName(issue.title))
+	return normalizeBranchName(branchName)
+}
+
+func sanitizeForBranchName(s string) string {
+	// Convert to lowercase and replace invalid characters
+	s = strings.ToLower(s)
+	s = strings.ReplaceAll(s, " ", "-")
+	s = strings.ReplaceAll(s, "_", "-")
+
+	// Remove invalid characters for git branch names
+	invalidChars := []string{"~", "^", ":", "?", "*", "[", "]", "\\", "..", "@{", "/.", "//"}
+	for _, char := range invalidChars {
+		s = strings.ReplaceAll(s, char, "")
+	}
+
+	return s
+}
+
+func normalizeBranchName(s string) string {
+	// Limit length
+	if len(s) > 70 {
+		s = s[:70]
+	}
+	// Clean up trailing separators
+	s = strings.Trim(s, "-.")
+
+	return s
 }

@@ -11,9 +11,10 @@ type task struct {
 	Repository  *github.Repository
 	PullRequest *githubPullRequest // May be nil if no pull request has yet been created
 
-	// Branches
-	TargetBranch string // The branch that changes will be merged into after review
-	WorkBranch   string // The branch that work will be done in
+	// The branch that changes should be merged into to resolve the task
+	TargetBranch string
+	// The branch name used for the pull request, generated from issue details
+	SourceBranch string
 
 	// Code context
 	StyleGuide   *StyleGuide
