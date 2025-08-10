@@ -197,7 +197,10 @@ func (b *Bot) processWithAI(ctx context.Context, task task, workspace Workspace)
 			return fmt.Errorf("exceeded maximum iterations (%d) without completion", maxIterations)
 		}
 		// Persist the conversation history up to this point
-		b.resumableConversations.Set(strconv.Itoa(task.Issue.number), conversation.History())
+		err = b.resumableConversations.Set(strconv.Itoa(task.Issue.number), conversation.History())
+		if err != nil {
+			return fmt.Errorf("failed to persist conversation history: %w", err)
+		}
 
 		log.Printf("Processing AI response, iteration: %d", i+1)
 		for _, contentBlock := range response.Content {

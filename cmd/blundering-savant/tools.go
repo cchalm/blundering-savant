@@ -577,7 +577,7 @@ func (t *PostCommentTool) Run(ctx context.Context, block anthropic.ToolUseBlock,
 		if input.InReplyTo == nil {
 			return nil, fmt.Errorf("InReplyTo must be specified for review comments. The bot is currently unable to create top-level review comments")
 		}
-		toolCtx.GithubClient.PullRequests.CreateCommentInReplyTo(
+		_, _, err = toolCtx.GithubClient.PullRequests.CreateCommentInReplyTo(
 			ctx,
 			toolCtx.Task.Issue.owner,
 			toolCtx.Task.Issue.repo,
@@ -585,6 +585,9 @@ func (t *PostCommentTool) Run(ctx context.Context, block anthropic.ToolUseBlock,
 			input.Body,
 			*input.InReplyTo,
 		)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	return nil, nil

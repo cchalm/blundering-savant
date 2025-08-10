@@ -183,7 +183,7 @@ func (cc *ClaudeConversation) sendMessage(ctx context.Context, setCachePoint boo
 	// TODO remove this
 	b, err := json.Marshal(append(messageParams, response.ToParam()))
 	if err == nil {
-		os.WriteFile("conversation.json", b, 0666)
+		_ = os.WriteFile("conversation.json", b, 0666)
 	}
 
 	return &response, nil
