@@ -280,7 +280,10 @@ func (t *RateLimitedTransport) RoundTrip(req *http.Request) (*http.Response, err
 
 				if waitDuration > 0 {
 					// Close the response body to free resources
-					resp.Body.Close()
+					err = resp.Body.Close()
+					if err != nil {
+						return nil, fmt.Errorf("failed to close request body: %w", err)
+					}
 
 					// Wait for the specified duration
 					log.Printf("Rate limited, waiting %s", waitDuration)
