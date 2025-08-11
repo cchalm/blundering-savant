@@ -60,6 +60,12 @@ GITHUB_USERNAME=<your-bot-username>
 ANTHROPIC_API_KEY=sk-ant-<your-anthropic-api-key>
 ```
 
+### Installing tools
+
+1. Install [Just](https://github.com/casey/just) command runner.
+2. Install tools with `go install tool`
+    - [New in Go 1.24](https://go.dev/doc/go1.24#tools), this command will install all tools listed in `go.mod`
+
 ### Running the Bot
 
 Prerequisites: Install [Just](https://github.com/casey/just) command runner.

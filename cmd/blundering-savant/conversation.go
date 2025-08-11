@@ -247,7 +247,10 @@ func (t *RateLimitedTransport) RoundTrip(req *http.Request) (*http.Response, err
 		if err != nil {
 			return nil, fmt.Errorf("failed to read request body: %w", err)
 		}
-		req.Body.Close()
+		err = req.Body.Close()
+		if err != nil {
+			return nil, fmt.Errorf("failed to close request body: %w", err)
+		}
 	}
 
 	for {
