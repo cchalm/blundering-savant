@@ -63,8 +63,8 @@ ANTHROPIC_API_KEY=sk-ant-<your-anthropic-api-key>
 ### Installing tools
 
 1. Install [Just](https://github.com/casey/just) command runner.
-2. Install tools with `go install tool`
-    - [New in Go 1.24](https://go.dev/doc/go1.24#tools), this command will install all tools listed in `go.mod`
+2. Install [golangci-lint](https://golangci-lint.run/docs/welcome/install/#local-installation)
+    - `curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/HEAD/install.sh | sh -s -- -b $(go env GOPATH)/bin v2.3.1`
 
 ### Running the Bot
 
