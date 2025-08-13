@@ -73,21 +73,26 @@ var (
 	ErrFileNotFound error = fmt.Errorf("file not found")
 )
 
+// Workspace represents a three-stage development process: local changes, validation, and review. Callers make local
+// changes using the FileSystem interface, validate them with ValidateChanges, and publish them for review using
+// PublishChangesForReview
 type Workspace interface {
 	FileSystem
 
-	// HasChanges returns true if there are unpublished changes in the workspace
-	HasChanges(ctx context.Context) (bool, error)
-	// ClearChanges clears any unvalidated changes in the workspace
-	ClearChanges(ctx context.Context)
+	// HasLocalChanges returns true if there are local (unvalidated) changes in the workspace
+	HasLocalChanges() bool
+	// ClearChanges clears any local (unvalidated) changes in the workspace
+	ClearLocalChanges()
 
-	// ValidateChanges validates the changes in the workspace and returns the results. The commit message may be used to
-	// describe the changes in version control depending on the implementation
+	// HasUnpublishedChanged returns true if there are validated changes that have not been published for review
+	HasUnpublishedChanges(ctx context.Context) (bool, error)
+
+	// ValidateChanges persists local changes remotely, validates them, and returns the results. After calling
+	// ValidateChanges, HasLocalChanges will return false until additional local changes are created
 	ValidateChanges(ctx context.Context, commitMessage string) (ValidationResult, error)
-	// PublishChanges publishes the changes to a location where they can be reviewed. If a pull request has already been
-	// created, publishing will update it automatically; otherwise, a pull request must be created separately after this
-	// call
-	PublishChanges(ctx context.Context, commitMessage string) error
+	// PublishChangesForReview makes validated changes available for review. reviewRequestTitle and reviewRequestBody
+	// are only used the first time a review is published, subsequent publishes will update the existing review
+	PublishChangesForReview(ctx context.Context, commitMessage string, reviewRequestTitle string, reviewRequestBody string) error
 }
 
 type WorkspaceFactory interface {
@@ -95,8 +100,7 @@ type WorkspaceFactory interface {
 }
 
 type ValidationResult struct {
-	TestOutput string // Output from running tests
-	LintOutput string // Output from running linters
+	Output string
 }
 
 func NewBot(config Config, githubClient *github.Client) *Bot {

@@ -294,33 +294,34 @@ func (t *TextEditorTool) executeInsert(ctx context.Context, input *TextEditorInp
 	return fmt.Sprintf("Successfully inserted text at line %d in %s", lineNum, input.Path), nil
 }
 
-// CommitChangesTool implements the commit_changes tool
-type CommitChangesTool struct {
+// ValidateChangesTool implements the validate_changes tool
+type ValidateChangesTool struct {
 	BaseTool
 }
 
-// CommitChangesInput represents the input for commit_changes
-type CommitChangesInput struct {
+// ValidateChangesInput represents the input for validate_changes
+type ValidateChangesInput struct {
 	CommitMessage string `json:"commit_message"`
 }
 
-// NewCommitChangesTool creates a new create pull request tool
-func NewCommitChangesTool() *CommitChangesTool {
-	return &CommitChangesTool{
-		BaseTool: BaseTool{Name: "commit_changes"},
+// NewValidateChangesTool creates a new create pull request tool
+func NewValidateChangesTool() *ValidateChangesTool {
+	return &ValidateChangesTool{
+		BaseTool: BaseTool{Name: "validate_changes"},
 	}
 }
 
 // GetToolParam returns the tool parameter definition
-func (t *CommitChangesTool) GetToolParam() anthropic.ToolParam {
+func (t *ValidateChangesTool) GetToolParam() anthropic.ToolParam {
 	return anthropic.ToolParam{
 		Name:        t.Name,
-		Description: anthropic.String("Commit all previous file changes"),
+		Description: anthropic.String("Validate all previous file changes, e.g. run tests and static analysis"),
 		InputSchema: anthropic.ToolInputSchemaParam{
 			Properties: map[string]any{
 				"commit_message": map[string]any{
-					"type":        "string",
-					"description": "Commit message for the changes",
+					"type": "string",
+					"description": "Commit message for file changes made since the last call to this tool. May or " +
+						"may not be used depending on the implementation, but must be provided",
 				},
 			},
 		},
@@ -328,20 +329,20 @@ func (t *CommitChangesTool) GetToolParam() anthropic.ToolParam {
 }
 
 // ParseToolUse parses the tool use block
-func (t *CommitChangesTool) ParseToolUse(block anthropic.ToolUseBlock) (*CommitChangesInput, error) {
+func (t *ValidateChangesTool) ParseToolUse(block anthropic.ToolUseBlock) (*ValidateChangesInput, error) {
 	if block.Name != t.Name {
 		return nil, fmt.Errorf("tool use block is for %s, not %s", block.Name, t.Name)
 	}
 
-	var input CommitChangesInput
+	var input ValidateChangesInput
 	if err := parseInputJSON(block, &input); err != nil {
 		return nil, err
 	}
 	return &input, nil
 }
 
-// Run executes the create pull request command
-func (t *CommitChangesTool) Run(ctx context.Context, block anthropic.ToolUseBlock, toolCtx *ToolContext) (*string, error) {
+// Run executes the validate changes command
+func (t *ValidateChangesTool) Run(ctx context.Context, block anthropic.ToolUseBlock, toolCtx *ToolContext) (*string, error) {
 	input, err := t.ParseToolUse(block)
 	if err != nil {
 		return nil, fmt.Errorf("error parsing input: %w", err)
@@ -351,134 +352,18 @@ func (t *CommitChangesTool) Run(ctx context.Context, block anthropic.ToolUseBloc
 		return nil, ToolInputError{fmt.Errorf("commit_message is required")}
 	}
 
-	// Check if there are changes to commit
-	hasChanges, err := toolCtx.Workspace.HasChanges(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("error checking for local changes: %w", err)
-	}
-	if !hasChanges {
-		return nil, fmt.Errorf("no changes to commit")
-	}
-
-	// Commit the changes
-	err = toolCtx.Workspace.PublishChanges(ctx, input.CommitMessage)
+	// Validate changes, if any
+	result, err := toolCtx.Workspace.ValidateChanges(ctx, input.CommitMessage)
 	if err != nil {
 		return nil, fmt.Errorf("failed to commit changes: %w", err)
 	}
 
-	return nil, nil
+	return &result.Output, nil
 }
 
-func (t *CommitChangesTool) Replay(ctx context.Context, block anthropic.ToolUseBlock, toolCtx *ToolContext) error {
-	// Since all prior replayed file changes were persisted remotely by this commit call, we must clear them
-	toolCtx.Workspace.ClearChanges(ctx)
-	return nil
-}
-
-// CreatePullRequestTool implements the create_pull_request tool
-type CreatePullRequestTool struct {
-	BaseTool
-}
-
-// CreatePullRequestInput represents the input for create_pull_request
-type CreatePullRequestInput struct {
-	PullRequestTitle string `json:"pull_request_title"`
-	PullRequestBody  string `json:"pull_request_body"`
-}
-
-// NewCreatePullRequestTool creates a new create pull request tool
-func NewCreatePullRequestTool() *CreatePullRequestTool {
-	return &CreatePullRequestTool{
-		BaseTool: BaseTool{Name: "create_pull_request"},
-	}
-}
-
-// GetToolParam returns the tool parameter definition
-func (t *CreatePullRequestTool) GetToolParam() anthropic.ToolParam {
-	return anthropic.ToolParam{
-		Name:        t.Name,
-		Description: anthropic.String("Create a pull request for committed changes"),
-		InputSchema: anthropic.ToolInputSchemaParam{
-			Properties: map[string]any{
-				"pull_request_title": map[string]any{
-					"type":        "string",
-					"description": "Title for the pull request",
-				},
-				"pull_request_body": map[string]any{
-					"type":        "string",
-					"description": "Description of the solution and what changes were made",
-				},
-			},
-		},
-	}
-}
-
-// ParseToolUse parses the tool use block
-func (t *CreatePullRequestTool) ParseToolUse(block anthropic.ToolUseBlock) (*CreatePullRequestInput, error) {
-	if block.Name != t.Name {
-		return nil, fmt.Errorf("tool use block is for %s, not %s", block.Name, t.Name)
-	}
-
-	var input CreatePullRequestInput
-	if err := parseInputJSON(block, &input); err != nil {
-		return nil, err
-	}
-	return &input, nil
-}
-
-// Run executes the create pull request command
-func (t *CreatePullRequestTool) Run(ctx context.Context, block anthropic.ToolUseBlock, toolCtx *ToolContext) (*string, error) {
-	input, err := t.ParseToolUse(block)
-	if err != nil {
-		return nil, fmt.Errorf("error parsing input: %w", err)
-	}
-
-	if input.PullRequestTitle == "" {
-		return nil, ToolInputError{fmt.Errorf("pull_request_title is required")}
-	}
-
-	if input.PullRequestBody == "" {
-		return nil, ToolInputError{fmt.Errorf("pull_request_body is required")}
-	}
-
-	// Determine target branch
-	var targetBranch string
-	if toolCtx.Task.PullRequest == nil {
-		// For new PRs use the target branch specified in the task
-		targetBranch = toolCtx.Task.TargetBranch
-
-		// Add issue reference to PR body
-		issueNumber := toolCtx.Task.Issue.number
-
-		input.PullRequestBody = fmt.Sprintf(`%s
-
-Fixes #%d
-
----
-*This PR was created by the Blundering Savant bot.*`, input.PullRequestBody, issueNumber)
-	} else {
-		// For existing PRs, use the same target branch
-		targetBranch = toolCtx.Task.PullRequest.baseBranch
-	}
-
-	pr := &github.NewPullRequest{
-		Title:               github.Ptr(input.PullRequestTitle),
-		Body:                github.Ptr(input.PullRequestBody),
-		Head:                github.Ptr(toolCtx.Task.SourceBranch),
-		Base:                github.Ptr(targetBranch),
-		MaintainerCanModify: github.Ptr(true),
-	}
-
-	_, _, err = toolCtx.GithubClient.PullRequests.Create(ctx, toolCtx.Task.Issue.owner, toolCtx.Task.Issue.repo, pr)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create pull request: %w", err)
-	}
-
-	return nil, nil
-}
-
-func (t *CreatePullRequestTool) Replay(ctx context.Context, block anthropic.ToolUseBlock, toolCtx *ToolContext) error {
-	// No side effects to replay
+func (t *ValidateChangesTool) Replay(ctx context.Context, block anthropic.ToolUseBlock, toolCtx *ToolContext) error {
+	// Changes were persisted remotely when they were validated the first time, so we can clear them locally
+	toolCtx.Workspace.ClearLocalChanges()
 	return nil
 }
 
@@ -692,39 +577,40 @@ func (t *AddReactionTool) Replay(ctx context.Context, block anthropic.ToolUseBlo
 	return nil
 }
 
-// RequestReviewTool implements the request_review tool
-type RequestReviewTool struct {
+type PublishChangesForReviewTool struct {
 	BaseTool
 }
 
-// RequestReviewInput represents the input for request_review
-type RequestReviewInput struct {
-	Usernames []string `json:"usernames"`
-	Message   string   `json:"message"`
+type PublishChangesForReviewInput struct {
+	CommitMessage    string `json:"commit_message"`
+	PullRequestTitle string `json:"pull_request_title"`
+	PullRequestBody  string `json:"pull_request_body"`
 }
 
-// NewRequestReviewTool creates a new request review tool
-func NewRequestReviewTool() *RequestReviewTool {
-	return &RequestReviewTool{
-		BaseTool: BaseTool{Name: "request_review"},
+func NewPublishChangesForReviewTool() *PublishChangesForReviewTool {
+	return &PublishChangesForReviewTool{
+		BaseTool: BaseTool{Name: "publish_changes_for_review"},
 	}
 }
 
 // GetToolParam returns the tool parameter definition
-func (t *RequestReviewTool) GetToolParam() anthropic.ToolParam {
+func (t *PublishChangesForReviewTool) GetToolParam() anthropic.ToolParam {
 	return anthropic.ToolParam{
 		Name:        t.Name,
-		Description: anthropic.String("Request review or input from specific users"),
+		Description: anthropic.String("Publish changes for review by other developers"),
 		InputSchema: anthropic.ToolInputSchemaParam{
 			Properties: map[string]any{
-				"usernames": map[string]any{
-					"type":        "array",
-					"items":       map[string]any{"type": "string"},
-					"description": "GitHub usernames to request review from",
-				},
-				"message": map[string]any{
+				"commit_message": map[string]any{
 					"type":        "string",
-					"description": "Message explaining what input is needed",
+					"description": "Commit message describing all file changes made since the last call to this tool",
+				},
+				"pull_request_title": map[string]any{
+					"type":        "string",
+					"description": "Title for the new pull request, if any. Ignored if a pull request already exists",
+				},
+				"pull_request_body": map[string]any{
+					"type":        "string",
+					"description": "Description of the solution and what changes were made. Ignored if a pull request already exists",
 				},
 			},
 		},
@@ -732,12 +618,12 @@ func (t *RequestReviewTool) GetToolParam() anthropic.ToolParam {
 }
 
 // ParseToolUse parses the tool use block
-func (t *RequestReviewTool) ParseToolUse(block anthropic.ToolUseBlock) (*RequestReviewInput, error) {
+func (t *PublishChangesForReviewTool) ParseToolUse(block anthropic.ToolUseBlock) (*PublishChangesForReviewInput, error) {
 	if block.Name != t.Name {
 		return nil, fmt.Errorf("tool use block is for %s, not %s", block.Name, t.Name)
 	}
 
-	var input RequestReviewInput
+	var input PublishChangesForReviewInput
 	if err := parseInputJSON(block, &input); err != nil {
 		return nil, err
 	}
@@ -745,30 +631,37 @@ func (t *RequestReviewTool) ParseToolUse(block anthropic.ToolUseBlock) (*Request
 }
 
 // Run executes the request review command
-func (t *RequestReviewTool) Run(ctx context.Context, block anthropic.ToolUseBlock, toolCtx *ToolContext) (*string, error) {
+func (t *PublishChangesForReviewTool) Run(ctx context.Context, block anthropic.ToolUseBlock, toolCtx *ToolContext) (*string, error) {
 	input, err := t.ParseToolUse(block)
 	if err != nil {
 		return nil, fmt.Errorf("error parsing input: %w", err)
 	}
 
-	if len(input.Usernames) == 0 {
-		return nil, ToolInputError{fmt.Errorf("usernames are required")}
+	if input.CommitMessage == "" {
+		return nil, ToolInputError{fmt.Errorf("commit_message is required")}
 	}
 
-	if input.Message == "" {
-		return nil, ToolInputError{fmt.Errorf("message is required")}
+	if toolCtx.Task.PullRequest == nil {
+		if input.PullRequestTitle == "" {
+			return nil, ToolInputError{fmt.Errorf("a new pull request will be created, so pull_request_title is required")}
+		}
+
+		if input.PullRequestBody == "" {
+			return nil, ToolInputError{fmt.Errorf("a new pull request will be created, so pull_request_body is required")}
+		}
 	}
 
-	reviewRequest := github.ReviewersRequest{
-		Reviewers: input.Usernames,
+	err = toolCtx.Workspace.PublishChangesForReview(ctx, input.CommitMessage, input.PullRequestTitle, input.PullRequestBody)
+	if err != nil {
+		return nil, fmt.Errorf("failed to publish changes: %w", err)
 	}
 
-	_, _, err = toolCtx.GithubClient.PullRequests.RequestReviewers(ctx, toolCtx.Task.Issue.owner, toolCtx.Task.Issue.repo, toolCtx.Task.PullRequest.number, reviewRequest)
 	return nil, err
 }
 
-func (t *RequestReviewTool) Replay(ctx context.Context, block anthropic.ToolUseBlock, toolCtx *ToolContext) error {
-	// No side effects to replay
+func (t *PublishChangesForReviewTool) Replay(ctx context.Context, block anthropic.ToolUseBlock, toolCtx *ToolContext) error {
+	// Changes were published from one remote location to another by the original invocation of this tool, so there is
+	// nothing to do here
 	return nil
 }
 
@@ -785,11 +678,10 @@ func NewToolRegistry() *ToolRegistry {
 
 	// Register all tools
 	registry.Register(NewTextEditorTool())
-	registry.Register(NewCreatePullRequestTool())
 	registry.Register(NewPostCommentTool())
 	registry.Register(NewAddReactionTool())
-	registry.Register(NewRequestReviewTool())
-	registry.Register(NewCommitChangesTool())
+	registry.Register(NewValidateChangesTool())
+	registry.Register(NewPublishChangesForReviewTool())
 
 	return registry
 }
