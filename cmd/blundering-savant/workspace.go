@@ -522,11 +522,6 @@ func (rvw *remoteValidationWorkspace) mergeWorkBranchToReviewBranch(ctx context.
 	return createdMergeCommit, nil
 }
 
-func normalizePath(path string) string {
-	// Paths in git are always relative, they cannot start with a slash
-	return strings.TrimPrefix(path, "/")
-}
-
 func getWorkBranchName(issue githubIssue) string {
 	branchName := fmt.Sprintf("wip/issue-%d-%s", issue.number, sanitizeForBranchName(issue.title))
 	return normalizeBranchName(branchName)

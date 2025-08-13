@@ -52,27 +52,6 @@ type ConversationHistoryStore interface {
 	Delete(key string) error
 }
 
-type FileSystem interface {
-	// Read reads the content of a file at the given path
-	Read(ctx context.Context, path string) (string, error)
-	// Write writes the content to a file at the given path, creating the file if it doesn't exist
-	Write(ctx context.Context, path string, content string) error
-	// Delete deletes a file at the given path
-	Delete(ctx context.Context, path string) error
-
-	// FileExists returns true if the file at the given path exists, false otherwise
-	FileExists(ctx context.Context, path string) (bool, error)
-
-	// IsDir returns true if the given path is a directory, false otherwise
-	IsDir(ctx context.Context, dir string) (bool, error)
-	// List lists all files in the given directory
-	ListDir(ctx context.Context, dir string) ([]string, error)
-}
-
-var (
-	ErrFileNotFound error = fmt.Errorf("file not found")
-)
-
 // Workspace represents a three-stage development process: local changes, validation, and review. Callers make local
 // changes using the FileSystem interface, validate them with ValidateChanges, and publish them for review using
 // PublishChangesForReview
