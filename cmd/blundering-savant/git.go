@@ -21,6 +21,12 @@ type githubGitRepo struct {
 	git *github.GitService
 }
 
+func NewGithubGitRepo(gitService *github.GitService) githubGitRepo {
+	return githubGitRepo{
+		git: gitService,
+	}
+}
+
 // CreateBranch creates a new branch. If the branch already exists, CreateBranch does not return an error
 func (ggr *githubGitRepo) CreateBranch(ctx context.Context, owner string, repo string, baseBranch string, newBranch string) error {
 	// Check if branch already exists

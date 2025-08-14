@@ -37,6 +37,14 @@ type diffFileSystem struct {
 	deletedFiles map[string]struct{} // path -> struct{}{} (files we've deleted)
 }
 
+func NewDiffFileSystem(baseFileSystem FileSystem) diffFileSystem {
+	return diffFileSystem{
+		baseFileSystem: baseFileSystem,
+		workingTree:    map[string]string{},
+		deletedFiles:   map[string]struct{}{},
+	}
+}
+
 // Read reads a file from the work branch with any in-memory changes applied
 func (dfs diffFileSystem) Read(ctx context.Context, path string) (string, error) {
 	path = normalizePath(path)
@@ -145,26 +153,40 @@ func (dfs diffFileSystem) HasChanges() bool {
 	return len(dfs.workingTree) > 0 || len(dfs.deletedFiles) > 0
 }
 
-type DFSChangelist struct {
-	Path    string
-	Content *string // nil for delete
+type MemChangelist struct {
+	modified map[string]string
+	deleted  map[string]struct{}
 }
 
-func (dfs diffFileSystem) GetChangelist() DFSChangelist {
-	changes := []FileChange{}
-	for path, content := range dfs.workingTree {
-		changes = append(changes, FileChange{
-			Path:    path,
-			Content: &content,
-		})
+func (mc MemChangelist) ForEachModified(fn func(path string, content string) error) error {
+	for path, content := range mc.modified {
+		err := fn(path, content)
+		if err != nil {
+			return fmt.Errorf("error while handling modified file '%s': %w", path, err)
+		}
 	}
-	for path := range dfs.deletedFiles {
-		changes = append(changes, FileChange{
-			Path:    path,
-			Content: nil,
-		})
+	return nil
+}
+
+func (mc MemChangelist) IsModified(path string) bool {
+	_, ok := mc.modified[path]
+	return ok
+}
+
+func (mc MemChangelist) IsDeleted(path string) bool {
+	_, ok := mc.deleted[path]
+	return ok
+}
+
+func (mc MemChangelist) IsEmpty() bool {
+	return len(mc.modified) == 0 && len(mc.deleted) == 0
+}
+
+func (dfs diffFileSystem) GetChangelist() MemChangelist {
+	return MemChangelist{
+		modified: dfs.workingTree,
+		deleted:  dfs.deletedFiles,
 	}
-	return changes
 }
 
 func normalizePath(path string) string {

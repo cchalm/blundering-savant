@@ -25,6 +25,9 @@ func (rvwf remoteValidationWorkspaceFactory) NewWorkspace(ctx context.Context, t
 // the default branch has been/will be created. This workflow is designed to reduce noise on PRs while the bot is
 // iterating on solutions
 type remoteValidationWorkspace struct {
+	git GitRepo
+	fs  *diffFileSystem
+
 	githubClient     *github.Client
 	owner            string
 	repo             string
@@ -45,6 +48,11 @@ type remoteValidationWorkspace struct {
 	validator CommitValidator
 }
 
+type GitRepo interface {
+	CreateBranch(ctx context.Context, owner string, repo string, baseBranch string, newBranch string) error
+	CommitChanges(ctx context.Context, ower string, repo string, branch string, changelist Changelist, commitMessage string) (*github.Commit, error)
+}
+
 type CommitValidator interface {
 	ValidateCommit(ctx context.Context, owner string, repo string, commitSHA string) (ValidationResult, error)
 }
@@ -55,6 +63,9 @@ func NewRemoteValidationWorkspace(
 	tsk task,
 ) (*remoteValidationWorkspace, error) {
 	owner, repo := tsk.Issue.owner, tsk.Issue.repo
+
+	gitRepo := NewGithubGitRepo(githubClient.Git)
+	diffFS := NewDiffFileSystem(githubFileSystem)
 
 	// Get default branch
 	repoInfo, _, err := githubClient.Repositories.Get(ctx, owner, repo)
@@ -95,6 +106,9 @@ func NewRemoteValidationWorkspace(
 	validator := NewGithubActionCommitValidator(githubClient, validationWorkflowFileName)
 
 	return &remoteValidationWorkspace{
+		git: &gitRepo,
+		fs:  &diffFS,
+
 		githubClient:     githubClient,
 		owner:            owner,
 		repo:             repo,
