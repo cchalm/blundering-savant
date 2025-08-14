@@ -252,6 +252,11 @@ func (b *Bot) processWithAI(ctx context.Context, task task, workspace Workspace)
 		return fmt.Errorf("failed to delete conversation history for concluded conversation: %w", err)
 	}
 
+	_, err = b.githubClient.Issues.RemoveLabelForIssue(ctx, task.Issue.owner, task.Issue.repo, task.Issue.number, *LabelBotTurn.Name)
+	if err != nil {
+		return fmt.Errorf("failed to remove bot turn label: %w", err)
+	}
+
 	log.Print("AI interaction concluded")
 	return nil
 }

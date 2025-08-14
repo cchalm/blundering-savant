@@ -19,6 +19,8 @@ type githubIssue struct {
 	title string
 	body  string
 	url   string
+
+	labels []string
 }
 
 type githubPullRequest struct {
@@ -126,6 +128,12 @@ func (tg *taskGenerator) searchIssues(ctx context.Context) ([]githubIssue, error
 		owner := parts[len(parts)-2]
 		repo := parts[len(parts)-1]
 
+		// Convert labels into a list of strings
+		labels := []string{}
+		for _, label := range issue.Labels {
+			labels = append(labels, *label.Name)
+		}
+
 		issues = append(issues, githubIssue{
 			owner:  owner,
 			repo:   repo,
@@ -134,6 +142,8 @@ func (tg *taskGenerator) searchIssues(ctx context.Context) ([]githubIssue, error
 			title: *issue.Title,
 			body:  *issue.Body,
 			url:   *issue.URL,
+
+			labels: labels,
 		})
 	}
 
@@ -252,6 +262,10 @@ func (tg *taskGenerator) needsAttention(task task) bool {
 		len(task.PRCommentsRequiringResponses) > 0 ||
 		len(task.PRReviewCommentsRequiringResponses) > 0 {
 
+		return true
+	}
+	// Check if there is a "bot turn" label, which is a manual prompt for the bot to take action
+	if slices.Contains(task.Issue.labels, *LabelBotTurn.Name) {
 		return true
 	}
 

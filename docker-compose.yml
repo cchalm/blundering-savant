@@ -11,6 +11,7 @@ services:
       - LOG_LEVEL=${LOG_LEVEL:-info}
     volumes:
       - ./logs:/app/logs
+      - ./conversations:/app/conversations
     logging:
       driver: "json-file"
       options:
