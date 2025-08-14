@@ -67,10 +67,11 @@ type Workspace interface {
 	HasUnpublishedChanges(ctx context.Context) (bool, error)
 
 	// ValidateChanges persists local changes remotely, validates them, and returns the results. After calling
-	// ValidateChanges, HasLocalChanges will return false until additional local changes are created
+	// ValidateChanges, there will be no local changes in the workspace
 	ValidateChanges(ctx context.Context, commitMessage string) (ValidationResult, error)
 	// PublishChangesForReview makes validated changes available for review. reviewRequestTitle and reviewRequestBody
-	// are only used the first time a review is published, subsequent publishes will update the existing review
+	// are only used the first time a review is published, subsequent publishes will ignore these parameters and update
+	// the existing review
 	PublishChangesForReview(ctx context.Context, commitMessage string, reviewRequestTitle string, reviewRequestBody string) error
 }
 

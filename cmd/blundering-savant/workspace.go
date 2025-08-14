@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -25,12 +24,10 @@ func (rvwf remoteValidationWorkspaceFactory) NewWorkspace(ctx context.Context, t
 // the default branch has been/will be created. This workflow is designed to reduce noise on PRs while the bot is
 // iterating on solutions
 type remoteValidationWorkspace struct {
-	git GitRepo
-	fs  *diffFileSystem
+	git       GitRepo
+	fs        *memDiffFileSystem
+	prService PullRequestService
 
-	githubClient     *github.Client
-	owner            string
-	repo             string
 	issueNumber      int
 	needsPullRequest bool
 
@@ -38,23 +35,22 @@ type remoteValidationWorkspace struct {
 	workBranch   string
 	reviewBranch string
 
-	baseCommit   *github.Commit    // The commit we started from
-	workingTree  map[string]string // path -> content (files we've modified)
-	deletedFiles map[string]bool   // path -> true (files we've deleted)
-
-	// Git objects
-	currentTreeSHA string // Current tree SHA we're building on
-
 	validator CommitValidator
 }
 
 type GitRepo interface {
-	CreateBranch(ctx context.Context, owner string, repo string, baseBranch string, newBranch string) error
-	CommitChanges(ctx context.Context, ower string, repo string, branch string, changelist Changelist, commitMessage string) (*github.Commit, error)
+	CreateBranch(ctx context.Context, baseBranch string, newBranch string) error
+	CommitChanges(ctx context.Context, branch string, changelist Changelist, commitMessage string) (*github.Commit, error)
+	Merge(ctx context.Context, baseBranch string, targetBranch string, commitMessage string) (*github.Commit, error)
+	CompareCommits(ctx context.Context, base string, head string) (*github.CommitsComparison, error)
 }
 
 type CommitValidator interface {
-	ValidateCommit(ctx context.Context, owner string, repo string, commitSHA string) (ValidationResult, error)
+	ValidateCommit(ctx context.Context, commitSHA string) (ValidationResult, error)
+}
+
+type PullRequestService interface {
+	Create(ctx context.Context, title string, body string) error
 }
 
 func NewRemoteValidationWorkspace(
@@ -63,9 +59,6 @@ func NewRemoteValidationWorkspace(
 	tsk task,
 ) (*remoteValidationWorkspace, error) {
 	owner, repo := tsk.Issue.owner, tsk.Issue.repo
-
-	gitRepo := NewGithubGitRepo(githubClient.Git)
-	diffFS := NewDiffFileSystem(githubFileSystem)
 
 	// Get default branch
 	repoInfo, _, err := githubClient.Repositories.Get(ctx, owner, repo)
@@ -80,6 +73,10 @@ func NewRemoteValidationWorkspace(
 	workBranch := getWorkBranchName(tsk.Issue)
 	reviewBranch := tsk.SourceBranch
 
+	gitRepo := NewGithubGitRepo(githubClient.Git, githubClient.Repositories, owner, repo)
+	githubFS := NewGithubFileSystem(githubClient.Repositories, owner, repo, workBranch)
+	diffFS := NewMemDiffFileSystem(githubFS)
+
 	// Create the work and review branches if they don't exist
 	err = createBranchIfNotExist(ctx, githubClient, owner, repo, baseBranch, workBranch)
 	if err != nil {
@@ -90,40 +87,22 @@ func NewRemoteValidationWorkspace(
 		return nil, fmt.Errorf("failed to create review branch: %w", err)
 	}
 
-	// Get the current commit for the work branch
-	ref, _, err := githubClient.Git.GetRef(ctx, owner, repo, fmt.Sprintf("refs/heads/%s", workBranch))
-	if err != nil {
-		return nil, fmt.Errorf("failed to get branch ref: %w", err)
-	}
-
-	// Get the commit object
-	commit, _, err := githubClient.Git.GetCommit(ctx, owner, repo, *ref.Object.SHA)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get commit: %w", err)
-	}
+	prService := NewGithubPullRequestService(githubClient.PullRequests, owner, repo, reviewBranch, baseBranch)
 
 	validationWorkflowFileName := "go.yml"
-	validator := NewGithubActionCommitValidator(githubClient, validationWorkflowFileName)
+	validator := NewGithubActionCommitValidator(githubClient, owner, repo, validationWorkflowFileName)
 
 	return &remoteValidationWorkspace{
-		git: &gitRepo,
-		fs:  &diffFS,
+		git:       &gitRepo,
+		fs:        &diffFS,
+		prService: &prService,
 
-		githubClient:     githubClient,
-		owner:            owner,
-		repo:             repo,
 		issueNumber:      tsk.Issue.number,
 		needsPullRequest: tsk.PullRequest == nil,
 
 		baseBranch:   baseBranch,
 		workBranch:   workBranch,
 		reviewBranch: reviewBranch,
-
-		baseCommit:   commit,
-		workingTree:  make(map[string]string),
-		deletedFiles: make(map[string]bool),
-
-		currentTreeSHA: *commit.Tree.SHA,
 
 		validator: validator,
 	}, nil
@@ -162,129 +141,48 @@ func createBranchIfNotExist(ctx context.Context, githubClient *github.Client, ow
 // Read reads a file from the work branch with any in-memory changes applied
 func (rvw remoteValidationWorkspace) Read(ctx context.Context, path string) (string, error) {
 	path = normalizePath(path)
-
-	// Check if file is deleted
-	if rvw.deletedFiles[path] {
-		return "", fmt.Errorf("file is deleted: %w", ErrFileNotFound)
-	}
-
-	// Check working tree first
-	if content, exists := rvw.workingTree[path]; exists {
-		return content, nil
-	}
-
-	// Fall back to GitHub
-	fileContent, _, resp, err := rvw.githubClient.Repositories.GetContents(ctx, rvw.owner, rvw.repo, path, &github.RepositoryContentGetOptions{
-		Ref: rvw.workBranch,
-	})
-	if err != nil {
-		if resp.StatusCode == http.StatusNotFound {
-			return "", ErrFileNotFound
-		}
-		return "", fmt.Errorf("failed to get file contents: %w", err)
-	}
-
-	if fileContent == nil {
-		return "", fmt.Errorf("file content nil")
-	}
-
-	content, err := fileContent.GetContent()
-	if err != nil {
-		return "", fmt.Errorf("failed to decode file content: %w", err)
-	}
-
-	return content, nil
+	return rvw.fs.Read(ctx, path)
 }
 
 // Write writes a file in-memory
-func (rvw *remoteValidationWorkspace) Write(_ context.Context, path string, content string) error {
+func (rvw *remoteValidationWorkspace) Write(ctx context.Context, path string, content string) error {
 	path = normalizePath(path)
-
-	rvw.workingTree[path] = content
-	// Remove from deleted files if it was marked as deleted
-	delete(rvw.deletedFiles, path)
-	return nil
+	return rvw.fs.Write(ctx, path, content)
 }
 
 // DeleteFile marks a file as deleted in-memory
-func (rvw *remoteValidationWorkspace) Delete(_ context.Context, path string) error {
+func (rvw *remoteValidationWorkspace) Delete(ctx context.Context, path string) error {
 	path = normalizePath(path)
-
-	rvw.deletedFiles[path] = true
-	// Remove from working tree if it was modified
-	delete(rvw.workingTree, path)
-	return nil
+	return rvw.fs.Delete(ctx, path)
 }
 
 // FileExists checks if a file exists in the current state
 func (rvw remoteValidationWorkspace) FileExists(ctx context.Context, path string) (bool, error) {
 	path = normalizePath(path)
-
-	_, err := rvw.Read(ctx, path)
-	if err != nil {
-		if errors.Is(err, ErrFileNotFound) {
-			return false, nil
-		}
-		return false, err
-	}
-	return true, nil
+	return rvw.fs.FileExists(ctx, path)
 }
 
 // IsDir checks if a path is a directory
 func (rvw remoteValidationWorkspace) IsDir(ctx context.Context, path string) (bool, error) {
-	_, dirContents, _, err := rvw.githubClient.Repositories.GetContents(ctx, rvw.owner, rvw.repo, path, &github.RepositoryContentGetOptions{
-		Ref: rvw.workBranch,
-	})
-
-	if dirContents != nil {
-		return true, nil
-	}
-
-	if err != nil && (strings.Contains(err.Error(), "404") || strings.Contains(err.Error(), "not found")) {
-		return false, nil
-	}
-
-	return false, err
+	path = normalizePath(path)
+	return rvw.fs.IsDir(ctx, path)
 }
 
 // ListDir lists contents of a directory
 func (rvw remoteValidationWorkspace) ListDir(ctx context.Context, path string) ([]string, error) {
-	_, dirContents, _, err := rvw.githubClient.Repositories.GetContents(ctx, rvw.owner, rvw.repo, path, &github.RepositoryContentGetOptions{
-		Ref: rvw.workBranch,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("failed to list directory: %w", err)
-	}
-
-	var files []string
-	for _, content := range dirContents {
-		if content.Name != nil {
-			name := *content.Name
-			if content.Type != nil && *content.Type == "dir" {
-				name += "/"
-			}
-			files = append(files, name)
-		}
-	}
-	return files, nil
+	path = normalizePath(path)
+	return rvw.fs.ListDir(ctx, path)
 }
 
 func (rvw remoteValidationWorkspace) HasLocalChanges() bool {
-	return len(rvw.workingTree) > 0 || len(rvw.deletedFiles) > 0
+	return rvw.fs.HasChanges()
 }
 
 // HasUnpublishedChanges returns true if there are changes in the working branch that have not been merged to the review
 // branch
 func (rvw remoteValidationWorkspace) HasUnpublishedChanges(ctx context.Context) (bool, error) {
 	// Compare the working branch against the review branch
-	comparison, _, err := rvw.githubClient.Repositories.CompareCommits(
-		ctx,
-		rvw.owner,
-		rvw.repo,
-		rvw.reviewBranch,
-		rvw.workBranch,
-		&github.ListOptions{},
-	)
+	comparison, err := rvw.git.CompareCommits(ctx, rvw.reviewBranch, rvw.workBranch)
 	if err != nil {
 		return false, fmt.Errorf("failed to compare branches %s..%s: %w", rvw.reviewBranch, rvw.workBranch, err)
 	}
@@ -293,25 +191,9 @@ func (rvw remoteValidationWorkspace) HasUnpublishedChanges(ctx context.Context) 
 	return *comparison.AheadBy > 0, nil
 }
 
-// GetChangedFiles returns a list of files that have been modified
-func (rvw remoteValidationWorkspace) GetChangedFiles() []string {
-	var files []string
-
-	for path := range rvw.workingTree {
-		files = append(files, path)
-	}
-
-	for path := range rvw.deletedFiles {
-		files = append(files, path)
-	}
-
-	return files
-}
-
 // ClearLocalChanges deletes changes staged in-memory
 func (rvw *remoteValidationWorkspace) ClearLocalChanges() {
-	rvw.workingTree = map[string]string{}
-	rvw.deletedFiles = map[string]bool{}
+	rvw.fs.Reset()
 }
 
 func (rvw *remoteValidationWorkspace) ValidateChanges(ctx context.Context, commitMessage string) (ValidationResult, error) {
@@ -319,7 +201,6 @@ func (rvw *remoteValidationWorkspace) ValidateChanges(ctx context.Context, commi
 		return ValidationResult{}, fmt.Errorf("no changes to validate")
 	}
 
-	// Commit changes to the work branch
 	commit, err := rvw.commitToWorkBranch(ctx, commitMessage)
 	if err != nil {
 		return ValidationResult{}, fmt.Errorf("failed to commit changes to work branch: %w", err)
@@ -329,7 +210,7 @@ func (rvw *remoteValidationWorkspace) ValidateChanges(ctx context.Context, commi
 		return ValidationResult{}, fmt.Errorf("failed to validate commit, no validator provided")
 	}
 
-	result, err := rvw.validator.ValidateCommit(ctx, rvw.owner, rvw.repo, *commit.SHA)
+	result, err := rvw.validator.ValidateCommit(ctx, *commit.SHA)
 	if err != nil {
 		return ValidationResult{}, fmt.Errorf("failed to validate commit: %w", err)
 	}
@@ -338,96 +219,17 @@ func (rvw *remoteValidationWorkspace) ValidateChanges(ctx context.Context, commi
 }
 
 func (rvw *remoteValidationWorkspace) commitToWorkBranch(ctx context.Context, commitMessage string) (*github.Commit, error) {
-	if !rvw.HasLocalChanges() {
+	if !rvw.fs.HasChanges() {
 		return nil, fmt.Errorf("no changes to commit")
 	}
 
-	// Get the current tree
-	currentTree, _, err := rvw.githubClient.Git.GetTree(ctx, rvw.owner, rvw.repo, rvw.currentTreeSHA, true)
+	createdCommit, err := rvw.git.CommitChanges(ctx, rvw.workBranch, rvw.fs.GetChangelist(), commitMessage)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get current tree: %w", err)
+		return nil, fmt.Errorf("failed to commit changes: %w", err)
 	}
 
-	// Build new tree entries based on current tree + changes
-	var treeEntries []*github.TreeEntry
-
-	// Start with existing files from current tree, excluding deleted ones
-	for _, entry := range currentTree.Entries {
-		if entry.Path == nil {
-			continue
-		}
-
-		path := *entry.Path
-
-		// Skip deleted files
-		if rvw.deletedFiles[path] {
-			continue
-		}
-
-		// Skip files that we're updating (they'll be added below)
-		if _, isModified := rvw.workingTree[path]; isModified {
-			continue
-		}
-
-		// Keep existing file as-is
-		treeEntries = append(treeEntries, entry)
-	}
-
-	// Add modified/new files
-	for path, content := range rvw.workingTree {
-		// Create blob for file content
-		blob := &github.Blob{
-			Content:  github.Ptr(content),
-			Encoding: github.Ptr("utf-8"),
-		}
-
-		createdBlob, _, err := rvw.githubClient.Git.CreateBlob(ctx, rvw.owner, rvw.repo, blob)
-		if err != nil {
-			return nil, fmt.Errorf("failed to create blob for %s: %w", path, err)
-		}
-
-		// Add tree entry
-		treeEntry := &github.TreeEntry{
-			Path: github.Ptr(path),
-			Mode: github.Ptr("100644"),
-			Type: github.Ptr("blob"),
-			SHA:  createdBlob.SHA,
-		}
-		treeEntries = append(treeEntries, treeEntry)
-	}
-
-	createdTree, _, err := rvw.githubClient.Git.CreateTree(ctx, rvw.owner, rvw.repo, "", treeEntries)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create tree: %w", err)
-	}
-
-	commit := &github.Commit{
-		Message: github.Ptr(commitMessage),
-		Tree:    createdTree,
-		Parents: []*github.Commit{rvw.baseCommit},
-	}
-
-	createdCommit, _, err := rvw.githubClient.Git.CreateCommit(ctx, rvw.owner, rvw.repo, commit, nil)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create commit: %w", err)
-	}
-
-	// Update branch reference to point to new commit
-	ref, _, err := rvw.githubClient.Git.GetRef(ctx, rvw.owner, rvw.repo, fmt.Sprintf("refs/heads/%s", rvw.workBranch))
-	if err != nil {
-		return nil, fmt.Errorf("failed to get branch ref: %w", err)
-	}
-
-	ref.Object.SHA = createdCommit.SHA
-	_, _, err = rvw.githubClient.Git.UpdateRef(ctx, rvw.owner, rvw.repo, ref, false)
-	if err != nil {
-		return nil, fmt.Errorf("failed to update branch ref: %w", err)
-	}
-
-	// Update our state
-	rvw.baseCommit = createdCommit
-	rvw.currentTreeSHA = *createdTree.SHA
-	rvw.ClearLocalChanges()
+	// Reset in-memory changes
+	rvw.fs.Reset()
 
 	return createdCommit, nil
 }
@@ -461,15 +263,7 @@ Fixes #%d
 ---
 *This PR was created by the Blundering Savant bot.*`, body, rvw.issueNumber)
 
-	pr := &github.NewPullRequest{
-		Title:               github.Ptr(title),
-		Body:                github.Ptr(body),
-		Head:                github.Ptr(rvw.reviewBranch),
-		Base:                github.Ptr(rvw.baseBranch),
-		MaintainerCanModify: github.Ptr(true),
-	}
-
-	_, _, err := rvw.githubClient.PullRequests.Create(ctx, rvw.owner, rvw.repo, pr)
+	err := rvw.prService.Create(ctx, title, body)
 	if err != nil {
 		return fmt.Errorf("failed to create pull request: %w", err)
 	}
@@ -482,58 +276,12 @@ func (rvw *remoteValidationWorkspace) mergeWorkBranchToReviewBranch(ctx context.
 		return nil, fmt.Errorf("cannot merge from the work branch to the review branch while there are uncommitted changes in-memory")
 	}
 
-	// Get the current commit from the work branch
-	workBranchRef, _, err := rvw.githubClient.Git.GetRef(ctx, rvw.owner, rvw.repo, fmt.Sprintf("refs/heads/%s", rvw.workBranch))
+	commit, err := rvw.git.Merge(ctx, rvw.workBranch, rvw.reviewBranch, commitMessage)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get work branch ref: %w", err)
-	}
-	workBranchCommitSHA := workBranchRef.Object.SHA
-
-	// Get the review branch reference
-	reviewBranchRef, _, err := rvw.githubClient.Git.GetRef(ctx, rvw.owner, rvw.repo, fmt.Sprintf("refs/heads/%s", rvw.reviewBranch))
-	if err != nil {
-		return nil, fmt.Errorf("failed to get review branch ref: %w", err)
-	}
-	reviewBranchCommitSHA := reviewBranchRef.Object.SHA
-
-	// Check if work branch is ahead of review branch
-	if *workBranchCommitSHA == *reviewBranchCommitSHA {
-		return nil, fmt.Errorf("work branch has no new commits to merge")
+		return nil, fmt.Errorf("failed to merge work branch into review branch: %w", err)
 	}
 
-	// Get the work branch commit to use as the new commit for review branch
-	workBranchCommit, _, err := rvw.githubClient.Git.GetCommit(ctx, rvw.owner, rvw.repo, *workBranchCommitSHA)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get work branch commit: %w", err)
-	}
-
-	// Get the review branch commit to use as parent
-	reviewBranchCommit, _, err := rvw.githubClient.Git.GetCommit(ctx, rvw.owner, rvw.repo, *reviewBranchCommitSHA)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get review branch commit: %w", err)
-	}
-
-	// Create a new commit on the review branch that merges the work branch changes
-	// This creates a merge commit with both parents
-	mergeCommit := &github.Commit{
-		Message: github.Ptr(commitMessage),
-		Tree:    workBranchCommit.Tree,                                  // Use the tree from work branch (contains all the changes)
-		Parents: []*github.Commit{reviewBranchCommit, workBranchCommit}, // Both parents for merge commit
-	}
-
-	createdMergeCommit, _, err := rvw.githubClient.Git.CreateCommit(ctx, rvw.owner, rvw.repo, mergeCommit, nil)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create merge commit: %w", err)
-	}
-
-	// Update the review branch reference to point to the new merge commit
-	reviewBranchRef.Object.SHA = createdMergeCommit.SHA
-	_, _, err = rvw.githubClient.Git.UpdateRef(ctx, rvw.owner, rvw.repo, reviewBranchRef, false)
-	if err != nil {
-		return nil, fmt.Errorf("failed to update review branch ref: %w", err)
-	}
-
-	return createdMergeCommit, nil
+	return commit, nil
 }
 
 func getWorkBranchName(issue githubIssue) string {
@@ -570,4 +318,9 @@ func normalizeBranchName(s string) string {
 	s = strings.Trim(s, "-.")
 
 	return s
+}
+
+func normalizePath(path string) string {
+	// All file paths are absolute in our simplified file system
+	return strings.TrimPrefix(path, "/")
 }

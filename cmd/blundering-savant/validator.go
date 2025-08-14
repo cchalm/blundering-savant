@@ -22,26 +22,30 @@ const (
 
 type GithubActionCommitValidator struct {
 	githubClient     *github.Client
+	owner            string
+	repo             string
 	workflowFileName string
 }
 
-func NewGithubActionCommitValidator(githubClient *github.Client, workflowFileName string) GithubActionCommitValidator {
+func NewGithubActionCommitValidator(githubClient *github.Client, owner string, repo string, workflowFileName string) GithubActionCommitValidator {
 	return GithubActionCommitValidator{
 		githubClient:     githubClient,
+		owner:            owner,
+		repo:             repo,
 		workflowFileName: workflowFileName,
 	}
 }
 
-func (gacv GithubActionCommitValidator) ValidateCommit(ctx context.Context, owner string, repo string, commitSHA string) (ValidationResult, error) {
+func (gacv GithubActionCommitValidator) ValidateCommit(ctx context.Context, commitSHA string) (ValidationResult, error) {
 	// Find existing run for this commit, if any
-	run, err := gacv.findWorkflowRun(ctx, owner, repo, commitSHA)
+	run, err := gacv.findWorkflowRun(ctx, commitSHA)
 	if err != nil {
 		return ValidationResult{}, fmt.Errorf("failed to find workflow run: %w", err)
 	}
 
 	if run == nil {
 		// No run found, trigger one
-		run, err = gacv.triggerWorkflowRun(ctx, owner, repo, commitSHA)
+		run, err = gacv.triggerWorkflowRun(ctx, commitSHA)
 		if err != nil {
 			return ValidationResult{}, fmt.Errorf("failed to trigger workflow: %w", err)
 		}
@@ -51,7 +55,7 @@ func (gacv GithubActionCommitValidator) ValidateCommit(ctx context.Context, owne
 		return ValidationResult{}, fmt.Errorf("unexpected nil in workflow run")
 	}
 
-	conclusion, err := gacv.waitForWorkflowCompletion(ctx, owner, repo, *run.ID)
+	conclusion, err := gacv.waitForWorkflowCompletion(ctx, *run.ID)
 	if err != nil {
 		return ValidationResult{}, err
 	}
@@ -62,12 +66,12 @@ func (gacv GithubActionCommitValidator) ValidateCommit(ctx context.Context, owne
 }
 
 // findWorkflowRun returns one workflow run for the given commit on the given branch. If no workflow run exists, returns (nil, nil)
-func (gacv GithubActionCommitValidator) findWorkflowRun(ctx context.Context, owner string, repo string, commitSHA string) (*github.WorkflowRun, error) {
+func (gacv GithubActionCommitValidator) findWorkflowRun(ctx context.Context, commitSHA string) (*github.WorkflowRun, error) {
 	opts := &github.ListWorkflowRunsOptions{
 		HeadSHA:     commitSHA,
 		ListOptions: github.ListOptions{PerPage: 1},
 	}
-	runs, _, err := gacv.githubClient.Actions.ListWorkflowRunsByFileName(ctx, owner, repo, gacv.workflowFileName, opts)
+	runs, _, err := gacv.githubClient.Actions.ListWorkflowRunsByFileName(ctx, gacv.owner, gacv.repo, gacv.workflowFileName, opts)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list workflow runs: %w", err)
 	}
@@ -83,18 +87,18 @@ func (gacv GithubActionCommitValidator) findWorkflowRun(ctx context.Context, own
 	return runs.WorkflowRuns[0], nil
 }
 
-func (gacv GithubActionCommitValidator) triggerWorkflowRun(ctx context.Context, owner string, repo string, commitSHA string) (*github.WorkflowRun, error) {
+func (gacv GithubActionCommitValidator) triggerWorkflowRun(ctx context.Context, commitSHA string) (*github.WorkflowRun, error) {
 	req := github.CreateWorkflowDispatchEventRequest{
 		Ref: commitSHA,
 	}
-	_, err := gacv.githubClient.Actions.CreateWorkflowDispatchEventByFileName(ctx, owner, repo, gacv.workflowFileName, req)
+	_, err := gacv.githubClient.Actions.CreateWorkflowDispatchEventByFileName(ctx, gacv.owner, gacv.repo, gacv.workflowFileName, req)
 	if err != nil {
 		return nil, fmt.Errorf("failed to trigger workflow run: %w", err)
 	}
 	return nil, nil
 }
 
-func (gacv GithubActionCommitValidator) waitForWorkflowCompletion(ctx context.Context, owner string, repo string, runID int64) (string, error) {
+func (gacv GithubActionCommitValidator) waitForWorkflowCompletion(ctx context.Context, runID int64) (string, error) {
 	pollInterval := 15 * time.Second
 	timeout := 45 * time.Minute
 
@@ -115,7 +119,7 @@ func (gacv GithubActionCommitValidator) waitForWorkflowCompletion(ctx context.Co
 				return "", fmt.Errorf("workflow completion check canceled: %w", err)
 			}
 		case <-ticker.C:
-			run, _, err := gacv.githubClient.Actions.GetWorkflowRunByID(ctx, owner, repo, runID)
+			run, _, err := gacv.githubClient.Actions.GetWorkflowRunByID(ctx, gacv.owner, gacv.repo, runID)
 			if err != nil {
 				return "", fmt.Errorf("failed to get workflow run: %w", err)
 			}
