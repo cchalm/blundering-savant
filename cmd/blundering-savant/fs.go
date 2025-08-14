@@ -11,14 +11,9 @@ var (
 	ErrFileNotFound error = fmt.Errorf("file not found")
 )
 
-// FileSystem is a basic interface for reading and writing files
-type FileSystem interface {
+type ReadOnlyFileSystem interface {
 	// Read reads the content of a file at the given path
 	Read(ctx context.Context, path string) (string, error)
-	// Write writes the content to a file at the given path, creating the file if it doesn't exist
-	Write(ctx context.Context, path string, content string) error
-	// Delete deletes a file at the given path
-	Delete(ctx context.Context, path string) error
 
 	// FileExists returns true if the file at the given path exists, false otherwise
 	FileExists(ctx context.Context, path string) (bool, error)
@@ -29,9 +24,19 @@ type FileSystem interface {
 	ListDir(ctx context.Context, dir string) ([]string, error)
 }
 
-// diffFileSystem sits on top of a FileSystem and tracks changes in-memory
+// FileSystem is a basic interface for reading and writing files
+type FileSystem interface {
+	ReadOnlyFileSystem
+
+	// Write writes the content to a file at the given path, creating the file if it doesn't exist
+	Write(ctx context.Context, path string, content string) error
+	// Delete deletes a file at the given path
+	Delete(ctx context.Context, path string) error
+}
+
+// diffFileSystem sits on top of a ReadOnlyFileSystem and tracks changes in-memory
 type diffFileSystem struct {
-	baseFileSystem FileSystem
+	baseFileSystem ReadOnlyFileSystem
 
 	workingTree  map[string]string   // path -> content (files we've modified)
 	deletedFiles map[string]struct{} // path -> struct{}{} (files we've deleted)
