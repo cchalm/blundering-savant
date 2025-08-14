@@ -112,15 +112,7 @@ func (b *Bot) Run(ctx context.Context, tasks <-chan taskOrError) error {
 			return err
 		}
 
-		if err := b.addLabel(ctx, tsk.Issue, LabelWorking); err != nil {
-			log.Printf("failed to add in-progress label: %v", err)
-		}
-
 		err = b.doTask(ctx, tsk)
-
-		if err := b.removeLabel(ctx, tsk.Issue, LabelWorking); err != nil {
-			log.Printf("failed to remove in-progress label: %v", err)
-		}
 
 		if err != nil {
 			// Add blocked label if there is an error, to tell the bot not to pick up this item again
@@ -128,13 +120,10 @@ func (b *Bot) Run(ctx context.Context, tasks <-chan taskOrError) error {
 				log.Printf("failed to add blocked label: %v", err)
 			}
 			// Post sanitized error comment
-			err = b.postIssueComment(ctx, tsk.Issue, "❌ I encountered an error while working on this issue.")
-			if err != nil {
+			msg := "❌ I encountered an error while working on this issue."
+			if err := b.postIssueComment(ctx, tsk.Issue, msg); err != nil {
 				log.Printf("failed to post error comment: %v", err)
 			}
-		}
-
-		if err != nil {
 			// Log the error and continue processing other tasks
 			log.Printf("failed to process task for issue %d: %v", tsk.Issue.number, err)
 		}
@@ -144,6 +133,15 @@ func (b *Bot) Run(ctx context.Context, tasks <-chan taskOrError) error {
 }
 
 func (b *Bot) doTask(ctx context.Context, tsk task) (err error) {
+	if err := b.addLabel(ctx, tsk.Issue, LabelWorking); err != nil {
+		log.Printf("failed to add in-progress label: %v", err)
+	}
+	defer func() {
+		if err := b.removeLabel(ctx, tsk.Issue, LabelWorking); err != nil {
+			log.Printf("failed to remove in-progress label: %v", err)
+		}
+	}()
+
 	workspace, err := b.workspaceFactory.NewWorkspace(ctx, tsk)
 	if err != nil {
 		return fmt.Errorf("failed to create workspace: %w", err)
@@ -252,7 +250,7 @@ func (b *Bot) processWithAI(ctx context.Context, task task, workspace Workspace)
 		return fmt.Errorf("failed to delete conversation history for concluded conversation: %w", err)
 	}
 
-	_, err = b.githubClient.Issues.RemoveLabelForIssue(ctx, task.Issue.owner, task.Issue.repo, task.Issue.number, *LabelBotTurn.Name)
+	err = b.removeLabel(ctx, task.Issue, LabelBotTurn)
 	if err != nil {
 		return fmt.Errorf("failed to remove bot turn label: %w", err)
 	}
