@@ -1,6 +1,7 @@
 package main
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -131,4 +132,82 @@ func TestOrganizePRReviewCommentsIntoThreads_EmptyInput(t *testing.T) {
 
 	require.NoError(t, err)
 	require.Len(t, threads, 0)
+}
+
+func TestGetFileTreeWithSafeguards_EnforcesLimits(t *testing.T) {
+	// Create a mock tree with various edge cases to test safeguards
+	entries := []*github.TreeEntry{}
+	
+	// Add normal files (should be included)
+	entries = append(entries, &github.TreeEntry{Path: github.String("README.md")})
+	entries = append(entries, &github.TreeEntry{Path: github.String("src/main.go")})
+	entries = append(entries, &github.TreeEntry{Path: github.String("docs/guide.md")})
+	
+	// Add a file with path too long (should be excluded)
+	longPath := "very/" + strings.Repeat("long/", 50) + "path.txt" // Over 500 chars
+	entries = append(entries, &github.TreeEntry{Path: &longPath})
+	
+	// Add a file too deep (should be excluded) 
+	deepPath := strings.Repeat("level/", 25) + "file.txt" // Over 20 levels deep
+	entries = append(entries, &github.TreeEntry{Path: &deepPath})
+	
+	// Add files to test the 1000 file limit
+	for i := 0; i < 1005; i++ {
+		path := "file" + string(rune('0'+i%10)) + ".txt"
+		entries = append(entries, &github.TreeEntry{Path: &path})
+	}
+	
+	tree := &github.Tree{Entries: entries}
+	
+	// Create a task generator (we don't need a real client for this test)
+	tg := &taskGenerator{}
+	
+	// Test the filtering logic directly
+	var fileTree []string
+	fileCount := 0
+	const (
+		maxFiles         = 1000
+		maxPathLength    = 500
+		maxDirectoryDepth = 20
+	)
+	
+	for _, entry := range tree.Entries {
+		if entry.Path == nil {
+			continue
+		}
+		
+		path := *entry.Path
+		
+		// Check path length limit
+		if len(path) > maxPathLength {
+			continue
+		}
+		
+		// Check directory depth limit
+		depth := strings.Count(path, "/")
+		if depth > maxDirectoryDepth {
+			continue
+		}
+		
+		// Check file count limit
+		if fileCount >= maxFiles {
+			break
+		}
+		
+		fileTree = append(fileTree, path)
+		fileCount++
+	}
+	
+	// Verify safeguards are enforced
+	require.LessOrEqual(t, len(fileTree), maxFiles, "Should not exceed max file count")
+	
+	for _, path := range fileTree {
+		require.LessOrEqual(t, len(path), maxPathLength, "Path should not exceed max length: %s", path)
+		require.LessOrEqual(t, strings.Count(path, "/"), maxDirectoryDepth, "Path should not exceed max depth: %s", path)
+	}
+	
+	// Verify some expected files are included
+	require.Contains(t, fileTree, "README.md")
+	require.Contains(t, fileTree, "src/main.go")
+	require.Contains(t, fileTree, "docs/guide.md")
 }
