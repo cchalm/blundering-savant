@@ -79,6 +79,9 @@ func (tg *taskGenerator) yield(ctx context.Context, yield func(task task, err er
 		if err != nil {
 			return
 		}
+		if len(issues) == 0 {
+			log.Println("No issues found")
+		}
 
 		for _, issue := range issues {
 			tsk, err := tg.buildTask(ctx, issue, botUser)
@@ -94,10 +97,11 @@ func (tg *taskGenerator) yield(ctx context.Context, yield func(task task, err er
 			}
 		}
 
+		log.Printf("Waiting for next check (up to %v)\n", tg.config.CheckInterval)
 		select {
 		case <-ticker:
 		case <-ctx.Done():
-			yield(task{}, context.Canceled)
+			yield(task{}, ctx.Err())
 			return
 		}
 	}
