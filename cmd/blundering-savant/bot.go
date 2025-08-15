@@ -80,7 +80,8 @@ type WorkspaceFactory interface {
 }
 
 type ValidationResult struct {
-	Output string
+	Succeeded bool
+	Details   string
 }
 
 func NewBot(config Config, githubClient *github.Client) *Bot {
@@ -285,12 +286,16 @@ func (b *Bot) addLabel(ctx context.Context, issue githubIssue, label github.Labe
 	return err
 }
 
-// removeLabel removes a label from an issue
+// removeLabel removes a label from an issue, if present
 func (b *Bot) removeLabel(ctx context.Context, issue githubIssue, label github.Label) error {
 	if label.Name == nil {
 		return fmt.Errorf("cannot remove label with nil name")
 	}
-	_, err := b.githubClient.Issues.RemoveLabelForIssue(ctx, issue.owner, issue.repo, issue.number, *label.Name)
+	resp, err := b.githubClient.Issues.RemoveLabelForIssue(ctx, issue.owner, issue.repo, issue.number, *label.Name)
+	if err != nil && resp.StatusCode == http.StatusNotFound {
+		// If the label isn't present, ignore the error
+		return nil
+	}
 	return err
 }
 
