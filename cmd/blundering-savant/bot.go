@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
 	"strconv"
 
 	"github.com/anthropics/anthropic-sdk-go"
@@ -371,6 +372,8 @@ func (b *Bot) initConversation(ctx context.Context, tsk task, toolCtx *ToolConte
 		if err != nil {
 			return nil, nil, fmt.Errorf("failed to build prompt: %w", err)
 		}
+		// TODO remove this
+		os.WriteFile("logs/prompt.txt", []byte(*promptPtr), 0644)
 		// Send initial message with a cache breakpoint, because the initial message tends to be very large and we are
 		// likely to need several back-and-forths after this
 		response, err := c.SendMessageAndSetCachePoint(ctx, anthropic.NewTextBlock(*promptPtr))

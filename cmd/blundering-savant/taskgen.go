@@ -35,17 +35,17 @@ type githubPullRequest struct {
 }
 
 type githubCheckSuite struct {
-	id         int64
-	status     string
-	conclusion string
-	runs       []githubCheckRun
+	ID         int64
+	Status     string
+	Conclusion string
+	Runs       []githubCheckRun
 }
 
 type githubCheckRun struct {
-	id          int64
-	status      string
-	conclusion  string
-	annotations []*github.CheckRunAnnotation
+	ID          int64
+	Status      string
+	Conclusion  string
+	Annotations []*github.CheckRunAnnotation
 }
 
 type taskOrError struct {
@@ -292,6 +292,14 @@ func (tg *taskGenerator) needsAttention(task task) bool {
 	// Check if there is a "bot turn" label, which is a manual prompt for the bot to take action
 	if slices.Contains(task.Issue.labels, *LabelBotTurn.Name) {
 		return true
+	}
+	// Check if there are any failed check suites
+	if task.SourceBranchCheckSuites != nil {
+		for _, checkSuite := range task.SourceBranchCheckSuites {
+			if checkSuite.Conclusion == string(CheckSuiteConclusionFailure) {
+				return true
+			}
+		}
 	}
 
 	return false
@@ -663,10 +671,10 @@ func getCheckSuites(ctx context.Context, githubClient *github.Client, owner stri
 			return nil, fmt.Errorf("failed to get check runs for suite %d: %w", checkSuite.GetID(), err)
 		}
 		convertedSuites = append(convertedSuites, githubCheckSuite{
-			id:         checkSuite.GetID(),
-			status:     checkSuite.GetStatus(),
-			conclusion: checkSuite.GetConclusion(),
-			runs:       runs,
+			ID:         checkSuite.GetID(),
+			Status:     checkSuite.GetStatus(),
+			Conclusion: checkSuite.GetConclusion(),
+			Runs:       runs,
 		})
 	}
 
@@ -686,10 +694,10 @@ func getCheckRuns(ctx context.Context, githubClient *github.Client, owner string
 			return nil, fmt.Errorf("failed to get annotations for check run %d: %w", run.GetID(), err)
 		}
 		convertedRuns = append(convertedRuns, githubCheckRun{
-			id:          run.GetID(),
-			status:      run.GetStatus(),
-			conclusion:  run.GetConclusion(),
-			annotations: annotations,
+			ID:          run.GetID(),
+			Status:      run.GetStatus(),
+			Conclusion:  run.GetConclusion(),
+			Annotations: annotations,
 		})
 	}
 
@@ -701,5 +709,12 @@ func getAnnotations(ctx context.Context, githubClient *github.Client, owner stri
 	if err != nil {
 		return nil, fmt.Errorf("failed to list check run annotations: %w", err)
 	}
-	return annotations, nil
+	filteredAnnotations := []*github.CheckRunAnnotation{}
+	for _, annotation := range annotations {
+		if annotation.GetPath() == ".github" {
+			continue // Skip annotations on the .github directory, which seem to be some kind of metadata
+		}
+		filteredAnnotations = append(filteredAnnotations, annotation)
+	}
+	return filteredAnnotations, nil
 }

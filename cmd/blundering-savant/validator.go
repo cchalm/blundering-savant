@@ -35,6 +35,13 @@ const (
 	JobConclusionFailure JobConclusion = "failure"
 )
 
+type CheckSuiteConclusion string
+
+const (
+	CheckSuiteConclusionSuccess CheckSuiteConclusion = "success"
+	CheckSuiteConclusionFailure CheckSuiteConclusion = "failure"
+)
+
 type GithubActionCommitValidator struct {
 	githubClient     *github.Client
 	owner            string
