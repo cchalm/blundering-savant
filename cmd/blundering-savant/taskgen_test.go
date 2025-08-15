@@ -159,10 +159,7 @@ func TestGetFileTreeWithSafeguards_EnforcesLimits(t *testing.T) {
 	
 	tree := &github.Tree{Entries: entries}
 	
-	// Create a task generator (we don't need a real client for this test)
-	tg := &taskGenerator{}
-	
-	// Test the filtering logic directly
+	// Test the filtering logic directly (mirroring the actual implementation)
 	var fileTree []string
 	fileCount := 0
 	const (
