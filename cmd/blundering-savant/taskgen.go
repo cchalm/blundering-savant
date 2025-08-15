@@ -34,6 +34,20 @@ type githubPullRequest struct {
 	baseBranch string
 }
 
+type githubCheckSuite struct {
+	id         int64
+	status     string
+	conclusion string
+	runs       []githubCheckRun
+}
+
+type githubCheckRun struct {
+	id          int64
+	status      string
+	conclusion  string
+	annotations []*github.CheckRunAnnotation
+}
+
 type taskOrError struct {
 	task task
 	err  error
@@ -252,6 +266,13 @@ func (tg *taskGenerator) buildTask(ctx context.Context, issue githubIssue, botUs
 	tsk.IssueCommentsRequiringResponses = commentsReq
 	tsk.PRCommentsRequiringResponses = prCommentsReq
 	tsk.PRReviewCommentsRequiringResponses = prReviewCommentsReq
+
+	// Get check suites, if any
+	checkSuites, err := getCheckSuites(ctx, tg.githubClient, owner, repo, tsk.SourceBranch)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get check suites for source branch: %w", err)
+	}
+	tsk.SourceBranchCheckSuites = checkSuites
 
 	return &tsk, nil
 }
@@ -623,4 +644,62 @@ func organizePRReviewCommentsIntoThreads(comments []*github.PullRequestComment) 
 	}
 
 	return threads, nil
+}
+
+func getCheckSuites(ctx context.Context, githubClient *github.Client, owner string, repo string, branch string) ([]githubCheckSuite, error) {
+	suites, _, err := githubClient.Checks.ListCheckSuitesForRef(ctx, owner, repo, branch, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list check suites: %w", err)
+	}
+
+	if suites == nil || suites.CheckSuites == nil || len(suites.CheckSuites) == 0 {
+		return nil, nil // No check suites found
+	}
+
+	convertedSuites := []githubCheckSuite{}
+	for _, checkSuite := range suites.CheckSuites {
+		runs, err := getCheckRuns(ctx, githubClient, owner, repo, checkSuite.GetID())
+		if err != nil {
+			return nil, fmt.Errorf("failed to get check runs for suite %d: %w", checkSuite.GetID(), err)
+		}
+		convertedSuites = append(convertedSuites, githubCheckSuite{
+			id:         checkSuite.GetID(),
+			status:     checkSuite.GetStatus(),
+			conclusion: checkSuite.GetConclusion(),
+			runs:       runs,
+		})
+	}
+
+	return convertedSuites, nil
+}
+
+func getCheckRuns(ctx context.Context, githubClient *github.Client, owner string, repo string, checkSuiteID int64) ([]githubCheckRun, error) {
+	runs, _, err := githubClient.Checks.ListCheckRunsCheckSuite(ctx, owner, repo, checkSuiteID, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list check runs: %w", err)
+	}
+
+	convertedRuns := []githubCheckRun{}
+	for _, run := range runs.CheckRuns {
+		annotations, err := getAnnotations(ctx, githubClient, owner, repo, run.GetID())
+		if err != nil {
+			return nil, fmt.Errorf("failed to get annotations for check run %d: %w", run.GetID(), err)
+		}
+		convertedRuns = append(convertedRuns, githubCheckRun{
+			id:          run.GetID(),
+			status:      run.GetStatus(),
+			conclusion:  run.GetConclusion(),
+			annotations: annotations,
+		})
+	}
+
+	return convertedRuns, nil
+}
+
+func getAnnotations(ctx context.Context, githubClient *github.Client, owner string, repo string, checkRunID int64) ([]*github.CheckRunAnnotation, error) {
+	annotations, _, err := githubClient.Checks.ListCheckRunAnnotations(ctx, owner, repo, checkRunID, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list check run annotations: %w", err)
+	}
+	return annotations, nil
 }

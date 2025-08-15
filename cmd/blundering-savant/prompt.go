@@ -81,6 +81,7 @@ type promptTemplateData struct {
 	IssueCommentsRequiringResponses    []commentData
 	PRCommentsRequiringResponses       []commentData
 	PRReviewCommentsRequiringResponses []reviewCommentData
+	SourceBranchCheckSuites            []githubCheckSuite
 }
 
 // BuildPrompt generates the complete prompt for Claude based on the context
