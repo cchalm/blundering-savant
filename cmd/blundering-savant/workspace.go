@@ -197,20 +197,18 @@ func (rvw *remoteValidationWorkspace) ClearLocalChanges() {
 }
 
 func (rvw *remoteValidationWorkspace) ValidateChanges(ctx context.Context, commitMessage string) (ValidationResult, error) {
-	if !rvw.HasLocalChanges() {
-		return ValidationResult{}, fmt.Errorf("no changes to validate")
-	}
-
-	commit, err := rvw.commitToWorkBranch(ctx, commitMessage)
-	if err != nil {
-		return ValidationResult{}, fmt.Errorf("failed to commit changes to work branch: %w", err)
+	if rvw.HasLocalChanges() {
+		_, err := rvw.commitToWorkBranch(ctx, commitMessage)
+		if err != nil {
+			return ValidationResult{}, fmt.Errorf("failed to commit changes to work branch: %w", err)
+		}
 	}
 
 	if rvw.validator == nil {
 		return ValidationResult{}, fmt.Errorf("failed to validate commit, no validator provided")
 	}
 
-	result, err := rvw.validator.ValidateBranch(ctx, *commit.SHA)
+	result, err := rvw.validator.ValidateBranch(ctx, rvw.workBranch)
 	if err != nil {
 		return ValidationResult{}, fmt.Errorf("failed to validate commit: %w", err)
 	}
