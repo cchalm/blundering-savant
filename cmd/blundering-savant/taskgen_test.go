@@ -139,9 +139,9 @@ func TestGetFileTreeWithSafeguards_EnforcesLimits(t *testing.T) {
 	entries := []*github.TreeEntry{}
 	
 	// Add normal files (should be included)
-	entries = append(entries, &github.TreeEntry{Path: github.String("README.md")})
-	entries = append(entries, &github.TreeEntry{Path: github.String("src/main.go")})
-	entries = append(entries, &github.TreeEntry{Path: github.String("docs/guide.md")})
+	entries = append(entries, &github.TreeEntry{Path: github.Ptr("README.md")})
+	entries = append(entries, &github.TreeEntry{Path: github.Ptr("src/main.go")})
+	entries = append(entries, &github.TreeEntry{Path: github.Ptr("docs/guide.md")})
 	
 	// Add a file with path too long (should be excluded)
 	longPath := "very/" + strings.Repeat("long/", 50) + "path.txt" // Over 500 chars
