@@ -35,7 +35,7 @@ type remoteValidationWorkspace struct {
 	workBranch   string
 	reviewBranch string
 
-	validator CommitValidator
+	validator BranchValidator
 }
 
 type GitRepo interface {
@@ -45,8 +45,8 @@ type GitRepo interface {
 	CompareCommits(ctx context.Context, base string, head string) (*github.CommitsComparison, error)
 }
 
-type CommitValidator interface {
-	ValidateCommit(ctx context.Context, commitSHA string) (ValidationResult, error)
+type BranchValidator interface {
+	ValidateBranch(ctx context.Context, branch string) (ValidationResult, error)
 }
 
 type PullRequestService interface {
@@ -210,7 +210,7 @@ func (rvw *remoteValidationWorkspace) ValidateChanges(ctx context.Context, commi
 		return ValidationResult{}, fmt.Errorf("failed to validate commit, no validator provided")
 	}
 
-	result, err := rvw.validator.ValidateCommit(ctx, *commit.SHA)
+	result, err := rvw.validator.ValidateBranch(ctx, *commit.SHA)
 	if err != nil {
 		return ValidationResult{}, fmt.Errorf("failed to validate commit: %w", err)
 	}

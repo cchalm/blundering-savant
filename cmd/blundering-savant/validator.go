@@ -58,16 +58,27 @@ func NewGithubActionCommitValidator(githubClient *github.Client, owner string, r
 	}
 }
 
-func (gacv GithubActionCommitValidator) ValidateCommit(ctx context.Context, commitSHA string) (ValidationResult, error) {
+func (gacv GithubActionCommitValidator) ValidateBranch(ctx context.Context, branch string) (ValidationResult, error) {
+	// Get the head SHA for the branch
+	maxRedirects := 10
+	branchInfo, _, err := gacv.githubClient.Repositories.GetBranch(ctx, gacv.owner, gacv.repo, branch, maxRedirects)
+	if err != nil {
+		return ValidationResult{}, fmt.Errorf("failed to get branch info: %w", err)
+	}
+	if branchInfo == nil || branchInfo.Commit == nil || branchInfo.Commit.SHA == nil {
+		return ValidationResult{}, fmt.Errorf("branch '%s' does not have a valid commit", branch)
+	}
+	headSHA := *branchInfo.Commit.SHA
+
 	// Find existing run for this commit, if any
-	run, err := gacv.findWorkflowRun(ctx, commitSHA)
+	run, err := gacv.findWorkflowRun(ctx, headSHA)
 	if err != nil {
 		return ValidationResult{}, fmt.Errorf("failed to find workflow run: %w", err)
 	}
 
 	if run == nil {
 		// No run found, trigger one
-		run, err = gacv.triggerWorkflowRun(ctx, commitSHA)
+		run, err = gacv.triggerWorkflowRun(ctx, branch, headSHA)
 		if err != nil {
 			return ValidationResult{}, fmt.Errorf("failed to trigger workflow: %w", err)
 		}
@@ -98,7 +109,7 @@ func (gacv GithubActionCommitValidator) ValidateCommit(ctx context.Context, comm
 	}, nil
 }
 
-// findWorkflowRun returns one workflow run for the given commit on the given branch. If no workflow run exists, returns (nil, nil)
+// findWorkflowRun returns one workflow run for the given commit. If no workflow run exists, returns (nil, nil)
 func (gacv GithubActionCommitValidator) findWorkflowRun(ctx context.Context, commitSHA string) (*github.WorkflowRun, error) {
 	opts := &github.ListWorkflowRunsOptions{
 		HeadSHA:     commitSHA,
@@ -121,16 +132,19 @@ func (gacv GithubActionCommitValidator) findWorkflowRun(ctx context.Context, com
 	return runs.WorkflowRuns[len(runs.WorkflowRuns)-1], nil
 }
 
-func (gacv GithubActionCommitValidator) triggerWorkflowRun(ctx context.Context, commitSHA string) (*github.WorkflowRun, error) {
+// triggerWorkflowRun triggers a workflow run for the given branch. A run will start on the head of the branch, which is
+// expected to have the given SHA. If the given head SHA is not the latest commit on the branch (or if it was but a race
+// condition occurs with a new commit), then this function will time out and return an error
+func (gacv GithubActionCommitValidator) triggerWorkflowRun(ctx context.Context, branch string, headSHA string) (*github.WorkflowRun, error) {
 	req := github.CreateWorkflowDispatchEventRequest{
-		Ref: commitSHA,
+		Ref: branch,
 	}
 	_, err := gacv.githubClient.Actions.CreateWorkflowDispatchEventByFileName(ctx, gacv.owner, gacv.repo, gacv.workflowFileName, req)
 	if err != nil {
 		return nil, fmt.Errorf("failed to trigger workflow run: %w", err)
 	}
 
-	run, err := gacv.waitForWorkflowStart(ctx, commitSHA)
+	run, err := gacv.waitForWorkflowStart(ctx, headSHA)
 	if err != nil {
 		return nil, err
 	}
@@ -138,7 +152,7 @@ func (gacv GithubActionCommitValidator) triggerWorkflowRun(ctx context.Context, 
 	return run, nil
 }
 
-func (gacv GithubActionCommitValidator) waitForWorkflowStart(ctx context.Context, commitSHA string) (*github.WorkflowRun, error) {
+func (gacv GithubActionCommitValidator) waitForWorkflowStart(ctx context.Context, headSHA string) (*github.WorkflowRun, error) {
 	timeout := 10 * time.Second
 	log.Printf("Waiting up to %v for workflow run to be created\n", timeout)
 
@@ -149,7 +163,7 @@ func (gacv GithubActionCommitValidator) waitForWorkflowStart(ctx context.Context
 	defer cancel()
 
 	for {
-		run, err := gacv.findWorkflowRun(timeoutCtx, commitSHA)
+		run, err := gacv.findWorkflowRun(timeoutCtx, headSHA)
 		if err != nil {
 			return nil, fmt.Errorf("error while searching for started workflow run: %w", err)
 		}
