@@ -655,7 +655,18 @@ func organizePRReviewCommentsIntoThreads(comments []*github.PullRequestComment) 
 }
 
 func getCheckSuites(ctx context.Context, githubClient *github.Client, owner string, repo string, branch string) ([]githubCheckSuite, error) {
-	suites, _, err := githubClient.Checks.ListCheckSuitesForRef(ctx, owner, repo, branch, nil)
+	// Get the head SHA for the branch
+	maxRedirects := 10
+	branchInfo, _, err := githubClient.Repositories.GetBranch(ctx, owner, repo, branch, maxRedirects)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get branch info: %w", err)
+	}
+	if branchInfo == nil || branchInfo.Commit == nil || branchInfo.Commit.SHA == nil {
+		return nil, fmt.Errorf("branch '%s' does not have a valid commit", branch)
+	}
+	headSHA := *branchInfo.Commit.SHA
+
+	suites, _, err := githubClient.Checks.ListCheckSuitesForRef(ctx, owner, repo, headSHA, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list check suites: %w", err)
 	}
