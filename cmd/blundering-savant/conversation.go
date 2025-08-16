@@ -183,7 +183,10 @@ func (cc *ClaudeConversation) sendMessage(ctx context.Context, setCachePoint boo
 	// TODO remove this
 	b, err := json.Marshal(append(messageParams, response.ToParam()))
 	if err == nil {
-		_ = os.WriteFile("conversation.json", b, 0666)
+		err = os.WriteFile("conversation.json", b, 0666)
+		if err != nil {
+			log.Printf("Warning: failed to write debug conversation file: %v", err)
+		}
 	}
 
 	return &response, nil
