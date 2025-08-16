@@ -59,6 +59,8 @@ func NewGithubActionCommitValidator(githubClient *github.Client, owner string, r
 }
 
 func (gacv GithubActionCommitValidator) ValidateBranch(ctx context.Context, branch string) (ValidationResult, error) {
+	log.Printf("Validating branch '%s' with workflow '%s'", branch, gacv.workflowFileName)
+
 	// Get the head SHA for the branch
 	maxRedirects := 10
 	branchInfo, _, err := gacv.githubClient.Repositories.GetBranch(ctx, gacv.owner, gacv.repo, branch, maxRedirects)
@@ -77,11 +79,15 @@ func (gacv GithubActionCommitValidator) ValidateBranch(ctx context.Context, bran
 	}
 
 	if run == nil {
+		log.Println("No existing workflow run found for branch, triggering a new run")
+
 		// No run found, trigger one
 		run, err = gacv.triggerWorkflowRun(ctx, branch, headSHA)
 		if err != nil {
 			return ValidationResult{}, fmt.Errorf("failed to trigger workflow: %w", err)
 		}
+	} else {
+		log.Printf("Found existing workflow run %d (status: '%s', conclusion: '%s')", *run.ID, run.GetStatus(), run.GetConclusion())
 	}
 
 	if run == nil || run.ID == nil {
@@ -153,10 +159,12 @@ func (gacv GithubActionCommitValidator) triggerWorkflowRun(ctx context.Context, 
 }
 
 func (gacv GithubActionCommitValidator) waitForWorkflowStart(ctx context.Context, headSHA string) (*github.WorkflowRun, error) {
+	pollInterval := 2 * time.Second
 	timeout := 10 * time.Second
-	log.Printf("Waiting up to %v for workflow run to be created\n", timeout)
 
-	ticker := time.NewTicker(2 * time.Second)
+	log.Printf("Waiting up to %v for workflow run to be created", timeout)
+
+	ticker := time.NewTicker(pollInterval)
 	defer ticker.Stop()
 
 	timeoutCtx, cancel := context.WithTimeout(ctx, timeout)
@@ -167,9 +175,12 @@ func (gacv GithubActionCommitValidator) waitForWorkflowStart(ctx context.Context
 		if err != nil {
 			return nil, fmt.Errorf("error while searching for started workflow run: %w", err)
 		}
-		if run != nil && run.Status != nil && *run.Status == "in_progress" {
+		if run != nil && run.Status != nil {
+			log.Printf("Workflow run %d created (status: '%s')", *run.ID, run.GetStatus())
 			return run, nil
 		}
+
+		log.Printf("Checking again in %v...", pollInterval)
 
 		select {
 		case <-timeoutCtx.Done():
@@ -190,6 +201,8 @@ func (gacv GithubActionCommitValidator) waitForWorkflowCompletion(ctx context.Co
 	pollInterval := 15 * time.Second
 	timeout := 45 * time.Minute
 
+	log.Printf("Waiting up to %v for workflow run to be completed", timeout)
+
 	timeoutCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
@@ -203,12 +216,10 @@ func (gacv GithubActionCommitValidator) waitForWorkflowCompletion(ctx context.Co
 		}
 
 		status := run.GetStatus()
-		conclusion := run.GetConclusion()
-
-		log.Printf("Found workflow run %d (status: %s, conclusion: %s)\n", runID, status, conclusion)
 
 		switch WorkflowStatus(status) {
 		case WorkflowStatusCompleted:
+			log.Printf("Workflow run %d completed (status: '%s', conclusion: '%s')", *run.ID, status, run.GetConclusion())
 			return run, nil
 		case WorkflowStatusInProgress,
 			WorkflowStatusQueued,
@@ -219,6 +230,8 @@ func (gacv GithubActionCommitValidator) waitForWorkflowCompletion(ctx context.Co
 		default:
 			return nil, fmt.Errorf("unexpected workflow status: %s", status)
 		}
+
+		log.Printf("Status '%s'. Checking again in %v...", status, pollInterval)
 
 		select {
 		case <-timeoutCtx.Done():
