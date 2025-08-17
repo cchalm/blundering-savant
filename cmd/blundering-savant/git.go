@@ -166,40 +166,79 @@ func (ggr *githubGitRepo) CommitChanges(ctx context.Context, branch string, chan
 	return createdCommit, nil
 }
 
-func (ggr *githubGitRepo) Merge(ctx context.Context, sourceBranch string, targetBranch string, commitMessage string) (*github.Commit, error) {
-	// Get the current commit from the source branch
+func (ggr *githubGitRepo) Merge(ctx context.Context, sourceBranch string, targetBranch string) (*github.Commit, error) {
+	// Compare the branches to determine the merge strategy
+	comparison, _, err := ggr.reposService.CompareCommits(ctx, ggr.owner, ggr.repo, targetBranch, sourceBranch, &github.ListOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("failed to compare commits: %w", err)
+	}
+
+	if comparison == nil || comparison.AheadBy == nil || comparison.BehindBy == nil {
+		return nil, fmt.Errorf("unexpected nil in comparison result: %+v", comparison)
+	}
+
 	sourceBranchRef, _, err := ggr.git.GetRef(ctx, ggr.owner, ggr.repo, fmt.Sprintf("refs/heads/%s", sourceBranch))
 	if err != nil {
 		return nil, fmt.Errorf("failed to get source branch ref: %w", err)
 	}
-	sourceBranchCommitSHA := sourceBranchRef.Object.SHA
 
-	// Get the target branch reference
 	targetBranchRef, _, err := ggr.git.GetRef(ctx, ggr.owner, ggr.repo, fmt.Sprintf("refs/heads/%s", targetBranch))
 	if err != nil {
 		return nil, fmt.Errorf("failed to get target branch ref: %w", err)
 	}
-	targetBranchCommitSHA := targetBranchRef.Object.SHA
 
-	// Check if source branch is ahead of target branch
-	if *sourceBranchCommitSHA == *targetBranchCommitSHA {
-		return nil, fmt.Errorf("source branch has no new commits to merge")
+	// Handle no-op case: nothing to merge
+	if *comparison.AheadBy == 0 {
+		// No changes to merge - return the current commit of the target branch
+		targetBranchRef, _, err := ggr.git.GetRef(ctx, ggr.owner, ggr.repo, fmt.Sprintf("refs/heads/%s", targetBranch))
+		if err != nil {
+			return nil, fmt.Errorf("failed to get target branch ref: %w", err)
+		}
+
+		targetCommit, _, err := ggr.git.GetCommit(ctx, ggr.owner, ggr.repo, *targetBranchRef.Object.SHA)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get target branch commit: %w", err)
+		}
+
+		return targetCommit, nil
 	}
 
-	// Get the source branch commit to use as the new commit for target branch
-	sourceBranchCommit, _, err := ggr.git.GetCommit(ctx, ggr.owner, ggr.repo, *sourceBranchCommitSHA)
+	// Handle fast-forward case: target branch is behind source branch with no divergent commits
+	if *comparison.BehindBy == 0 {
+		// This is a fast-forward merge - just update the target branch reference
+
+		// Update target branch to point to source branch commit
+		targetBranchRef.Object.SHA = sourceBranchRef.Object.SHA
+		_, _, err = ggr.git.UpdateRef(ctx, ggr.owner, ggr.repo, targetBranchRef, false)
+		if err != nil {
+			return nil, fmt.Errorf("failed to update target branch ref for fast-forward: %w", err)
+		}
+
+		// Return the commit that target branch now points to
+		sourceCommit, _, err := ggr.git.GetCommit(ctx, ggr.owner, ggr.repo, *sourceBranchRef.Object.SHA)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get source branch commit: %w", err)
+		}
+
+		return sourceCommit, nil
+	}
+
+	// Handle merge commit case: branches have diverged
+	// Get the commits for creating a merge commit
+	sourceBranchCommit, _, err := ggr.git.GetCommit(ctx, ggr.owner, ggr.repo, *sourceBranchRef.Object.SHA)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get source branch commit: %w", err)
 	}
 
-	// Get the target branch commit to use as parent
-	targetBranchCommit, _, err := ggr.git.GetCommit(ctx, ggr.owner, ggr.repo, *targetBranchCommitSHA)
+	targetBranchCommit, _, err := ggr.git.GetCommit(ctx, ggr.owner, ggr.repo, *targetBranchRef.Object.SHA)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get target branch commit: %w", err)
 	}
 
-	// Create a new commit on the target branch that merges the source branch changes
-	// This creates a merge commit with both parents
+	// Generate commit message for merge commit
+	commitMessage := fmt.Sprintf("Merge branch '%s' into %s", sourceBranch, targetBranch)
+
+	// Create a merge commit with both parents
 	mergeCommit := &github.Commit{
 		Message: github.Ptr(commitMessage),
 		Tree:    sourceBranchCommit.Tree,                                  // Use the tree from source branch (contains all the changes)

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
 	"strconv"
 
 	"github.com/anthropics/anthropic-sdk-go"
@@ -80,7 +81,8 @@ type WorkspaceFactory interface {
 }
 
 type ValidationResult struct {
-	Output string
+	Succeeded bool
+	Details   string
 }
 
 func NewBot(config Config, githubClient *github.Client) *Bot {
@@ -112,15 +114,7 @@ func (b *Bot) Run(ctx context.Context, tasks <-chan taskOrError) error {
 			return err
 		}
 
-		if err := b.addLabel(ctx, tsk.Issue, LabelWorking); err != nil {
-			log.Printf("failed to add in-progress label: %v", err)
-		}
-
 		err = b.doTask(ctx, tsk)
-
-		if err := b.removeLabel(ctx, tsk.Issue, LabelWorking); err != nil {
-			log.Printf("failed to remove in-progress label: %v", err)
-		}
 
 		if err != nil {
 			// Add blocked label if there is an error, to tell the bot not to pick up this item again
@@ -128,13 +122,10 @@ func (b *Bot) Run(ctx context.Context, tasks <-chan taskOrError) error {
 				log.Printf("failed to add blocked label: %v", err)
 			}
 			// Post sanitized error comment
-			err = b.postIssueComment(ctx, tsk.Issue, "❌ I encountered an error while working on this issue.")
-			if err != nil {
+			msg := "❌ I encountered an error while working on this issue."
+			if err := b.postIssueComment(ctx, tsk.Issue, msg); err != nil {
 				log.Printf("failed to post error comment: %v", err)
 			}
-		}
-
-		if err != nil {
 			// Log the error and continue processing other tasks
 			log.Printf("failed to process task for issue %d: %v", tsk.Issue.number, err)
 		}
@@ -144,6 +135,15 @@ func (b *Bot) Run(ctx context.Context, tasks <-chan taskOrError) error {
 }
 
 func (b *Bot) doTask(ctx context.Context, tsk task) (err error) {
+	if err := b.addLabel(ctx, tsk.Issue, LabelWorking); err != nil {
+		log.Printf("failed to add in-progress label: %v", err)
+	}
+	defer func() {
+		if err := b.removeLabel(ctx, tsk.Issue, LabelWorking); err != nil {
+			log.Printf("failed to remove in-progress label: %v", err)
+		}
+	}()
+
 	workspace, err := b.workspaceFactory.NewWorkspace(ctx, tsk)
 	if err != nil {
 		return fmt.Errorf("failed to create workspace: %w", err)
@@ -252,6 +252,11 @@ func (b *Bot) processWithAI(ctx context.Context, task task, workspace Workspace)
 		return fmt.Errorf("failed to delete conversation history for concluded conversation: %w", err)
 	}
 
+	err = b.removeLabel(ctx, task.Issue, LabelBotTurn)
+	if err != nil {
+		return fmt.Errorf("failed to remove bot turn label: %w", err)
+	}
+
 	log.Print("AI interaction concluded")
 	return nil
 }
@@ -282,12 +287,16 @@ func (b *Bot) addLabel(ctx context.Context, issue githubIssue, label github.Labe
 	return err
 }
 
-// removeLabel removes a label from an issue
+// removeLabel removes a label from an issue, if present
 func (b *Bot) removeLabel(ctx context.Context, issue githubIssue, label github.Label) error {
 	if label.Name == nil {
 		return fmt.Errorf("cannot remove label with nil name")
 	}
-	_, err := b.githubClient.Issues.RemoveLabelForIssue(ctx, issue.owner, issue.repo, issue.number, *label.Name)
+	resp, err := b.githubClient.Issues.RemoveLabelForIssue(ctx, issue.owner, issue.repo, issue.number, *label.Name)
+	if err != nil && resp.StatusCode == http.StatusNotFound {
+		// If the label isn't present, ignore the error
+		return nil
+	}
 	return err
 }
 
@@ -362,6 +371,10 @@ func (b *Bot) initConversation(ctx context.Context, tsk task, toolCtx *ToolConte
 		promptPtr, err := BuildPrompt(tsk)
 		if err != nil {
 			return nil, nil, fmt.Errorf("failed to build prompt: %w", err)
+		}
+		// TODO remove this
+		if err := os.WriteFile("logs/prompt.txt", []byte(*promptPtr), 0644); err != nil {
+			log.Printf("Warning: failed to write prompt to file for debugging: %v", err)
 		}
 		// Send initial message with a cache breakpoint, because the initial message tends to be very large and we are
 		// likely to need several back-and-forths after this

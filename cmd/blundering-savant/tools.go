@@ -358,7 +358,13 @@ func (t *ValidateChangesTool) Run(ctx context.Context, block anthropic.ToolUseBl
 		return nil, fmt.Errorf("failed to commit changes: %w", err)
 	}
 
-	return &result.Output, nil
+	var msg string
+	if !result.Succeeded {
+		msg = fmt.Sprintf("Validation failed. Details:\n%s", result.Details)
+	} else {
+		msg = "validation succeeded"
+	}
+	return &msg, nil
 }
 
 func (t *ValidateChangesTool) Replay(ctx context.Context, block anthropic.ToolUseBlock, toolCtx *ToolContext) error {
