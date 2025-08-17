@@ -360,8 +360,8 @@ func (tg *taskGenerator) analyzeCodebase(ctx context.Context, owner, repo string
 		}
 	}
 
-	// Get file tree with safeguards
-	fileTree, err := tg.getFileTreeWithSafeguards(ctx, owner, repo)
+	// Get file tree
+	fileTree, err := tg.getFileTree(ctx, owner, repo)
 	if err != nil {
 		log.Printf("Warning: Could not get file tree: %v", err)
 	} else {
@@ -380,12 +380,11 @@ func (tg *taskGenerator) analyzeCodebase(ctx context.Context, owner, repo string
 	return info, nil
 }
 
-// getFileTreeWithSafeguards retrieves the complete file tree with safety limits
-func (tg *taskGenerator) getFileTreeWithSafeguards(ctx context.Context, owner, repo string) ([]string, error) {
+// getFileTree retrieves the complete file tree with safety limits
+func (tg *taskGenerator) getFileTree(ctx context.Context, owner, repo string) ([]string, error) {
 	const (
-		maxFiles         = 1000
-		maxPathLength    = 500
-		maxDirectoryDepth = 20
+		maxFiles      = 1000
+		maxPathLength = 500
 	)
 
 	// Get the full recursive tree
@@ -406,12 +405,6 @@ func (tg *taskGenerator) getFileTreeWithSafeguards(ctx context.Context, owner, r
 
 		// Check path length limit
 		if len(path) > maxPathLength {
-			continue
-		}
-
-		// Check directory depth limit
-		depth := strings.Count(path, "/")
-		if depth > maxDirectoryDepth {
 			continue
 		}
 
