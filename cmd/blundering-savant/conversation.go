@@ -181,9 +181,10 @@ func (cc *ClaudeConversation) sendMessage(ctx context.Context, setCachePoint boo
 	cc.messages[len(cc.messages)-1].Response = &response
 
 	// TODO remove this
-	b, err := json.Marshal(append(messageParams, response.ToParam()))
-	if err == nil {
-		_ = os.WriteFile("logs/conversation.json", b, 0666)
+	if b, err := json.Marshal(append(messageParams, response.ToParam())); err != nil {
+		log.Printf("Warning: failed to marshal conversation for inspection: %v", err)
+	} else if err := os.WriteFile("logs/conversation.json", b, 0666); err != nil {
+		log.Printf("Warning: failed to write conversation to file for debugging: %v", err)
 	}
 
 	return &response, nil
