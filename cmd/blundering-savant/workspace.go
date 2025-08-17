@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"net/http"
 	"strings"
 
 	"github.com/google/go-github/v72/github"
@@ -106,36 +105,6 @@ func NewRemoteValidationWorkspace(
 
 		validator: validator,
 	}, nil
-}
-
-// CreateBranch creates a new branch from the default branch, if it doesn't already exist
-func createBranchIfNotExist(ctx context.Context, githubClient *github.Client, owner string, repo string, baseBranch string, branch string) error {
-	// Check if branch already exists
-	_, resp, err := githubClient.Git.GetRef(ctx, owner, repo, fmt.Sprintf("refs/heads/%s", branch))
-	if err == nil {
-		return nil
-	} else if resp.StatusCode != http.StatusNotFound {
-		return fmt.Errorf("unexpected error while checking if branch exists: %w", err)
-	}
-
-	// Get the base branch reference
-	baseRef, _, err := githubClient.Git.GetRef(ctx, owner, repo, fmt.Sprintf("refs/heads/%s", baseBranch))
-	if err != nil {
-		return fmt.Errorf("failed to get base branch ref: %w", err)
-	}
-
-	// Create new branch reference
-	newRef := &github.Reference{
-		Ref:    github.Ptr(fmt.Sprintf("refs/heads/%s", branch)),
-		Object: &github.GitObject{SHA: baseRef.Object.SHA},
-	}
-
-	_, _, err = githubClient.Git.CreateRef(ctx, owner, repo, newRef)
-	if err != nil {
-		return fmt.Errorf("failed to create branch: %w", err)
-	}
-
-	return nil
 }
 
 // Read reads a file from the work branch with any in-memory changes applied
