@@ -41,7 +41,7 @@ type remoteValidationWorkspace struct {
 type GitRepo interface {
 	CreateBranch(ctx context.Context, baseBranch string, newBranch string) error
 	CommitChanges(ctx context.Context, branch string, changelist Changelist, commitMessage string) (*github.Commit, error)
-	Merge(ctx context.Context, baseBranch string, targetBranch string, commitMessage string) (*github.Commit, error)
+	Merge(ctx context.Context, baseBranch string, targetBranch string) (*github.Commit, error)
 	CompareCommits(ctx context.Context, base string, head string) (*github.CommitsComparison, error)
 }
 
@@ -235,8 +235,8 @@ func (rvw *remoteValidationWorkspace) commitToWorkBranch(ctx context.Context, co
 // PublishChangesForReview merges changes in the working branch into the review branch and creates a pull request, if
 // one doesn't already exist. Returns an error if there are in-memory changes that have not been committed to the work
 // branch via a ValidateChanges call
-func (rvw *remoteValidationWorkspace) PublishChangesForReview(ctx context.Context, commitMessage string, reviewRequestTitle string, reviewRequestBody string) error {
-	_, err := rvw.mergeWorkBranchToReviewBranch(ctx, commitMessage)
+func (rvw *remoteValidationWorkspace) PublishChangesForReview(ctx context.Context, reviewRequestTitle string, reviewRequestBody string) error {
+	_, err := rvw.mergeWorkBranchToReviewBranch(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to merge work branch into review branch: %w", err)
 	}
@@ -269,12 +269,12 @@ Fixes #%d
 	return nil
 }
 
-func (rvw *remoteValidationWorkspace) mergeWorkBranchToReviewBranch(ctx context.Context, commitMessage string) (*github.Commit, error) {
+func (rvw *remoteValidationWorkspace) mergeWorkBranchToReviewBranch(ctx context.Context) (*github.Commit, error) {
 	if rvw.HasLocalChanges() {
 		return nil, fmt.Errorf("cannot merge from the work branch to the review branch while there are uncommitted changes in-memory")
 	}
 
-	commit, err := rvw.git.Merge(ctx, rvw.workBranch, rvw.reviewBranch, commitMessage)
+	commit, err := rvw.git.Merge(ctx, rvw.workBranch, rvw.reviewBranch)
 	if err != nil {
 		return nil, fmt.Errorf("failed to merge work branch into review branch: %w", err)
 	}
