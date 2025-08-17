@@ -1,0 +1,7 @@
+These were temporary test files that should be removed:
+- test_build.go (now empty)
+- test_simple.go (now empty) 
+- run_test.sh (now empty)
+- build_test.sh (now empty)
+
+They were causing validation issues due to conflicting main functions.
