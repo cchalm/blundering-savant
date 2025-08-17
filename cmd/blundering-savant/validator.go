@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"strings"
 	"time"
 
 	"github.com/google/go-github/v72/github"
@@ -18,6 +19,27 @@ const (
 	WorkflowStatusPending    WorkflowStatus = "pending"
 	WorkflowStatusRequested  WorkflowStatus = "requested"
 	WorkflowStatusWaiting    WorkflowStatus = "waiting"
+)
+
+type WorkflowConclusion string
+
+const (
+	WorkflowConclusionSuccess WorkflowConclusion = "success"
+	WorkflowConclusionFailure WorkflowConclusion = "failure"
+)
+
+type JobConclusion string
+
+const (
+	JobConclusionSuccess JobConclusion = "success"
+	JobConclusionFailure JobConclusion = "failure"
+)
+
+type CheckSuiteConclusion string
+
+const (
+	CheckSuiteConclusionSuccess CheckSuiteConclusion = "success"
+	CheckSuiteConclusionFailure CheckSuiteConclusion = "failure"
 )
 
 type GithubActionCommitValidator struct {
@@ -36,40 +58,68 @@ func NewGithubActionCommitValidator(githubClient *github.Client, owner string, r
 	}
 }
 
-func (gacv GithubActionCommitValidator) ValidateCommit(ctx context.Context, commitSHA string) (ValidationResult, error) {
+func (gacv GithubActionCommitValidator) ValidateBranch(ctx context.Context, branch string) (ValidationResult, error) {
+	log.Printf("Validating branch '%s' with workflow '%s'", branch, gacv.workflowFileName)
+
+	// Get the head SHA for the branch
+	maxRedirects := 10
+	branchInfo, _, err := gacv.githubClient.Repositories.GetBranch(ctx, gacv.owner, gacv.repo, branch, maxRedirects)
+	if err != nil {
+		return ValidationResult{}, fmt.Errorf("failed to get branch info: %w", err)
+	}
+	if branchInfo == nil || branchInfo.Commit == nil || branchInfo.Commit.SHA == nil {
+		return ValidationResult{}, fmt.Errorf("branch '%s' does not have a valid commit", branch)
+	}
+	headSHA := *branchInfo.Commit.SHA
+
 	// Find existing run for this commit, if any
-	run, err := gacv.findWorkflowRun(ctx, commitSHA)
+	run, err := gacv.findWorkflowRun(ctx, headSHA)
 	if err != nil {
 		return ValidationResult{}, fmt.Errorf("failed to find workflow run: %w", err)
 	}
 
 	if run == nil {
+		log.Println("No existing workflow run found for branch, triggering a new run")
+
 		// No run found, trigger one
-		run, err = gacv.triggerWorkflowRun(ctx, commitSHA)
+		run, err = gacv.triggerWorkflowRun(ctx, branch, headSHA)
 		if err != nil {
 			return ValidationResult{}, fmt.Errorf("failed to trigger workflow: %w", err)
 		}
+	} else {
+		log.Printf("Found existing workflow run %d (status: '%s', conclusion: '%s')", *run.ID, run.GetStatus(), run.GetConclusion())
 	}
 
 	if run == nil || run.ID == nil {
 		return ValidationResult{}, fmt.Errorf("unexpected nil in workflow run")
 	}
 
-	conclusion, err := gacv.waitForWorkflowCompletion(ctx, *run.ID)
+	run, err = gacv.waitForWorkflowCompletion(ctx, *run.ID)
 	if err != nil {
 		return ValidationResult{}, err
 	}
 
+	succeeded := run.GetConclusion() == string(WorkflowConclusionSuccess)
+	var details string
+	if !succeeded {
+		failureDetails, err := gacv.getWorkflowFailureDetails(ctx, run)
+		if err != nil {
+			return ValidationResult{}, fmt.Errorf("failed to get workflow failure details: %w", err)
+		}
+		details = failureDetails
+	}
+
 	return ValidationResult{
-		Output: conclusion,
+		Succeeded: succeeded,
+		Details:   details,
 	}, nil
 }
 
-// findWorkflowRun returns one workflow run for the given commit on the given branch. If no workflow run exists, returns (nil, nil)
+// findWorkflowRun returns one workflow run for the given commit. If no workflow run exists, returns (nil, nil)
 func (gacv GithubActionCommitValidator) findWorkflowRun(ctx context.Context, commitSHA string) (*github.WorkflowRun, error) {
 	opts := &github.ListWorkflowRunsOptions{
 		HeadSHA:     commitSHA,
-		ListOptions: github.ListOptions{PerPage: 1},
+		ListOptions: github.ListOptions{PerPage: 10},
 	}
 	runs, _, err := gacv.githubClient.Actions.ListWorkflowRunsByFileName(ctx, gacv.owner, gacv.repo, gacv.workflowFileName, opts)
 	if err != nil {
@@ -84,23 +134,74 @@ func (gacv GithubActionCommitValidator) findWorkflowRun(ctx context.Context, com
 		log.Printf("Warning: multiple workflow runs found, picking one")
 	}
 
-	return runs.WorkflowRuns[0], nil
+	// Pick the least recent run, since it's the most likely to be done already
+	return runs.WorkflowRuns[len(runs.WorkflowRuns)-1], nil
 }
 
-func (gacv GithubActionCommitValidator) triggerWorkflowRun(ctx context.Context, commitSHA string) (*github.WorkflowRun, error) {
+// triggerWorkflowRun triggers a workflow run for the given branch. A run will start on the head of the branch, which is
+// expected to have the given SHA. If the given head SHA is not the latest commit on the branch (or if it was but a race
+// condition occurs with a new commit), then this function will time out and return an error
+func (gacv GithubActionCommitValidator) triggerWorkflowRun(ctx context.Context, branch string, headSHA string) (*github.WorkflowRun, error) {
 	req := github.CreateWorkflowDispatchEventRequest{
-		Ref: commitSHA,
+		Ref: branch,
 	}
 	_, err := gacv.githubClient.Actions.CreateWorkflowDispatchEventByFileName(ctx, gacv.owner, gacv.repo, gacv.workflowFileName, req)
 	if err != nil {
 		return nil, fmt.Errorf("failed to trigger workflow run: %w", err)
 	}
-	return nil, nil
+
+	run, err := gacv.waitForWorkflowStart(ctx, headSHA)
+	if err != nil {
+		return nil, err
+	}
+
+	return run, nil
 }
 
-func (gacv GithubActionCommitValidator) waitForWorkflowCompletion(ctx context.Context, runID int64) (string, error) {
+func (gacv GithubActionCommitValidator) waitForWorkflowStart(ctx context.Context, headSHA string) (*github.WorkflowRun, error) {
+	pollInterval := 2 * time.Second
+	timeout := 10 * time.Second
+
+	log.Printf("Waiting up to %v for workflow run to be created", timeout)
+
+	ticker := time.NewTicker(pollInterval)
+	defer ticker.Stop()
+
+	timeoutCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	for {
+		run, err := gacv.findWorkflowRun(timeoutCtx, headSHA)
+		if err != nil {
+			return nil, fmt.Errorf("error while searching for started workflow run: %w", err)
+		}
+		if run != nil && run.Status != nil {
+			log.Printf("Workflow run %d created (status: '%s')", *run.ID, run.GetStatus())
+			return run, nil
+		}
+
+		log.Printf("Checking again in %v...", pollInterval)
+
+		select {
+		case <-timeoutCtx.Done():
+			if parentErr := ctx.Err(); parentErr != nil {
+				return nil, fmt.Errorf("workflow start check canceled: %w", parentErr)
+			} else if err := timeoutCtx.Err(); err == context.DeadlineExceeded {
+				return nil, fmt.Errorf("workflow start check timed out after %v", timeout)
+			} else {
+				return nil, fmt.Errorf("workflow start check canceled: %w", err)
+			}
+		case <-ticker.C:
+			continue
+		}
+	}
+}
+
+func (gacv GithubActionCommitValidator) waitForWorkflowCompletion(ctx context.Context, runID int64) (*github.WorkflowRun, error) {
 	pollInterval := 15 * time.Second
 	timeout := 45 * time.Minute
+
+	log.Printf("Waiting up to %v for workflow run to be completed", timeout)
 
 	timeoutCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
@@ -109,42 +210,77 @@ func (gacv GithubActionCommitValidator) waitForWorkflowCompletion(ctx context.Co
 	defer ticker.Stop()
 
 	for {
+		run, _, err := gacv.githubClient.Actions.GetWorkflowRunByID(timeoutCtx, gacv.owner, gacv.repo, runID)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get workflow run: %w", err)
+		}
+
+		status := run.GetStatus()
+
+		switch WorkflowStatus(status) {
+		case WorkflowStatusCompleted:
+			log.Printf("Workflow run %d completed (status: '%s', conclusion: '%s')", *run.ID, status, run.GetConclusion())
+			return run, nil
+		case WorkflowStatusInProgress,
+			WorkflowStatusQueued,
+			WorkflowStatusPending,
+			WorkflowStatusRequested,
+			WorkflowStatusWaiting:
+			// Do nothing, continue polling
+		default:
+			return nil, fmt.Errorf("unexpected workflow status: %s", status)
+		}
+
+		log.Printf("Status '%s'. Checking again in %v...", status, pollInterval)
+
 		select {
 		case <-timeoutCtx.Done():
 			if parentErr := ctx.Err(); parentErr != nil {
-				return "", fmt.Errorf("workflow completion check canceled: %w", parentErr)
+				return nil, fmt.Errorf("workflow completion check canceled: %w", parentErr)
 			} else if err := timeoutCtx.Err(); err == context.DeadlineExceeded {
-				return "", fmt.Errorf("workflow completion check timed out after %v", timeout)
+				return nil, fmt.Errorf("workflow completion check timed out after %v", timeout)
 			} else {
-				return "", fmt.Errorf("workflow completion check canceled: %w", err)
+				return nil, fmt.Errorf("workflow completion check canceled: %w", err)
 			}
 		case <-ticker.C:
-			run, _, err := gacv.githubClient.Actions.GetWorkflowRunByID(ctx, gacv.owner, gacv.repo, runID)
-			if err != nil {
-				return "", fmt.Errorf("failed to get workflow run: %w", err)
-			}
+			continue
+		}
+	}
+}
 
-			status := run.GetStatus()
-			conclusion := run.GetConclusion()
+// getWorkflowFailureDetails fetches detailed information about why a workflow failed
+func (gacv GithubActionCommitValidator) getWorkflowFailureDetails(ctx context.Context, run *github.WorkflowRun) (string, error) {
+	if run.CheckSuiteID == nil {
+		return "", fmt.Errorf("workflow run does not have a check suite ID")
+	}
 
-			log.Printf("Workflow run %d status: %s", runID, status)
-			if conclusion != "" {
-				log.Printf(" (conclusion: %s)", conclusion)
-			}
-			log.Println()
+	checkRuns, _, err := gacv.githubClient.Checks.ListCheckRunsCheckSuite(ctx, gacv.owner, gacv.repo, *run.CheckSuiteID, &github.ListCheckRunsOptions{})
+	if err != nil {
+		return "", fmt.Errorf("failed to list check runs: %w", err)
+	}
 
-			switch WorkflowStatus(status) {
-			case WorkflowStatusCompleted:
-				return conclusion, nil
-			case WorkflowStatusInProgress,
-				WorkflowStatusQueued,
-				WorkflowStatusPending,
-				WorkflowStatusRequested,
-				WorkflowStatusWaiting:
-				continue
-			default:
-				return status, fmt.Errorf("unexpected workflow status: %s", status)
+	detailsBuilder := strings.Builder{}
+	for _, checkRun := range checkRuns.CheckRuns {
+		annotations, _, err := gacv.githubClient.Checks.ListCheckRunAnnotations(ctx, gacv.owner, gacv.repo, *checkRun.ID, &github.ListOptions{})
+		if err != nil {
+			return "", fmt.Errorf("failed to list check run annotations: %w", err)
+		}
+		for _, annotation := range annotations {
+			if annotation.GetPath() == ".github" {
+				detailsBuilder.WriteString(fmt.Sprintf(" - [%s] %s\n",
+					annotation.GetAnnotationLevel(),
+					annotation.GetMessage(),
+				))
+			} else {
+				detailsBuilder.WriteString(fmt.Sprintf(" - [%s] %s#L%d: %s\n",
+					annotation.GetAnnotationLevel(),
+					annotation.GetPath(),
+					annotation.GetStartLine(),
+					annotation.GetMessage(),
+				))
 			}
 		}
 	}
+
+	return detailsBuilder.String(), nil
 }

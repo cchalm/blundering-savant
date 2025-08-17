@@ -5,12 +5,14 @@ services:
     restart: unless-stopped
     environment:
       - GITHUB_TOKEN=${GITHUB_TOKEN}
-      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
       - GITHUB_USERNAME=${GITHUB_USERNAME}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
       - CHECK_INTERVAL=${CHECK_INTERVAL:-5m}
       - LOG_LEVEL=${LOG_LEVEL:-info}
+      - RESUMABLE_CONVERSATIONS_DIR=${RESUMABLE_CONVERSATIONS_DIR:-./conversations}
     volumes:
       - ./logs:/app/logs
+      - ./conversations:/app/conversations
     logging:
       driver: "json-file"
       options:

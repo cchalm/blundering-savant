@@ -35,7 +35,7 @@ type remoteValidationWorkspace struct {
 	workBranch   string
 	reviewBranch string
 
-	validator CommitValidator
+	validator BranchValidator
 }
 
 type GitRepo interface {
@@ -45,8 +45,8 @@ type GitRepo interface {
 	CompareCommits(ctx context.Context, base string, head string) (*github.CommitsComparison, error)
 }
 
-type CommitValidator interface {
-	ValidateCommit(ctx context.Context, commitSHA string) (ValidationResult, error)
+type BranchValidator interface {
+	ValidateBranch(ctx context.Context, branch string) (ValidationResult, error)
 }
 
 type PullRequestService interface {
@@ -78,13 +78,13 @@ func NewRemoteValidationWorkspace(
 	diffFS := NewMemDiffFileSystem(githubFS)
 
 	// Create the work and review branches if they don't exist
-	err = createBranchIfNotExist(ctx, githubClient, owner, repo, baseBranch, workBranch)
+	err = gitRepo.CreateBranch(ctx, baseBranch, workBranch)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create work branch: %w", err)
+		return nil, fmt.Errorf("failed to create work branch '%s': %v", workBranch, err)
 	}
-	err = createBranchIfNotExist(ctx, githubClient, owner, repo, baseBranch, reviewBranch)
+	err = gitRepo.CreateBranch(ctx, baseBranch, reviewBranch)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create review branch: %w", err)
+		return nil, fmt.Errorf("failed to create review branch '%s': %v", reviewBranch, err)
 	}
 
 	prService := NewGithubPullRequestService(githubClient.PullRequests, owner, repo, reviewBranch, baseBranch)
@@ -197,20 +197,18 @@ func (rvw *remoteValidationWorkspace) ClearLocalChanges() {
 }
 
 func (rvw *remoteValidationWorkspace) ValidateChanges(ctx context.Context, commitMessage string) (ValidationResult, error) {
-	if !rvw.HasLocalChanges() {
-		return ValidationResult{}, fmt.Errorf("no changes to validate")
-	}
-
-	commit, err := rvw.commitToWorkBranch(ctx, commitMessage)
-	if err != nil {
-		return ValidationResult{}, fmt.Errorf("failed to commit changes to work branch: %w", err)
+	if rvw.HasLocalChanges() {
+		_, err := rvw.commitToWorkBranch(ctx, commitMessage)
+		if err != nil {
+			return ValidationResult{}, fmt.Errorf("failed to commit changes to work branch: %w", err)
+		}
 	}
 
 	if rvw.validator == nil {
 		return ValidationResult{}, fmt.Errorf("failed to validate commit, no validator provided")
 	}
 
-	result, err := rvw.validator.ValidateCommit(ctx, *commit.SHA)
+	result, err := rvw.validator.ValidateBranch(ctx, rvw.workBranch)
 	if err != nil {
 		return ValidationResult{}, fmt.Errorf("failed to validate commit: %w", err)
 	}

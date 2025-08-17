@@ -19,6 +19,8 @@ type githubIssue struct {
 	title string
 	body  string
 	url   string
+
+	labels []string
 }
 
 type githubPullRequest struct {
@@ -30,6 +32,20 @@ type githubPullRequest struct {
 	url   string
 
 	baseBranch string
+}
+
+type githubCheckSuite struct {
+	ID         int64
+	Status     string
+	Conclusion string
+	Runs       []githubCheckRun
+}
+
+type githubCheckRun struct {
+	ID          int64
+	Status      string
+	Conclusion  string
+	Annotations []*github.CheckRunAnnotation
 }
 
 type taskOrError struct {
@@ -77,6 +93,9 @@ func (tg *taskGenerator) yield(ctx context.Context, yield func(task task, err er
 		if err != nil {
 			return
 		}
+		if len(issues) == 0 {
+			log.Println("No issues found")
+		}
 
 		for _, issue := range issues {
 			tsk, err := tg.buildTask(ctx, issue, botUser)
@@ -92,10 +111,11 @@ func (tg *taskGenerator) yield(ctx context.Context, yield func(task task, err er
 			}
 		}
 
+		log.Printf("Waiting for next check (up to %v)\n", tg.config.CheckInterval)
 		select {
 		case <-ticker:
 		case <-ctx.Done():
-			yield(task{}, context.Canceled)
+			yield(task{}, ctx.Err())
 			return
 		}
 	}
@@ -126,6 +146,12 @@ func (tg *taskGenerator) searchIssues(ctx context.Context) ([]githubIssue, error
 		owner := parts[len(parts)-2]
 		repo := parts[len(parts)-1]
 
+		// Convert labels into a list of strings
+		labels := []string{}
+		for _, label := range issue.Labels {
+			labels = append(labels, *label.Name)
+		}
+
 		issues = append(issues, githubIssue{
 			owner:  owner,
 			repo:   repo,
@@ -134,6 +160,8 @@ func (tg *taskGenerator) searchIssues(ctx context.Context) ([]githubIssue, error
 			title: *issue.Title,
 			body:  *issue.Body,
 			url:   *issue.URL,
+
+			labels: labels,
 		})
 	}
 
@@ -239,6 +267,13 @@ func (tg *taskGenerator) buildTask(ctx context.Context, issue githubIssue, botUs
 	tsk.PRCommentsRequiringResponses = prCommentsReq
 	tsk.PRReviewCommentsRequiringResponses = prReviewCommentsReq
 
+	// Get check suites, if any
+	checkSuites, err := getCheckSuites(ctx, tg.githubClient, owner, repo, tsk.SourceBranch)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get check suites for source branch: %w", err)
+	}
+	tsk.SourceBranchCheckSuites = checkSuites
+
 	return &tsk, nil
 }
 
@@ -253,6 +288,18 @@ func (tg *taskGenerator) needsAttention(task task) bool {
 		len(task.PRReviewCommentsRequiringResponses) > 0 {
 
 		return true
+	}
+	// Check if there is a "bot turn" label, which is a manual prompt for the bot to take action
+	if slices.Contains(task.Issue.labels, *LabelBotTurn.Name) {
+		return true
+	}
+	// Check if there are any failed check suites
+	if task.SourceBranchCheckSuites != nil {
+		for _, checkSuite := range task.SourceBranchCheckSuites {
+			if checkSuite.Conclusion == string(CheckSuiteConclusionFailure) {
+				return true
+			}
+		}
 	}
 
 	return false
@@ -648,4 +695,80 @@ func organizePRReviewCommentsIntoThreads(comments []*github.PullRequestComment) 
 	}
 
 	return threads, nil
+}
+
+func getCheckSuites(ctx context.Context, githubClient *github.Client, owner string, repo string, branch string) ([]githubCheckSuite, error) {
+	// Get the head SHA for the branch
+	maxRedirects := 10
+	branchInfo, _, err := githubClient.Repositories.GetBranch(ctx, owner, repo, branch, maxRedirects)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get branch info: %w", err)
+	}
+	if branchInfo == nil || branchInfo.Commit == nil || branchInfo.Commit.SHA == nil {
+		return nil, fmt.Errorf("branch '%s' does not have a valid commit", branch)
+	}
+	headSHA := *branchInfo.Commit.SHA
+
+	suites, _, err := githubClient.Checks.ListCheckSuitesForRef(ctx, owner, repo, headSHA, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list check suites: %w", err)
+	}
+
+	if suites == nil || suites.CheckSuites == nil || len(suites.CheckSuites) == 0 {
+		return nil, nil // No check suites found
+	}
+
+	convertedSuites := []githubCheckSuite{}
+	for _, checkSuite := range suites.CheckSuites {
+		runs, err := getCheckRuns(ctx, githubClient, owner, repo, checkSuite.GetID())
+		if err != nil {
+			return nil, fmt.Errorf("failed to get check runs for suite %d: %w", checkSuite.GetID(), err)
+		}
+		convertedSuites = append(convertedSuites, githubCheckSuite{
+			ID:         checkSuite.GetID(),
+			Status:     checkSuite.GetStatus(),
+			Conclusion: checkSuite.GetConclusion(),
+			Runs:       runs,
+		})
+	}
+
+	return convertedSuites, nil
+}
+
+func getCheckRuns(ctx context.Context, githubClient *github.Client, owner string, repo string, checkSuiteID int64) ([]githubCheckRun, error) {
+	runs, _, err := githubClient.Checks.ListCheckRunsCheckSuite(ctx, owner, repo, checkSuiteID, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list check runs: %w", err)
+	}
+
+	convertedRuns := []githubCheckRun{}
+	for _, run := range runs.CheckRuns {
+		annotations, err := getAnnotations(ctx, githubClient, owner, repo, run.GetID())
+		if err != nil {
+			return nil, fmt.Errorf("failed to get annotations for check run %d: %w", run.GetID(), err)
+		}
+		convertedRuns = append(convertedRuns, githubCheckRun{
+			ID:          run.GetID(),
+			Status:      run.GetStatus(),
+			Conclusion:  run.GetConclusion(),
+			Annotations: annotations,
+		})
+	}
+
+	return convertedRuns, nil
+}
+
+func getAnnotations(ctx context.Context, githubClient *github.Client, owner string, repo string, checkRunID int64) ([]*github.CheckRunAnnotation, error) {
+	annotations, _, err := githubClient.Checks.ListCheckRunAnnotations(ctx, owner, repo, checkRunID, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list check run annotations: %w", err)
+	}
+	filteredAnnotations := []*github.CheckRunAnnotation{}
+	for _, annotation := range annotations {
+		if annotation.GetPath() == ".github" {
+			continue // Skip annotations on the .github directory, which seem to be some kind of metadata
+		}
+		filteredAnnotations = append(filteredAnnotations, annotation)
+	}
+	return filteredAnnotations, nil
 }
