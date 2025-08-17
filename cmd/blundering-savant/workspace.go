@@ -78,13 +78,13 @@ func NewRemoteValidationWorkspace(
 	diffFS := NewMemDiffFileSystem(githubFS)
 
 	// Create the work and review branches if they don't exist
-	err = createBranchIfNotExist(ctx, githubClient, owner, repo, baseBranch, workBranch)
+	err = gitRepo.CreateBranch(ctx, baseBranch, workBranch)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create work branch: %w", err)
+		return nil, fmt.Errorf("failed to create work branch '%s': %v", workBranch, err)
 	}
-	err = createBranchIfNotExist(ctx, githubClient, owner, repo, baseBranch, reviewBranch)
+	err = gitRepo.CreateBranch(ctx, baseBranch, reviewBranch)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create review branch: %w", err)
+		return nil, fmt.Errorf("failed to create review branch '%s': %v", reviewBranch, err)
 	}
 
 	prService := NewGithubPullRequestService(githubClient.PullRequests, owner, repo, reviewBranch, baseBranch)
