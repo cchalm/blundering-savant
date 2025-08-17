@@ -85,7 +85,7 @@ func TestBuildPrompt_WithStyleGuide(t *testing.T) {
 	require.NoError(t, err)
 	prompt := *promptPtr
 
-	require.Contains(t, prompt, "Style Guides:")
+	require.Contains(t, prompt, "## Style Guides")
 	require.Contains(t, prompt, "style_guide.md")
 	require.Contains(t, prompt, "Use tabs for indentation")
 }
@@ -110,7 +110,7 @@ func TestBuildPrompt_WithFileTree(t *testing.T) {
 	require.NoError(t, err)
 	prompt := *promptPtr
 
-	require.Contains(t, prompt, "Repository structure (sample files):")
+	require.Contains(t, prompt, "## Repository structure")
 	require.Contains(t, prompt, "- main.go")
 	require.Contains(t, prompt, "- README.md")
 	require.Contains(t, prompt, "- go.mod")

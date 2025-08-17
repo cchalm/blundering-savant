@@ -63,15 +63,14 @@ ANTHROPIC_API_KEY=sk-ant-<your-anthropic-api-key>
 ### Installing tools
 
 1. Install [Just](https://github.com/casey/just) command runner.
+    - `sudo apt install just`
 2. Install [golangci-lint](https://golangci-lint.run/docs/welcome/install/#local-installation)
     - `curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/HEAD/install.sh | sh -s -- -b $(go env GOPATH)/bin v2.3.1`
 
 ### Running the Bot
 
-Prerequisites: Install [Just](https://github.com/casey/just) command runner.
-
 1. Build: `just build`
-1. Run: `just run`  
+1. Run: `just run`
 1. Logs: `just logs`
 1. Stop: `just stop`
 
