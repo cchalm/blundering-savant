@@ -588,7 +588,6 @@ type PublishChangesForReviewTool struct {
 }
 
 type PublishChangesForReviewInput struct {
-	CommitMessage    string `json:"commit_message"`
 	PullRequestTitle string `json:"pull_request_title"`
 	PullRequestBody  string `json:"pull_request_body"`
 }
@@ -606,10 +605,6 @@ func (t *PublishChangesForReviewTool) GetToolParam() anthropic.ToolParam {
 		Description: anthropic.String("Publish changes for review by other developers"),
 		InputSchema: anthropic.ToolInputSchemaParam{
 			Properties: map[string]any{
-				"commit_message": map[string]any{
-					"type":        "string",
-					"description": "Commit message describing all file changes made since the last call to this tool",
-				},
 				"pull_request_title": map[string]any{
 					"type":        "string",
 					"description": "Title for the new pull request, if any. Ignored if a pull request already exists",
@@ -643,10 +638,6 @@ func (t *PublishChangesForReviewTool) Run(ctx context.Context, block anthropic.T
 		return nil, fmt.Errorf("error parsing input: %w", err)
 	}
 
-	if input.CommitMessage == "" {
-		return nil, ToolInputError{fmt.Errorf("commit_message is required")}
-	}
-
 	if toolCtx.Task.PullRequest == nil {
 		if input.PullRequestTitle == "" {
 			return nil, ToolInputError{fmt.Errorf("a new pull request will be created, so pull_request_title is required")}
@@ -657,7 +648,7 @@ func (t *PublishChangesForReviewTool) Run(ctx context.Context, block anthropic.T
 		}
 	}
 
-	err = toolCtx.Workspace.PublishChangesForReview(ctx, input.CommitMessage, input.PullRequestTitle, input.PullRequestBody)
+	err = toolCtx.Workspace.PublishChangesForReview(ctx, input.PullRequestTitle, input.PullRequestBody)
 	if err != nil {
 		return nil, fmt.Errorf("failed to publish changes: %w", err)
 	}

@@ -73,7 +73,7 @@ type Workspace interface {
 	// PublishChangesForReview makes validated changes available for review. reviewRequestTitle and reviewRequestBody
 	// are only used the first time a review is published, subsequent publishes will ignore these parameters and update
 	// the existing review
-	PublishChangesForReview(ctx context.Context, commitMessage string, reviewRequestTitle string, reviewRequestBody string) error
+	PublishChangesForReview(ctx context.Context, reviewRequestTitle string, reviewRequestBody string) error
 }
 
 type WorkspaceFactory interface {
