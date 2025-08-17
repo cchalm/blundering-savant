@@ -158,7 +158,6 @@ If there is not a pull request for this issue yet:
 4. Validate changes with the "validate_changes" tool. Provide a clear and concise commit message
   - If validation fails, make the necessary changes and repeat validation
 5. Publish validated changes for review with the "publish_changes_for_review" tool. Provide:
-  - A clear and concise commit message describing ALL changes made before publishing
   - A concise pull request title
   - A descriptive summary of the code changes for the pull request body
 
@@ -182,7 +181,7 @@ If there is already a pull request for this issue:
   - Fix any validation issues
 7. Validate the changes with the "validate_changes" tool. Provide a clear and concise commit message
   - If validation fails, make the necessary changes and repeat validation
-8. Publish validated changes for review with the "publish_changes_for_review" tool. Provide a clear and concise commit message describing ALL changes made before publishing
+8. Publish validated changes for review with the "publish_changes_for_review" tool
 9. React to all comments that have either been addressed or replied to
 	- Do this AFTER either replying to a comment or publishing code changes that address the comment
 10. Post a comment on the pull request explaining the new changes
