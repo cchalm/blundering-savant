@@ -267,7 +267,7 @@ func (tg *taskGenerator) buildTask(ctx context.Context, issue githubIssue, botUs
 	tsk.PRCommentsRequiringResponses = prCommentsReq
 	tsk.PRReviewCommentsRequiringResponses = prReviewCommentsReq
 
-	// Get check suites, if any
+	// TODO Validate
 	checkSuites, err := getCheckSuites(ctx, tg.githubClient, owner, repo, tsk.SourceBranch)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get check suites for source branch: %w", err)
