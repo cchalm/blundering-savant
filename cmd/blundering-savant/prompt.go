@@ -318,8 +318,6 @@ func buildTemplateData(tsk task) promptTemplateData {
 		data.PRReviewCommentsRequiringResponses = append(data.PRReviewCommentsRequiringResponses, convertGitHubReviewComment(comment))
 	}
 
-	data.ValidationResult = tsk.ValidationResult
-
 	return data
 }
 

@@ -116,33 +116,6 @@ PR Review Comment {{.ID}} by @{{.User.Login}}
 {{- end}}
 {{- end}}
 
-## Validation
-{{- if .SourceBranchCheckSuites }}
-Validation results on published changes:
-  {{- range .SourceBranchCheckSuites}}
-    Check Suite {{.ID}} ({{.Status}}{{if .Conclusion}}/{{.Conclusion}}{{end}}):
-    {{- if .Runs}}
-      {{- range .Runs}}
-      Run {{.ID}} ({{.Status}}{{if .Conclusion}}/{{.Conclusion}}{{end}}):
-      {{- if .Annotations}}
-        {{- range .Annotations}}
-        - {{.AnnotationLevel}}: {{.Message}}
-          {{- if .Path}} in {{.Path}}{{end}}
-          {{- if .StartLine}}{{if .EndLine}} (lines {{.StartLine}}-{{.EndLine}}){{else}} (line {{.StartLine}}){{end}}{{end}}
-          {{- if .Title}} - {{.Title}}{{end}}
-        {{- end}}
-      {{- else}}
-        No annotations
-      {{- end}}
-      {{- end}}
-    {{- else}}
-      No runs available
-    {{- end}}
-  {{- end}}
-{{- else}}
-No validation results available
-{{- end}}
-
 ## Your Task
 
 An issue assigned to you requires your attention. Follow these guidelines:

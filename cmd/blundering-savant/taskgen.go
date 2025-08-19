@@ -54,8 +54,9 @@ type taskOrError struct {
 }
 
 type taskGenerator struct {
-	config       Config
-	githubClient *github.Client
+	config           Config
+	githubClient     *github.Client
+	workspaceFactory WorkspaceFactory
 }
 
 func newTaskGenerator(config Config, githubClient *github.Client) *taskGenerator {
@@ -267,13 +268,6 @@ func (tg *taskGenerator) buildTask(ctx context.Context, issue githubIssue, botUs
 	tsk.PRCommentsRequiringResponses = prCommentsReq
 	tsk.PRReviewCommentsRequiringResponses = prReviewCommentsReq
 
-	// TODO Validate
-	checkSuites, err := getCheckSuites(ctx, tg.githubClient, owner, repo, tsk.SourceBranch)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get check suites for source branch: %w", err)
-	}
-	tsk.SourceBranchCheckSuites = checkSuites
-
 	return &tsk, nil
 }
 
@@ -292,14 +286,6 @@ func (tg *taskGenerator) needsAttention(task task) bool {
 	// Check if there is a "bot turn" label, which is a manual prompt for the bot to take action
 	if slices.Contains(task.Issue.labels, *LabelBotTurn.Name) {
 		return true
-	}
-	// Check if there are any failed check suites
-	if task.SourceBranchCheckSuites != nil {
-		for _, checkSuite := range task.SourceBranchCheckSuites {
-			if checkSuite.Conclusion == string(CheckSuiteConclusionFailure) {
-				return true
-			}
-		}
 	}
 
 	return false

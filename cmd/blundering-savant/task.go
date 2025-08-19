@@ -31,9 +31,6 @@ type task struct {
 	PRCommentsRequiringResponses       []*github.IssueComment
 	PRReviewCommentsRequiringResponses []*github.PullRequestComment
 
-	// Current validation state
-	ValidationResult ValidationResult
-
 	// Configuration
 	BotUsername string
 }
