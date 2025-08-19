@@ -154,12 +154,12 @@ func (b *Bot) doTask(ctx context.Context, tsk task) (err error) {
 
 	hasUnpublishedChanges, err := workspace.HasUnpublishedChanges(ctx)
 	if err != nil {
-		return fmt.Errorf("failed to check for unpublished changes")
+		return fmt.Errorf("failed to check for unpublished changes: %w", err)
 	}
 
 	validationResult, err := workspace.ValidateChanges(ctx, nil)
 	if err != nil {
-		return fmt.Errorf("failed to fetch validation results")
+		return fmt.Errorf("failed to fetch validation results: %w", err)
 	}
 
 	tsk.HasUnpublishedChanges = hasUnpublishedChanges
