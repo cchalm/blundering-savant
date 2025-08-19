@@ -33,6 +33,10 @@ type task struct {
 
 	// Configuration
 	BotUsername string
+
+	// State computed from the workspace after initial task generation (unpopulated until then)
+	HasUnpublishedChanges bool
+	ValidationResult      ValidationResult
 }
 
 // CodebaseInfo holds information about the repository structure

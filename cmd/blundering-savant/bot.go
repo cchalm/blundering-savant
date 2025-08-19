@@ -67,9 +67,10 @@ type Workspace interface {
 	// HasUnpublishedChanged returns true if there are validated changes that have not been published for review
 	HasUnpublishedChanges(ctx context.Context) (bool, error)
 
-	// ValidateChanges persists local changes remotely, validates them, and returns the results. After calling
-	// ValidateChanges, there will be no local changes in the workspace
-	ValidateChanges(ctx context.Context, commitMessage string) (ValidationResult, error)
+	// ValidateChanges persists local changes remotely, validates them, and returns the results. A commit message must
+	// be provided if there are local changes in the workspace. After calling ValidateChanges, there will be no local
+	// changes in the workspace.
+	ValidateChanges(ctx context.Context, commitMessage *string) (ValidationResult, error)
 	// PublishChangesForReview makes validated changes available for review. reviewRequestTitle and reviewRequestBody
 	// are only used the first time a review is published, subsequent publishes will ignore these parameters and update
 	// the existing review
@@ -148,6 +149,21 @@ func (b *Bot) doTask(ctx context.Context, tsk task) (err error) {
 	if err != nil {
 		return fmt.Errorf("failed to create workspace: %w", err)
 	}
+
+	// Do some prep work to avoid unnecessary back-and-forths with the AI
+
+	hasUnpublishedChanges, err := workspace.HasUnpublishedChanges(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to check for unpublished changes")
+	}
+
+	validationResult, err := workspace.ValidateChanges(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("failed to fetch validation results")
+	}
+
+	tsk.HasUnpublishedChanges = hasUnpublishedChanges
+	tsk.ValidationResult = validationResult
 
 	// Let the AI do its thing
 	err = b.processWithAI(ctx, tsk, workspace)

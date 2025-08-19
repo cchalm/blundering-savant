@@ -321,7 +321,7 @@ func (t *ValidateChangesTool) GetToolParam() anthropic.ToolParam {
 				"commit_message": map[string]any{
 					"type": "string",
 					"description": "Commit message for file changes made since the last call to this tool. May or " +
-						"may not be used depending on the implementation, but must be provided",
+						"may not be used depending on the implementation, but a non-empty string must be provided",
 				},
 			},
 		},
@@ -353,7 +353,7 @@ func (t *ValidateChangesTool) Run(ctx context.Context, block anthropic.ToolUseBl
 	}
 
 	// Validate changes, if any
-	result, err := toolCtx.Workspace.ValidateChanges(ctx, input.CommitMessage)
+	result, err := toolCtx.Workspace.ValidateChanges(ctx, &input.CommitMessage)
 	if err != nil {
 		return nil, fmt.Errorf("failed to commit changes: %w", err)
 	}

@@ -81,6 +81,7 @@ type promptTemplateData struct {
 	IssueCommentsRequiringResponses    []commentData
 	PRCommentsRequiringResponses       []commentData
 	PRReviewCommentsRequiringResponses []reviewCommentData
+	HasUnpublishedChanges              bool
 	ValidationResult                   ValidationResult
 }
 
@@ -317,6 +318,9 @@ func buildTemplateData(tsk task) promptTemplateData {
 	for _, comment := range tsk.PRReviewCommentsRequiringResponses {
 		data.PRReviewCommentsRequiringResponses = append(data.PRReviewCommentsRequiringResponses, convertGitHubReviewComment(comment))
 	}
+
+	data.HasUnpublishedChanges = tsk.HasUnpublishedChanges
+	data.ValidationResult = tsk.ValidationResult
 
 	return data
 }
