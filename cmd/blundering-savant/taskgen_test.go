@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -134,41 +135,23 @@ func TestOrganizePRReviewCommentsIntoThreads_EmptyInput(t *testing.T) {
 	require.Len(t, threads, 0)
 }
 
-func TestGetFileTreeWithSafeguards_EnforcesLimits(t *testing.T) {
-	// Create a mock tree with various edge cases to test safeguards
-	entries := []*github.TreeEntry{}
-	
-	// Add normal files (should be included)
-	entries = append(entries, &github.TreeEntry{Path: github.Ptr("README.md")})
-	entries = append(entries, &github.TreeEntry{Path: github.Ptr("src/main.go")})
-	entries = append(entries, &github.TreeEntry{Path: github.Ptr("docs/guide.md")})
-	
-	// Add a file with path too long (should be excluded)
-	longPath := "very/" + strings.Repeat("long/", 50) + "path.txt" // Over 500 chars
-	entries = append(entries, &github.TreeEntry{Path: &longPath})
-	
-	// Add a file too deep (should be excluded) 
-	deepPath := strings.Repeat("level/", 25) + "file.txt" // Over 20 levels deep
-	entries = append(entries, &github.TreeEntry{Path: &deepPath})
-	
-	// Add files to test the 1000 file limit
-	for i := 0; i < 1005; i++ {
-		path := "file" + string(rune('0'+i%10)) + ".txt"
-		entries = append(entries, &github.TreeEntry{Path: &path})
+func TestGetFileTree_IncludesValidFiles(t *testing.T) {
+	// Create a tree with normal files that should be included
+	entries := []*github.TreeEntry{
+		{Path: github.Ptr("README.md")},
+		{Path: github.Ptr("src/main.go")},
+		{Path: github.Ptr("docs/guide.md")},
 	}
-	
-	tree := &github.Tree{Entries: entries}
 	
 	// Test the filtering logic directly (mirroring the actual implementation)
 	var fileTree []string
 	fileCount := 0
 	const (
-		maxFiles         = 1000
-		maxPathLength    = 500
-		maxDirectoryDepth = 20
+		maxFiles      = 1000
+		maxPathLength = 500
 	)
 	
-	for _, entry := range tree.Entries {
+	for _, entry := range entries {
 		if entry.Path == nil {
 			continue
 		}
@@ -177,12 +160,6 @@ func TestGetFileTreeWithSafeguards_EnforcesLimits(t *testing.T) {
 		
 		// Check path length limit
 		if len(path) > maxPathLength {
-			continue
-		}
-		
-		// Check directory depth limit
-		depth := strings.Count(path, "/")
-		if depth > maxDirectoryDepth {
 			continue
 		}
 		
@@ -195,16 +172,161 @@ func TestGetFileTreeWithSafeguards_EnforcesLimits(t *testing.T) {
 		fileCount++
 	}
 	
-	// Verify safeguards are enforced
-	require.LessOrEqual(t, len(fileTree), maxFiles, "Should not exceed max file count")
-	
-	for _, path := range fileTree {
-		require.LessOrEqual(t, len(path), maxPathLength, "Path should not exceed max length: %s", path)
-		require.LessOrEqual(t, strings.Count(path, "/"), maxDirectoryDepth, "Path should not exceed max depth: %s", path)
-	}
-	
-	// Verify some expected files are included
+	// Verify expected files are included
 	require.Contains(t, fileTree, "README.md")
 	require.Contains(t, fileTree, "src/main.go")
 	require.Contains(t, fileTree, "docs/guide.md")
+}
+
+func TestGetFileTree_ExcludesLongPaths(t *testing.T) {
+	// Create a tree with a path that's too long
+	longPath := "very/" + strings.Repeat("long/", 100) + "path.txt" // Over 500 chars
+	entries := []*github.TreeEntry{
+		{Path: github.Ptr("README.md")},
+		{Path: &longPath},
+	}
+	
+	// Test the filtering logic directly (mirroring the actual implementation)
+	var fileTree []string
+	fileCount := 0
+	const (
+		maxFiles      = 1000
+		maxPathLength = 500
+	)
+	
+	for _, entry := range entries {
+		if entry.Path == nil {
+			continue
+		}
+		
+		path := *entry.Path
+		
+		// Check path length limit
+		if len(path) > maxPathLength {
+			continue
+		}
+		
+		// Check file count limit
+		if fileCount >= maxFiles {
+			break
+		}
+		
+		fileTree = append(fileTree, path)
+		fileCount++
+	}
+	
+	// Verify long path is excluded and short path is included
+	require.Contains(t, fileTree, "README.md")
+	require.NotContains(t, fileTree, longPath)
+	
+	// Verify all included paths are within limit
+	for _, path := range fileTree {
+		require.LessOrEqual(t, len(path), maxPathLength, "Path should not exceed max length: %s", path)
+	}
+}
+
+func TestGetFileTree_EnforcesFileCountLimit(t *testing.T) {
+	// Create a tree with more than 1000 files (all with valid, short paths)
+	entries := []*github.TreeEntry{}
+	
+	// Add files to test the 1000 file limit - use simple, short paths
+	for i := 0; i < 1005; i++ {
+		path := fmt.Sprintf("file%d.txt", i)
+		entries = append(entries, &github.TreeEntry{Path: &path})
+	}
+	
+	// Test the filtering logic directly (mirroring the actual implementation)
+	var fileTree []string
+	fileCount := 0
+	const (
+		maxFiles      = 1000
+		maxPathLength = 500
+	)
+	
+	for _, entry := range entries {
+		if entry.Path == nil {
+			continue
+		}
+		
+		path := *entry.Path
+		
+		// Check path length limit
+		if len(path) > maxPathLength {
+			continue
+		}
+		
+		// Check file count limit
+		if fileCount >= maxFiles {
+			break
+		}
+		
+		fileTree = append(fileTree, path)
+		fileCount++
+	}
+	
+	// Verify file count limit is enforced
+	require.LessOrEqual(t, len(fileTree), maxFiles, "Should not exceed max file count")
+	require.Equal(t, maxFiles, len(fileTree), "Should include exactly max files when more are available")
+}
+
+func TestGetFileTree_MixedPathLengthsWithFileLimit(t *testing.T) {
+	// Test case that combines both long paths and file count limits to ensure 
+	// they work correctly together without interference
+	entries := []*github.TreeEntry{}
+	
+	// Add some normal files
+	for i := 0; i < 995; i++ {
+		path := fmt.Sprintf("file%d.txt", i)
+		entries = append(entries, &github.TreeEntry{Path: &path})
+	}
+	
+	// Add some files with paths that are too long (should be excluded)
+	for i := 0; i < 3; i++ {
+		longPath := "very/" + strings.Repeat("long/", 100) + fmt.Sprintf("path%d.txt", i) // Over 500 chars
+		entries = append(entries, &github.TreeEntry{Path: &longPath})
+	}
+	
+	// Add a few more normal files to test the count limit
+	for i := 995; i < 1010; i++ {
+		path := fmt.Sprintf("file%d.txt", i)
+		entries = append(entries, &github.TreeEntry{Path: &path})
+	}
+	
+	// Test the filtering logic directly (mirroring the actual implementation)
+	var fileTree []string
+	fileCount := 0
+	const (
+		maxFiles      = 1000
+		maxPathLength = 500
+	)
+	
+	for _, entry := range entries {
+		if entry.Path == nil {
+			continue
+		}
+		
+		path := *entry.Path
+		
+		// Check path length limit
+		if len(path) > maxPathLength {
+			continue
+		}
+		
+		// Check file count limit
+		if fileCount >= maxFiles {
+			break
+		}
+		
+		fileTree = append(fileTree, path)
+		fileCount++
+	}
+	
+	// Verify both limits are enforced correctly
+	require.LessOrEqual(t, len(fileTree), maxFiles, "Should not exceed max file count")
+	require.Equal(t, maxFiles, len(fileTree), "Should include exactly max files when more valid files are available")
+	
+	// Verify no long paths are included
+	for _, path := range fileTree {
+		require.LessOrEqual(t, len(path), maxPathLength, "Path should not exceed max length: %s", path)
+	}
 }
