@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"fmt"
 	"io"
@@ -374,10 +375,10 @@ func (gacv GithubActionCommitValidator) fetchWorkflowJobLogs(ctx context.Context
 		return "", fmt.Errorf("workflow run logs URL is nil")
 	}
 
-	return httpFetch(ctx, logsURL)
+	return httpFetchUTF8(ctx, logsURL)
 }
 
-func httpFetch(ctx context.Context, url *url.URL) (string, error) {
+func httpFetchUTF8(ctx context.Context, url *url.URL) (string, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url.String(), nil)
 	if err != nil {
 		return "", fmt.Errorf("failed to create HTTP request: %w", err)
@@ -389,7 +390,17 @@ func httpFetch(ctx context.Context, url *url.URL) (string, error) {
 	}
 	defer httpResp.Body.Close()
 
-	b, err := io.ReadAll(httpResp.Body)
+	// Strip the BOM, if present, before reading
+	br := bufio.NewReader(httpResp.Body)
+	r, _, err := br.ReadRune()
+	if err != nil {
+		log.Fatal(err)
+	}
+	if r != '\uFEFF' {
+		br.UnreadRune() // Not a BOM -- put the rune back
+	}
+
+	b, err := io.ReadAll(br)
 	if err != nil {
 		return "", fmt.Errorf("failed to read response body: %w", err)
 	}
