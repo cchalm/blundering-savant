@@ -180,7 +180,7 @@ func TestGetFileTree_IncludesValidFiles(t *testing.T) {
 
 func TestGetFileTree_ExcludesLongPaths(t *testing.T) {
 	// Create a tree with a path that's too long
-	longPath := "very/" + strings.Repeat("long/", 50) + "path.txt" // Over 500 chars
+	longPath := "very/" + strings.Repeat("long/", 100) + "path.txt" // Over 500 chars
 	entries := []*github.TreeEntry{
 		{Path: github.Ptr("README.md")},
 		{Path: &longPath},
@@ -282,7 +282,7 @@ func TestGetFileTree_MixedPathLengthsWithFileLimit(t *testing.T) {
 	
 	// Add some files with paths that are too long (should be excluded)
 	for i := 0; i < 3; i++ {
-		longPath := "very/" + strings.Repeat("long/", 50) + fmt.Sprintf("path%d.txt", i) // Over 500 chars
+		longPath := "very/" + strings.Repeat("long/", 100) + fmt.Sprintf("path%d.txt", i) // Over 500 chars
 		entries = append(entries, &github.TreeEntry{Path: &longPath})
 	}
 	
