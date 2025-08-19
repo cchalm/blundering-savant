@@ -130,7 +130,9 @@ There are no unpublished changes in the workspace
 No issues found
 {{- else}}
 Validation failed:
+```
 {{.ValidationResult.Details}}
+```
 {{- end}}
 
 

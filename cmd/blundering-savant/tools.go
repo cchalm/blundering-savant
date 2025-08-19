@@ -360,7 +360,7 @@ func (t *ValidateChangesTool) Run(ctx context.Context, block anthropic.ToolUseBl
 
 	var msg string
 	if !result.Succeeded {
-		msg = fmt.Sprintf("Validation failed. Details:\n%s", result.Details)
+		msg = fmt.Sprintf("Validation failed. Details:\n```\n%s\n```\n", result.Details)
 	} else {
 		msg = "validation succeeded"
 	}

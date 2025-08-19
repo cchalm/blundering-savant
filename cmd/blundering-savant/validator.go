@@ -161,22 +161,17 @@ func (gacv GithubActionCommitValidator) ValidateBranch(ctx context.Context, bran
 	}
 
 	succeeded := run.GetConclusion() == string(WorkflowConclusionSuccess)
-	var detailsStr string
+	var logs string
 	if !succeeded {
-		details, err := gacv.getWorkflowRunDetails(ctx, run)
+		logs, err = gacv.getWorkflowRunLogs(ctx, run)
 		if err != nil {
-			return ValidationResult{}, fmt.Errorf("failed to get workflow run details: %w", err)
-		}
-
-		detailsStr, err = serializeFailureDetails(details)
-		if err != nil {
-			return ValidationResult{}, fmt.Errorf("failed to serialize failure details: %w", err)
+			return ValidationResult{}, fmt.Errorf("failed to get workflow run logs: %w", err)
 		}
 	}
 
 	return ValidationResult{
 		Succeeded: succeeded,
-		Details:   detailsStr,
+		Details:   logs,
 	}, nil
 }
 
@@ -314,54 +309,23 @@ func (gacv GithubActionCommitValidator) waitForWorkflowCompletion(ctx context.Co
 }
 
 // getWorkflowRunDetails fetches and parses relevant information about a workflow run
-func (gacv GithubActionCommitValidator) getWorkflowRunDetails(ctx context.Context, run *github.WorkflowRun) (WorkflowRun, error) {
+func (gacv GithubActionCommitValidator) getWorkflowRunLogs(ctx context.Context, run *github.WorkflowRun) (string, error) {
 	jobsResult, _, err := gacv.githubClient.Actions.ListWorkflowJobs(ctx, gacv.owner, gacv.repo, *run.ID, &github.ListWorkflowJobsOptions{})
 	if err != nil {
-		return WorkflowRun{}, fmt.Errorf("failed to list workflow jobs: %w", err)
+		return "", fmt.Errorf("failed to list workflow jobs: %w", err)
 	}
 
-	jobs := []WorkflowJob{}
+	logsBuilder := strings.Builder{}
 	for _, job := range jobsResult.Jobs {
 		logs, err := gacv.fetchWorkflowJobLogs(ctx, *job.ID)
 		if err != nil {
-			return WorkflowRun{}, fmt.Errorf("failed to fetch workflow job logs: %w", err)
+			return "", fmt.Errorf("failed to fetch workflow job logs: %w", err)
 		}
 
-		logChunker := newChronoLogChunker(logs)
-
-		steps := []WorkflowStep{}
-		for _, step := range job.Steps {
-			// Fetch step logs
-			stepLogs, err := logChunker.NextUntil(step.CompletedAt.Time)
-			if err != nil {
-				return WorkflowRun{}, fmt.Errorf("failed to get log chunk: %w", err)
-			}
-
-			steps = append(steps, WorkflowStep{
-				Number:      *step.Number,
-				Name:        *step.Name,
-				Status:      StepStatus(*step.Status),
-				Conclusion:  StepConclusion(*step.Conclusion),
-				StartedAt:   step.StartedAt.Time,
-				CompletedAt: step.CompletedAt.Time,
-				Logs:        stepLogs,
-			})
-		}
-
-		jobs = append(jobs, WorkflowJob{
-			ID:         *job.ID,
-			Status:     JobStatus(*job.Status),
-			Conclusion: JobConclusion(*job.Conclusion),
-			Steps:      steps,
-		})
+		logsBuilder.WriteString(fmt.Sprintf("Job %d (%s) logs:\n%s\n\n", *job.ID, job.GetName(), logs))
 	}
 
-	return WorkflowRun{
-		ID:         *run.ID,
-		Status:     WorkflowStatus(*run.Status),
-		Conclusion: WorkflowConclusion(*run.Conclusion),
-		Jobs:       jobs,
-	}, nil
+	return logsBuilder.String(), nil
 }
 
 func (gacv GithubActionCommitValidator) fetchWorkflowJobLogs(ctx context.Context, jobID int64) (string, error) {
@@ -406,66 +370,4 @@ func httpFetchUTF8(ctx context.Context, url *url.URL) (string, error) {
 	}
 
 	return string(b), nil
-}
-
-func serializeFailureDetails(run WorkflowRun) (string, error) {
-	b := strings.Builder{}
-	for _, job := range run.Jobs {
-		if job.Conclusion == JobConclusionFailure {
-			b.WriteString(fmt.Sprintf("Job %d failed:\n", job.ID))
-			for _, step := range job.Steps {
-				if step.Conclusion == StepConclusionFailure {
-					b.WriteString(fmt.Sprintf("  Step %d (%s) failed:\n", step.Number, step.Name))
-					for line := range strings.Lines(step.Logs) {
-						b.WriteString(fmt.Sprintf("    %s", line))
-					}
-				}
-			}
-		}
-	}
-	return b.String(), nil
-}
-
-// chronoLogChunker takes a log string consisting of chronologically-ordered, timestamp-prefixed lines and generates
-// sequential chunks of the log between given cutoff times
-type chronoLogChunker struct {
-	lines []string
-	idx   int
-}
-
-func newChronoLogChunker(logs string) *chronoLogChunker {
-	lines := []string{}
-	for line := range strings.Lines(logs) {
-		lines = append(lines, line)
-	}
-	return &chronoLogChunker{
-		lines: lines,
-		idx:   0,
-	}
-}
-
-// NextUntil returns the next chunk of the log up to (and including) the given cutoff time
-func (clg *chronoLogChunker) NextUntil(cutoff time.Time) (string, error) {
-	var result strings.Builder
-	for ; clg.idx < len(clg.lines); clg.idx++ {
-		line := clg.lines[clg.idx]
-
-		timeStr, _, found := strings.Cut(line, " ")
-		if !found {
-			return "", fmt.Errorf("log line '%s' does not start with a timestamp", line)
-		}
-
-		logTime, err := time.Parse(time.RFC3339, timeStr)
-		if err != nil {
-			return "", fmt.Errorf("failed to parse log line time '%s': %w", timeStr, err)
-		}
-
-		if logTime.After(cutoff) {
-			break
-		}
-
-		result.WriteString(line)
-	}
-
-	return result.String(), nil
 }
