@@ -321,7 +321,7 @@ func (gacv GithubActionCommitValidator) getWorkflowRunDetails(ctx context.Contex
 
 	jobs := []WorkflowJob{}
 	for _, job := range jobsResult.Jobs {
-		logs, err := gacv.fetchWorkflowJobLogs(ctx, *run.ID)
+		logs, err := gacv.fetchWorkflowJobLogs(ctx, *job.ID)
 		if err != nil {
 			return WorkflowRun{}, fmt.Errorf("failed to fetch workflow job logs: %w", err)
 		}
