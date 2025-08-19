@@ -22,72 +22,25 @@
 
 ---
 
-## Conversation Turns
+## Conversation
 
-{{- range .Turns}}
+{{- range .Messages}}
+{{- if eq .Type "user_text"}}
 
-### Turn {{.TurnNumber}} - {{.Timestamp}}
-
-#### 👤 User Message
-{{- range .UserMessage.Content}}
-{{- if eq .Type "text"}}
+### 👤 User
 
 {{.Text}}
-{{- else if eq .Type "tool_result"}}
+{{- else if eq .Type "assistant_text"}}
 
-**🔄 Tool Result** ({{.ToolID}}){{if .IsError}} ⚠️ **Error**{{end}}
-
-<details>
-<summary>View Tool Result</summary>
-
-```
-{{formatFileContent .ToolResult}}
-```
-
-</details>
-{{- else if eq .Type "tool_use"}}
-
-**🔧 Tool Use:** `{{.ToolName}}` ({{.ToolID}})
-
-<details>
-<summary>View Tool Input</summary>
-
-```json
-{{formatJSON .ToolInput}}
-```
-
-</details>
-{{- else}}
-
-**{{.Type}}:** {{.Text}}
-{{- end}}
+### 🤖 Assistant
+{{- if .TokenUsage}}
+*Token Usage: {{.TokenUsage.InputTokens}} input, {{.TokenUsage.OutputTokens}} output{{if gt .TokenUsage.CacheCreationTokens 0}}, {{.TokenUsage.CacheCreationTokens}} cache create{{end}}{{if gt .TokenUsage.CacheReadTokens 0}}, {{.TokenUsage.CacheReadTokens}} cache read{{end}}*
 {{- end}}
 
-{{- if .AssistantReply}}
-
-#### 🤖 Assistant Reply
-
-{{- if .AssistantReply.TokenUsage}}
-**Token Usage:** Input: {{.AssistantReply.TokenUsage.InputTokens}}, Output: {{.AssistantReply.TokenUsage.OutputTokens}}, Cache Create: {{.AssistantReply.TokenUsage.CacheCreationTokens}}, Cache Read: {{.AssistantReply.TokenUsage.CacheReadTokens}}
+{{- range $line := splitLines .Text}}
+> {{$line}}
 {{- end}}
-
-{{- range .AssistantReply.Content}}
-{{- if eq .Type "text"}}
-
-{{.Text}}
-{{- else if eq .Type "tool_use"}}
-
-**🔧 Tool Use:** `{{.ToolName}}` ({{.ToolID}})
-
-<details>
-<summary>View Tool Input</summary>
-
-```json
-{{formatJSON .ToolInput}}
-```
-
-</details>
-{{- else if eq .Type "thinking"}}
+{{- else if eq .Type "assistant_thinking"}}
 
 <details>
 <summary>🤔 Claude's Thinking</summary>
@@ -97,26 +50,36 @@
 ```
 
 </details>
-{{- else}}
+{{- else if eq .Type "tool_action"}}
 
-**{{.Type}}:** {{.Text}}
+<details>
+<summary>{{toolSummary .ToolName .ToolInput .Command .Path}}</summary>
+
+**Tool:** `{{.ToolName}}`
+
+{{- if .ToolInput}}
+**Input:**
+```json
+{{prettifyJSON .ToolInput}}
+```
 {{- end}}
+
+{{- if .ToolResult}}
+**Result:**{{if .IsError}} ⚠️ **Error**{{end}}
+```
+{{truncateContent .ToolResult}}
+```
 {{- end}}
 
-**Stop Reason:** `{{.AssistantReply.StopReason}}`
-{{- else}}
-
-#### 🤖 Assistant Reply
-*No response yet - conversation was interrupted*
+</details>
+{{- end}}
 {{- end}}
 
 ---
-{{- end}}
 
 ## Summary
 
-- **Total Turns:** {{len .Turns}}
-- **Completed Turns:** {{countCompletedTurns .Turns}}
+- **Total Messages:** {{len .Messages}}
 - **Total Tokens:** {{add .TokenUsage.TotalInputTokens .TokenUsage.TotalOutputTokens}} ({{.TokenUsage.TotalInputTokens}} input + {{.TokenUsage.TotalOutputTokens}} output)
 {{- if gt .TokenUsage.TotalCacheCreationTokens 0}}
 - **Cache Performance:** {{.TokenUsage.TotalCacheCreationTokens}} tokens created, {{.TokenUsage.TotalCacheReadTokens}} tokens read
