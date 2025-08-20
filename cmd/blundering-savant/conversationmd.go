@@ -72,8 +72,8 @@ func (cc *ClaudeConversation) buildMarkdownData() (*conversationMarkdownData, er
 		TokenUsage:   conversationTokenUsage{},
 	}
 
-	// Track pending tool uses to combine with results
-	pendingToolUses := make(map[string]conversationMessage) // toolID -> tool use message
+	// Track pending tool uses to combine with results (using pointers)
+	pendingToolUses := make(map[string]conversationMessage) // toolID -> pointer to message
 
 	// Process each turn
 	for _, turn := range cc.messages {
@@ -83,7 +83,7 @@ func (cc *ClaudeConversation) buildMarkdownData() (*conversationMarkdownData, er
 
 		// Process assistant reply if present
 		if turn.Response != nil {
-			assistantMessages := convertAssistantReply(turn.Response, pendingToolUses)
+			assistantMessages := convertAssistantMessage(turn.Response, pendingToolUses)
 			data.Messages = append(data.Messages, assistantMessages...)
 
 			// Accumulate token usage
@@ -144,9 +144,9 @@ func renderConversationMarkdown(data *conversationMarkdownData) (string, error) 
 					return "➕ Inserting into file"
 				default:
 					if path != "" {
-						return fmt.Sprintf("📝 %s '%s'", command, path)
+						return fmt.Sprintf("🔧 %s '%s'", command, path)
 					}
-					return fmt.Sprintf("📝 %s", command)
+					return fmt.Sprintf("🔧 %s", command)
 				}
 			case "post_comment":
 				// Parse comment type from input for more specific summary
@@ -215,56 +215,48 @@ func renderConversationMarkdown(data *conversationMarkdownData) (string, error) 
 
 // convertUserMessage converts anthropic.MessageParam to sequential conversationMessages
 func convertUserMessage(msg anthropic.MessageParam, pendingToolUses map[string]conversationMessage) []conversationMessage {
+	var toolUseMessages []conversationMessage
 	var messages []conversationMessage
 
 	for _, contentBlock := range msg.Content {
-		switch content := contentBlock.GetContent().AsAny().(type) {
-		case anthropic.TextBlockParam:
+		// Check which field is populated in the union
+		if contentBlock.OfText != nil {
 			messages = append(messages, conversationMessage{
 				Type: "user_text",
-				Text: content.Text,
+				Text: contentBlock.OfText.Text,
 			})
-
-		case anthropic.ToolResultBlockParam:
-			// Look for the pending tool use and combine them
-			toolID := content.ToolUseID
-			if toolUse, exists := pendingToolUses[toolID]; exists {
-				// Combine tool use and result into a single tool_action message
-				toolUse.Type = "tool_action"
-				toolUse.IsError = content.IsError.Or(false)
+		} else if contentBlock.OfToolResult != nil {
+			// Look for the pending tool use, add results to it, and then append it to toolUseMessages
+			toolID := contentBlock.OfToolResult.ToolUseID
+			if toolMsg, exists := pendingToolUses[toolID]; exists {
+				// Update the tool action message with results
+				toolMsg.IsError = contentBlock.OfToolResult.IsError.Or(false)
 
 				// Extract text content from tool result
 				var resultText strings.Builder
-				for _, resultContent := range content.Content {
-					if textBlock := resultContent.OfText; textBlock != nil {
-						resultText.WriteString(textBlock.Text)
-					} else if imageBlock := resultContent.OfImage; imageBlock != nil {
+				for _, resultContent := range contentBlock.OfToolResult.Content {
+					if resultContent.OfText != nil {
+						resultText.WriteString(resultContent.OfText.Text)
+					} else if resultContent.OfImage != nil {
 						resultText.WriteString("[Image content]")
 					}
 				}
-				toolUse.ToolResult = resultText.String()
+				toolMsg.ToolResult = resultText.String()
 
-				messages = append(messages, toolUse)
+				toolUseMessages = append(toolUseMessages, toolMsg)
 				delete(pendingToolUses, toolID)
 			}
-
-		case anthropic.ToolUseBlockParam:
-			// This shouldn't happen in user messages, but handle it just in case
-			msg := conversationMessage{
-				Type:      "tool_action",
-				ToolName:  content.Name,
-				ToolInput: fmt.Sprint(content.Input),
-			}
-			parseToolSpecificFields(&msg)
-			messages = append(messages, msg)
 		}
 	}
 
-	return messages
+	// Return tool use messages prepended to all other messages. Tool uses were captured before this user message, we
+	// just finished them here, so they should go first. Note that these will be in result-order, not use-order.
+	// Probably not a big deal, results will typically come in the same order as uses
+	return append(toolUseMessages, messages...)
 }
 
-// convertAssistantReply converts anthropic.Message to sequential conversationMessages
-func convertAssistantReply(msg *anthropic.Message, pendingToolUses map[string]conversationMessage) []conversationMessage {
+// convertAssistantMessage converts anthropic.Message to sequential conversationMessages
+func convertAssistantMessage(msg *anthropic.Message, pendingToolUses map[string]conversationMessage) []conversationMessage {
 	var messages []conversationMessage
 
 	tokenUsage := &messageTokenUsage{
@@ -277,7 +269,7 @@ func convertAssistantReply(msg *anthropic.Message, pendingToolUses map[string]co
 	// Track if we've already added token usage to a text message
 	tokenUsageAdded := false
 
-	// Convert content blocks
+	// Convert content blocks in order
 	for _, contentBlock := range msg.Content {
 		switch content := contentBlock.AsAny().(type) {
 		case anthropic.TextBlock:
@@ -293,12 +285,15 @@ func convertAssistantReply(msg *anthropic.Message, pendingToolUses map[string]co
 			})
 
 		case anthropic.ToolUseBlock:
-			// Store the tool use, it will be combined with the result later
+			// Create a tool action message
 			toolMsg := conversationMessage{
+				Type:      "tool_action",
 				ToolName:  content.Name,
 				ToolInput: string(content.Input),
 			}
 			parseToolSpecificFields(&toolMsg)
+
+			// Store the partial message in the pending tool uses map
 			pendingToolUses[content.ID] = toolMsg
 
 		case anthropic.ThinkingBlock:
