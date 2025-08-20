@@ -133,7 +133,7 @@ func (tg *taskGenerator) searchIssues(ctx context.Context) ([]githubIssue, error
 	// Convert issue response into simpler structures
 	issues := []githubIssue{}
 	for _, issue := range result.Issues {
-		if issue == nil || issue.RepositoryURL == nil || issue.Number == nil || issue.Title == nil || issue.Body == nil || issue.URL == nil {
+		if issue == nil || issue.RepositoryURL == nil || issue.Number == nil || issue.Title == nil || issue.URL == nil {
 			log.Print("Warning: unexpected nil, skipping issue")
 			continue
 		}
@@ -159,7 +159,7 @@ func (tg *taskGenerator) searchIssues(ctx context.Context) ([]githubIssue, error
 			number: *issue.Number,
 
 			title: *issue.Title,
-			body:  *issue.Body,
+			body:  issue.GetBody(),
 			url:   *issue.URL,
 
 			labels: labels,
