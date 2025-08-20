@@ -2,21 +2,12 @@
 
 **Generated:** {{.CreatedAt}}
 
-## Token Usage Summary
-
-- **Total Input Tokens:** {{.TokenUsage.TotalInputTokens}}
-- **Total Output Tokens:** {{.TokenUsage.TotalOutputTokens}}
-- **Cache Creation Tokens:** {{.TokenUsage.TotalCacheCreationTokens}}
-- **Cache Read Tokens:** {{.TokenUsage.TotalCacheReadTokens}}
-
 ## System Prompt
 
 <details>
 <summary>View System Prompt</summary>
 
-```
-{{.SystemPrompt}}
-```
+{{.SystemPrompt | indent "> "}}
 
 </details>
 
@@ -29,7 +20,7 @@
 
 ### 👤 User
 
-{{.Text}}
+{{.Text | indent "> "}}
 {{- else if eq .Type "assistant_text"}}
 
 ### 🤖 Assistant
@@ -37,17 +28,13 @@
 *Token Usage: {{.TokenUsage.InputTokens}} input, {{.TokenUsage.OutputTokens}} output{{if gt .TokenUsage.CacheCreationTokens 0}}, {{.TokenUsage.CacheCreationTokens}} cache create{{end}}{{if gt .TokenUsage.CacheReadTokens 0}}, {{.TokenUsage.CacheReadTokens}} cache read{{end}}*
 {{- end}}
 
-{{- range $line := splitLines .Text}}
-> {{$line}}
-{{- end}}
+{{.Text | indent "> "}}
 {{- else if eq .Type "assistant_thinking"}}
 
 <details>
 <summary>🤔 Claude's Thinking</summary>
 
-```
-{{.Thinking}}
-```
+{{.Thinking | indent "> "}}
 
 </details>
 {{- else if eq .Type "tool_action"}}
@@ -77,13 +64,12 @@
 
 ---
 
-## Summary
+## Token Usage Summary
 
-- **Total Messages:** {{len .Messages}}
-- **Total Tokens:** {{add .TokenUsage.TotalInputTokens .TokenUsage.TotalOutputTokens}} ({{.TokenUsage.TotalInputTokens}} input + {{.TokenUsage.TotalOutputTokens}} output)
-{{- if gt .TokenUsage.TotalCacheCreationTokens 0}}
-- **Cache Performance:** {{.TokenUsage.TotalCacheCreationTokens}} tokens created, {{.TokenUsage.TotalCacheReadTokens}} tokens read
-{{- end}}
+- **Total Input Tokens:** {{.TokenUsage.TotalInputTokens}}
+- **Total Output Tokens:** {{.TokenUsage.TotalOutputTokens}}
+- **Cache Creation Tokens:** {{.TokenUsage.TotalCacheCreationTokens}}
+- **Cache Read Tokens:** {{.TokenUsage.TotalCacheReadTokens}}
 
 ---
 

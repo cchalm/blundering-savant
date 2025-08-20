@@ -12,8 +12,8 @@ import (
 	"github.com/anthropics/anthropic-sdk-go"
 )
 
-//go:embed conversation_template.md
-var conversationTemplateMarkdown string
+//go:embed conversation_template.tmpl
+var conversationMarkdownTemplate string
 
 // conversationMarkdownData represents the simplified data structure for markdown rendering
 type conversationMarkdownData struct {
@@ -194,12 +194,17 @@ func renderConversationMarkdown(data *conversationMarkdownData) (string, error) 
 				return fmt.Sprintf("🔧 Using tool: %s", toolName)
 			}
 		},
-		"add": func(a, b int64) int64 {
-			return a + b
+		"indent": func(prefix string, text string) string {
+			prefixed := strings.Builder{}
+			for line := range strings.Lines(text) {
+				prefixed.WriteString(prefix)
+				prefixed.WriteString(line)
+			}
+			return prefixed.String()
 		},
 	}
 
-	tmpl, err := template.New("conversation").Funcs(funcMap).Parse(conversationTemplateMarkdown)
+	tmpl, err := template.New("conversation").Funcs(funcMap).Parse(conversationMarkdownTemplate)
 	if err != nil {
 		return "", fmt.Errorf("failed to parse conversation template: %w", err)
 	}

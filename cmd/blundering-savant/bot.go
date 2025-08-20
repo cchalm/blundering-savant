@@ -389,7 +389,7 @@ func (b *Bot) initConversation(ctx context.Context, tsk task, toolCtx *ToolConte
 			return nil, nil, fmt.Errorf("failed to build prompt: %w", err)
 		}
 		// TODO remove this
-		if err := os.WriteFile("logs/prompt.txt", []byte(*promptPtr), 0644); err != nil {
+		if err := os.WriteFile("logs/prompt.md", []byte(*promptPtr), 0644); err != nil {
 			log.Printf("Warning: failed to write prompt to file for debugging: %v", err)
 		}
 		// Send initial message with a cache breakpoint, because the initial message tends to be very large and we are

@@ -11,7 +11,7 @@ import (
 	"github.com/google/go-github/v72/github"
 )
 
-//go:embed prompt_template.txt
+//go:embed prompt_template.tmpl
 var promptTemplate string
 
 // Custom types for template data to avoid pointer dereferencing in templates
@@ -114,6 +114,14 @@ func BuildPrompt(tsk task) (*string, error) {
 				return fmt.Sprintf("<Large diff (%d bytes) omitted>", len(diff))
 			}
 			return diff
+		},
+		"indent": func(prefix string, text string) string {
+			prefixed := strings.Builder{}
+			for line := range strings.Lines(text) {
+				prefixed.WriteString(prefix)
+				prefixed.WriteString(line)
+			}
+			return prefixed.String()
 		},
 	}
 

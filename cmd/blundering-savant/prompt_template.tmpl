@@ -1,12 +1,15 @@
 Repository: {{.Repository}}
+
 Main Language: {{.MainLanguage}}
-Issue #{{.IssueNumber}}: {{.IssueTitle}}
 
 ## Issue
-Description:
-```
-{{.IssueBody}}
-```
+
+Issue #{{.IssueNumber}}: {{.IssueTitle}}
+
+### Description
+
+{{.IssueBody | indent "> "}}
+
 {{- if .PullRequestNumber}}
 
 ## Pull Request
@@ -17,18 +20,19 @@ Pull Request #{{.PullRequestNumber}} is open for this issue.
 ## Style Guides
 {{- range $path, $content := .StyleGuides}}
 
---- {{$path}} ---
-```
-{{$content}}
-```
+<details>
+<summary>{{$path}}</summary>
+
+{{$content | indent "> "}}
+
+</details>
 {{- end}}
 {{- end}}
 {{- if .ReadmeContent}}
 
 ## README excerpt
-```
-{{.ReadmeContent}}
-```
+
+{{.ReadmeContent | indent "> "}}
 {{- end}}
 {{- if .FileTree}}
 
@@ -43,18 +47,17 @@ Pull Request #{{.PullRequestNumber}} is open for this issue.
 {{- if .HasConversationHistory}}
 
 ## Conversation History
+
+### Issue Comments
 {{- range .IssueComments}}
 
-### Issue Comment {{.ID}} by @{{.User.Login}}
-  {{- if ne .AuthorAssociation ""}} ({{.AuthorAssociation}})
-  {{- end}} - {{.CreatedAt}}
+#### Comment {{.ID}} by @{{.User.Login}} ({{.AuthorAssociation}}) - {{.CreatedAt}}
   {{- if .IsEdited}}
 <edited>
   {{- end}}
 
-```
-{{.Body}}
-```
+{{.Body | indent "> "}}
+
 {{- end}}
 {{- range .PRReviews}}
 
@@ -62,30 +65,32 @@ Pull Request #{{.PullRequestNumber}} is open for this issue.
 **Status: {{.State}}**
   {{- if .Body}}
 
-```
-{{.Body}}
-```
+{{.Body | indent "> "}}
+
   {{- end}}
 {{- end}}
+
+### PR Comments
 {{- range .PRComments}}
 
-### Issue Comment {{.ID}} by @{{.User.Login}}
+#### Comment {{.ID}} by @{{.User.Login}}
   {{- if ne .AuthorAssociation ""}} ({{.AuthorAssociation}})
   {{- end}} - {{.CreatedAt}}
   {{- if .IsEdited}}
 <edited>
   {{- end}}
 
-```
-{{.Body}}
-```
+{{.Body | indent "> "}}
+
 {{- end}}
+
+### PR Diff Comment Threads
 {{- range .PRReviewCommentThreads -}}
   {{- $thread := . -}}
   {{- if gt (len $thread) 0 -}}
     {{- $topComment := index $thread 0}}
 
-### PR Review Comment Thread on `{{$topComment.Path}}`
+#### Comment Thread on `{{$topComment.Path}}`
     {{- if $topComment.Line -}}
       {{- if $topComment.StartLine}} (lines {{$topComment.StartLine}}-{{$topComment.Line}})
       {{- else}} (line {{$topComment.Line}})
@@ -102,16 +107,13 @@ Pull Request #{{.PullRequestNumber}} is open for this issue.
       {{- end -}}
     {{- end -}}
     {{- range $thread}}
-PR Review Comment {{.ID}} by @{{.User.Login}}
-      {{- if ne .AuthorAssociation ""}} ({{.AuthorAssociation}})
-      {{- end -}}
+Comment {{.ID}} by @{{.User.Login}} ({{.AuthorAssociation}})
       {{- if .PullRequestReviewID}} in Review {{.PullRequestReviewID}}
       {{- end}} - {{.CreatedAt}}
 
-```
-{{.Body}}
-```
-    {{- end -}}
+{{.Body | indent "> "}}
+
+{{end -}}
   {{- end -}}
 {{- end}}
 {{- end}}
@@ -126,13 +128,10 @@ There are no unpublished changes in the workspace
 
 ### Latest validation results
 
-{{- if .ValidationResult.Succeeded}}
-No issues found
-{{- else}}
-Validation failed:
-```
-{{.ValidationResult.Details}}
-```
+Status: {{if .ValidationResult.Succeeded}}PASSED{{else}}FAILED{{end}}
+
+{{if not .ValidationResult.Succeeded -}}
+{{.ValidationResult.Details | indent "    "}}
 {{- end}}
 
 
