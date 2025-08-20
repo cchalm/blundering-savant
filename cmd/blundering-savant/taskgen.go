@@ -95,7 +95,7 @@ func (tg *taskGenerator) yield(ctx context.Context, yield func(task task, err er
 			return
 		}
 		if len(issues) == 0 {
-			log.Println("No issues found")
+			log.Println("[taskgen] No issues found")
 		}
 
 		for _, issue := range issues {
@@ -105,14 +105,14 @@ func (tg *taskGenerator) yield(ctx context.Context, yield func(task task, err er
 			}
 
 			if tg.needsAttention(*tsk) {
-				log.Printf("Yielding task for issue #%d in %s/%s", issue.number, issue.owner, issue.repo)
+				log.Printf("[taskgen] Yielding task for issue #%d in %s/%s", issue.number, issue.owner, issue.repo)
 				yield(*tsk, nil)
 			} else {
-				log.Printf("Skipping issue #%d in %s/%s: no attention needed", issue.number, issue.owner, issue.repo)
+				log.Printf("[taskgen] Skipping issue #%d in %s/%s: no attention needed", issue.number, issue.owner, issue.repo)
 			}
 		}
 
-		log.Printf("Waiting for next check (up to %v)\n", tg.config.CheckInterval)
+		log.Printf("[taskgen] Waiting for next check (up to %v)\n", tg.config.CheckInterval)
 		select {
 		case <-ticker:
 		case <-ctx.Done():
@@ -134,14 +134,14 @@ func (tg *taskGenerator) searchIssues(ctx context.Context) ([]githubIssue, error
 	issues := []githubIssue{}
 	for _, issue := range result.Issues {
 		if issue == nil || issue.RepositoryURL == nil || issue.Number == nil || issue.Title == nil || issue.URL == nil {
-			log.Print("Warning: unexpected nil, skipping issue")
+			log.Print("[taskgen] Warning: unexpected nil, skipping issue")
 			continue
 		}
 
 		// Extract owner and repo
 		parts := strings.Split(*issue.RepositoryURL, "/")
 		if len(parts) < 2 {
-			log.Printf("Warning: failed to parse repo URL '%s', skipping issue '%d'", *issue.RepositoryURL, *issue.Number)
+			log.Printf("[taskgen] Warning: failed to parse repo URL '%s', skipping issue '%d'", *issue.RepositoryURL, *issue.Number)
 			continue
 		}
 		owner := parts[len(parts)-2]
@@ -205,20 +205,20 @@ func (tg *taskGenerator) buildTask(ctx context.Context, issue githubIssue, botUs
 	// Get style guide
 	styleGuide, err := tg.findStyleGuides(ctx, owner, repo)
 	if err != nil {
-		log.Printf("Warning: Could not find style guides: %v", err)
+		log.Printf("[taskgen] Warning: Could not find style guides: %v", err)
 	}
 	tsk.StyleGuide = styleGuide
 
 	// Get codebase info
 	codebaseInfo, err := tg.analyzeCodebase(ctx, owner, repo)
 	if err != nil {
-		log.Printf("Warning: Could not analyze codebase: %v", err)
+		log.Printf("[taskgen] Warning: Could not analyze codebase: %v", err)
 	}
 	tsk.CodebaseInfo = codebaseInfo
 
 	comments, err := tg.getAllIssueComments(ctx, owner, repo, issue.number)
 	if err != nil {
-		log.Printf("Warning: Could not get issue comments: %v", err)
+		log.Printf("[taskgen] Warning: Could not get issue comments: %v", err)
 	}
 	tsk.IssueComments = comments
 
@@ -349,7 +349,7 @@ func (tg *taskGenerator) analyzeCodebase(ctx context.Context, owner, repo string
 	// Get file tree
 	fileTree, err := tg.getFileTree(ctx, owner, repo)
 	if err != nil {
-		log.Printf("Warning: Could not get file tree: %v", err)
+		log.Printf("[taskgen] Warning: Could not get file tree: %v", err)
 	} else {
 		info.FileTree = fileTree
 	}
@@ -476,7 +476,7 @@ func (tg *taskGenerator) getAllPRReviewComments(ctx context.Context, owner, repo
 
 		for _, comment := range comments {
 			if comment == nil || comment.ID == nil {
-				log.Println("Warning: comment or comment.ID unexpectedly nil")
+				log.Println("[taskgen] Warning: comment or comment.ID unexpectedly nil")
 				continue
 			}
 
