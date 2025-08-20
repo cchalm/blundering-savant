@@ -583,6 +583,107 @@ func (t *AddReactionTool) Replay(ctx context.Context, block anthropic.ToolUseBlo
 	return nil
 }
 
+// DeleteFileTool implements the delete_file tool
+type DeleteFileTool struct {
+	BaseTool
+}
+
+// DeleteFileInput represents the input for delete_file
+type DeleteFileInput struct {
+	Path string `json:"path"`
+}
+
+// NewDeleteFileTool creates a new delete file tool
+func NewDeleteFileTool() *DeleteFileTool {
+	return &DeleteFileTool{
+		BaseTool: BaseTool{Name: "delete_file"},
+	}
+}
+
+// GetToolParam returns the tool parameter definition
+func (t *DeleteFileTool) GetToolParam() anthropic.ToolParam {
+	return anthropic.ToolParam{
+		Name:        t.Name,
+		Description: anthropic.String("Delete a file from the filesystem"),
+		InputSchema: anthropic.ToolInputSchemaParam{
+			Properties: map[string]any{
+				"path": map[string]any{
+					"type":        "string",
+					"description": "Path to the file to delete. Must be a relative path (no leading slash).",
+				},
+			},
+			Required: []string{"path"},
+		},
+	}
+}
+
+// ParseToolUse parses the tool use block
+func (t *DeleteFileTool) ParseToolUse(block anthropic.ToolUseBlock) (*DeleteFileInput, error) {
+	if block.Name != t.Name {
+		return nil, fmt.Errorf("tool use block is for %s, not %s", block.Name, t.Name)
+	}
+
+	var input DeleteFileInput
+	if err := parseInputJSON(block, &input); err != nil {
+		return nil, err
+	}
+	return &input, nil
+}
+
+// Run executes the delete file command
+func (t *DeleteFileTool) Run(ctx context.Context, block anthropic.ToolUseBlock, toolCtx *ToolContext) (*string, error) {
+	input, err := t.ParseToolUse(block)
+	if err != nil {
+		return nil, fmt.Errorf("error parsing input: %w", err)
+	}
+
+	if input.Path == "" {
+		return nil, ToolInputError{fmt.Errorf("path is required")}
+	}
+
+	// Validate that the path doesn't start with a leading slash
+	if strings.HasPrefix(input.Path, "/") {
+		return nil, ToolInputError{fmt.Errorf("path must be relative (no leading slash)")}
+	}
+
+	// Check if the file exists before deleting
+	exists, err := toolCtx.Workspace.FileExists(ctx, input.Path)
+	if err != nil {
+		return nil, fmt.Errorf("error checking if file exists: %w", err)
+	}
+	if !exists {
+		return nil, ToolInputError{fmt.Errorf("file does not exist: %s", input.Path)}
+	}
+
+	// Check if it's a directory
+	isDir, err := toolCtx.Workspace.IsDir(ctx, input.Path)
+	if err != nil {
+		return nil, fmt.Errorf("error checking if path is directory: %w", err)
+	}
+	if isDir {
+		return nil, ToolInputError{fmt.Errorf("cannot delete directory: %s (only files can be deleted)", input.Path)}
+	}
+
+	// Delete the file
+	err = toolCtx.Workspace.Delete(ctx, input.Path)
+	if err != nil {
+		return nil, fmt.Errorf("error deleting file: %w", err)
+	}
+
+	result := fmt.Sprintf("Successfully deleted file: %s", input.Path)
+	return &result, nil
+}
+
+func (t *DeleteFileTool) Replay(ctx context.Context, block anthropic.ToolUseBlock, toolCtx *ToolContext) error {
+	input, err := t.ParseToolUse(block)
+	if err != nil {
+		return fmt.Errorf("error parsing input: %w", err)
+	}
+
+	// Replay the deletion (same as the original run since it's an in-memory operation)
+	return toolCtx.Workspace.Delete(ctx, input.Path)
+}
+
 type PublishChangesForReviewTool struct {
 	BaseTool
 }
@@ -675,6 +776,7 @@ func NewToolRegistry() *ToolRegistry {
 
 	// Register all tools
 	registry.Register(NewTextEditorTool())
+	registry.Register(NewDeleteFileTool())
 	registry.Register(NewPostCommentTool())
 	registry.Register(NewAddReactionTool())
 	registry.Register(NewValidateChangesTool())
