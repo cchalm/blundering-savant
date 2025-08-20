@@ -361,15 +361,11 @@ func (tg *taskGenerator) analyzeCodebase(ctx context.Context, owner, repo string
 	}
 
 	// Get file tree
-	tree, _, err := tg.githubClient.Git.GetTree(ctx, owner, repo, "HEAD", false)
+	fileTree, err := tg.getFileTree(ctx, owner, repo)
 	if err != nil {
 		log.Printf("Warning: Could not get file tree: %v", err)
 	} else {
-		for _, entry := range tree.Entries {
-			if entry.Path != nil {
-				info.FileTree = append(info.FileTree, *entry.Path)
-			}
-		}
+		info.FileTree = fileTree
 	}
 
 	// Get README
@@ -382,6 +378,46 @@ func (tg *taskGenerator) analyzeCodebase(ctx context.Context, owner, repo string
 	}
 
 	return info, nil
+}
+
+// getFileTree retrieves the complete file tree with safety limits
+func (tg *taskGenerator) getFileTree(ctx context.Context, owner, repo string) ([]string, error) {
+	const (
+		maxFiles      = 1000
+		maxPathLength = 500
+	)
+
+	// Get the full recursive tree
+	tree, _, err := tg.githubClient.Git.GetTree(ctx, owner, repo, "HEAD", true)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get recursive tree: %w", err)
+	}
+
+	var fileTree []string
+	fileCount := 0
+
+	for _, entry := range tree.Entries {
+		if entry.Path == nil {
+			continue
+		}
+
+		path := *entry.Path
+
+		// Check path length limit
+		if len(path) > maxPathLength {
+			continue
+		}
+
+		// Check file count limit
+		if fileCount >= maxFiles {
+			break
+		}
+
+		fileTree = append(fileTree, path)
+		fileCount++
+	}
+
+	return fileTree, nil
 }
 
 // Comment retrieval functions
