@@ -111,9 +111,9 @@ func TestBuildPrompt_WithFileTree(t *testing.T) {
 	prompt := *promptPtr
 
 	require.Contains(t, prompt, "## Repository structure")
-	require.Contains(t, prompt, "- main.go")
-	require.Contains(t, prompt, "- README.md")
-	require.Contains(t, prompt, "- go.mod")
+	require.Contains(t, prompt, "- `main.go`")
+	require.Contains(t, prompt, "- `README.md`")
+	require.Contains(t, prompt, "- `go.mod`")
 }
 
 func TestBuildPrompt_WithCommentsRequiringResponses(t *testing.T) {
