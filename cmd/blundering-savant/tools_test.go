@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"encoding/json"
 	"testing"
 
@@ -63,15 +62,22 @@ func TestDeleteFileTool_ToolParam(t *testing.T) {
 		t.Errorf("Expected tool name 'delete_file', got %s", param.Name)
 	}
 
-	if param.Description == nil {
-		t.Error("Expected tool description, got nil")
+	if param.Description.Value == "" {
+		t.Error("Expected tool description, got empty string")
 	}
 
+	// Check that input schema has properties
 	if param.InputSchema.Properties == nil {
 		t.Error("Expected input schema properties, got nil")
 	}
 
-	pathProp, ok := param.InputSchema.Properties["path"]
+	// Verify the path property exists and has correct type
+	properties, ok := param.InputSchema.Properties.(map[string]any)
+	if !ok {
+		t.Error("Expected input schema properties to be a map")
+	}
+
+	pathProp, ok := properties["path"]
 	if !ok {
 		t.Error("Expected 'path' property in input schema")
 	}
