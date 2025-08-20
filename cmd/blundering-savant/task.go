@@ -31,11 +31,12 @@ type task struct {
 	PRCommentsRequiringResponses       []*github.IssueComment
 	PRReviewCommentsRequiringResponses []*github.PullRequestComment
 
-	// Current validation state
-	SourceBranchCheckSuites []githubCheckSuite // May be nil if no check suite has been created for the source branch
-
 	// Configuration
 	BotUsername string
+
+	// State computed from the workspace after initial task generation (unpopulated until then)
+	HasUnpublishedChanges bool
+	ValidationResult      ValidationResult
 }
 
 // CodebaseInfo holds information about the repository structure

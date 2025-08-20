@@ -187,6 +187,13 @@ func (cc *ClaudeConversation) sendMessage(ctx context.Context, setCachePoint boo
 		log.Printf("Warning: failed to write conversation to file for debugging: %v", err)
 	}
 
+	// TODO remove this
+	if s, err := cc.ToMarkdown(); err != nil {
+		log.Printf("Warning: failed to serialize conversation as markdown: %v", err)
+	} else if err := os.WriteFile("logs/conversation.md", []byte(s), 0666); err != nil {
+		log.Printf("Warning: failed to write conversation to markdown file for debugging: %v", err)
+	}
+
 	return &response, nil
 }
 

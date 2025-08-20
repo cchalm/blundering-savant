@@ -1,9 +1,13 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"fmt"
+	"io"
 	"log"
+	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -28,11 +32,40 @@ const (
 	WorkflowConclusionFailure WorkflowConclusion = "failure"
 )
 
+type JobStatus string
+
+const (
+	JobStatusCompleted  JobStatus = "completed"
+	JobStatusInProgress JobStatus = "in_progress"
+	JobStatusQueued     JobStatus = "queued"
+	JobStatusPending    JobStatus = "pending"
+	JobStatusRequested  JobStatus = "requested"
+	JobStatusWaiting    JobStatus = "waiting"
+)
+
 type JobConclusion string
 
 const (
 	JobConclusionSuccess JobConclusion = "success"
 	JobConclusionFailure JobConclusion = "failure"
+)
+
+type StepStatus string
+
+const (
+	StepStatusCompleted  StepStatus = "completed"
+	StepStatusInProgress StepStatus = "in_progress"
+	StepStatusQueued     StepStatus = "queued"
+	StepStatusPending    StepStatus = "pending"
+	StepStatusRequested  StepStatus = "requested"
+	StepStatusWaiting    StepStatus = "waiting"
+)
+
+type StepConclusion string
+
+const (
+	StepConclusionSuccess StepConclusion = "success"
+	StepConclusionFailure StepConclusion = "failure"
 )
 
 type CheckSuiteConclusion string
@@ -41,6 +74,34 @@ const (
 	CheckSuiteConclusionSuccess CheckSuiteConclusion = "success"
 	CheckSuiteConclusionFailure CheckSuiteConclusion = "failure"
 )
+
+type WorkflowRun struct {
+	ID         int64
+	Status     WorkflowStatus
+	Conclusion WorkflowConclusion
+
+	Jobs []WorkflowJob
+}
+
+type WorkflowJob struct {
+	ID         int64
+	Status     JobStatus
+	Conclusion JobConclusion
+
+	Steps []WorkflowStep
+}
+
+type WorkflowStep struct {
+	Number     int64
+	Name       string
+	Status     StepStatus
+	Conclusion StepConclusion
+
+	StartedAt   time.Time
+	CompletedAt time.Time
+
+	Logs string
+}
 
 type GithubActionCommitValidator struct {
 	githubClient     *github.Client
@@ -100,18 +161,17 @@ func (gacv GithubActionCommitValidator) ValidateBranch(ctx context.Context, bran
 	}
 
 	succeeded := run.GetConclusion() == string(WorkflowConclusionSuccess)
-	var details string
+	var logs string
 	if !succeeded {
-		failureDetails, err := gacv.getWorkflowFailureDetails(ctx, run)
+		logs, err = gacv.getWorkflowRunLogs(ctx, run)
 		if err != nil {
-			return ValidationResult{}, fmt.Errorf("failed to get workflow failure details: %w", err)
+			return ValidationResult{}, fmt.Errorf("failed to get workflow run logs: %w", err)
 		}
-		details = failureDetails
 	}
 
 	return ValidationResult{
 		Succeeded: succeeded,
-		Details:   details,
+		Details:   logs,
 	}, nil
 }
 
@@ -248,39 +308,66 @@ func (gacv GithubActionCommitValidator) waitForWorkflowCompletion(ctx context.Co
 	}
 }
 
-// getWorkflowFailureDetails fetches detailed information about why a workflow failed
-func (gacv GithubActionCommitValidator) getWorkflowFailureDetails(ctx context.Context, run *github.WorkflowRun) (string, error) {
-	if run.CheckSuiteID == nil {
-		return "", fmt.Errorf("workflow run does not have a check suite ID")
-	}
-
-	checkRuns, _, err := gacv.githubClient.Checks.ListCheckRunsCheckSuite(ctx, gacv.owner, gacv.repo, *run.CheckSuiteID, &github.ListCheckRunsOptions{})
+// getWorkflowRunDetails fetches and parses relevant information about a workflow run
+func (gacv GithubActionCommitValidator) getWorkflowRunLogs(ctx context.Context, run *github.WorkflowRun) (string, error) {
+	jobsResult, _, err := gacv.githubClient.Actions.ListWorkflowJobs(ctx, gacv.owner, gacv.repo, *run.ID, &github.ListWorkflowJobsOptions{})
 	if err != nil {
-		return "", fmt.Errorf("failed to list check runs: %w", err)
+		return "", fmt.Errorf("failed to list workflow jobs: %w", err)
 	}
 
-	detailsBuilder := strings.Builder{}
-	for _, checkRun := range checkRuns.CheckRuns {
-		annotations, _, err := gacv.githubClient.Checks.ListCheckRunAnnotations(ctx, gacv.owner, gacv.repo, *checkRun.ID, &github.ListOptions{})
+	logsBuilder := strings.Builder{}
+	for _, job := range jobsResult.Jobs {
+		logs, err := gacv.fetchWorkflowJobLogs(ctx, *job.ID)
 		if err != nil {
-			return "", fmt.Errorf("failed to list check run annotations: %w", err)
+			return "", fmt.Errorf("failed to fetch workflow job logs: %w", err)
 		}
-		for _, annotation := range annotations {
-			if annotation.GetPath() == ".github" {
-				detailsBuilder.WriteString(fmt.Sprintf(" - [%s] %s\n",
-					annotation.GetAnnotationLevel(),
-					annotation.GetMessage(),
-				))
-			} else {
-				detailsBuilder.WriteString(fmt.Sprintf(" - [%s] %s#L%d: %s\n",
-					annotation.GetAnnotationLevel(),
-					annotation.GetPath(),
-					annotation.GetStartLine(),
-					annotation.GetMessage(),
-				))
-			}
-		}
+
+		logsBuilder.WriteString(fmt.Sprintf("Job %d (%s) logs:\n%s\n\n", *job.ID, job.GetName(), logs))
 	}
 
-	return detailsBuilder.String(), nil
+	return logsBuilder.String(), nil
+}
+
+func (gacv GithubActionCommitValidator) fetchWorkflowJobLogs(ctx context.Context, jobID int64) (string, error) {
+	maxRedirects := 10
+	logsURL, _, err := gacv.githubClient.Actions.GetWorkflowJobLogs(ctx, gacv.owner, gacv.repo, jobID, maxRedirects)
+	if err != nil {
+		return "", fmt.Errorf("failed to get workflow run logs URL: %w", err)
+	}
+
+	if logsURL == nil {
+		return "", fmt.Errorf("workflow run logs URL is nil")
+	}
+
+	return httpFetchUTF8(ctx, logsURL)
+}
+
+func httpFetchUTF8(ctx context.Context, url *url.URL) (string, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url.String(), nil)
+	if err != nil {
+		return "", fmt.Errorf("failed to create HTTP request: %w", err)
+	}
+
+	httpResp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("failed to fetch URL '%s': %w", url.String(), err)
+	}
+	defer httpResp.Body.Close()
+
+	// Strip the BOM, if present, before reading
+	br := bufio.NewReader(httpResp.Body)
+	r, _, err := br.ReadRune()
+	if err != nil {
+		log.Fatal(err)
+	}
+	if r != '\uFEFF' {
+		br.UnreadRune() // Not a BOM -- put the rune back
+	}
+
+	b, err := io.ReadAll(br)
+	if err != nil {
+		return "", fmt.Errorf("failed to read response body: %w", err)
+	}
+
+	return string(b), nil
 }

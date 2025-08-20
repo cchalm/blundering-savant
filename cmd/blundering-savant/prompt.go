@@ -81,7 +81,8 @@ type promptTemplateData struct {
 	IssueCommentsRequiringResponses    []commentData
 	PRCommentsRequiringResponses       []commentData
 	PRReviewCommentsRequiringResponses []reviewCommentData
-	SourceBranchCheckSuites            []githubCheckSuite
+	HasUnpublishedChanges              bool
+	ValidationResult                   ValidationResult
 }
 
 // BuildPrompt generates the complete prompt for Claude based on the context
@@ -318,7 +319,8 @@ func buildTemplateData(tsk task) promptTemplateData {
 		data.PRReviewCommentsRequiringResponses = append(data.PRReviewCommentsRequiringResponses, convertGitHubReviewComment(comment))
 	}
 
-	data.SourceBranchCheckSuites = tsk.SourceBranchCheckSuites
+	data.HasUnpublishedChanges = tsk.HasUnpublishedChanges
+	data.ValidationResult = tsk.ValidationResult
 
 	return data
 }

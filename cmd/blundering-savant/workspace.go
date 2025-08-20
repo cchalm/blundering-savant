@@ -165,9 +165,12 @@ func (rvw *remoteValidationWorkspace) ClearLocalChanges() {
 	rvw.fs.Reset()
 }
 
-func (rvw *remoteValidationWorkspace) ValidateChanges(ctx context.Context, commitMessage string) (ValidationResult, error) {
+func (rvw *remoteValidationWorkspace) ValidateChanges(ctx context.Context, commitMessage *string) (ValidationResult, error) {
 	if rvw.HasLocalChanges() {
-		_, err := rvw.commitToWorkBranch(ctx, commitMessage)
+		if commitMessage == nil {
+			return ValidationResult{}, fmt.Errorf("no commit message provided for validating local changes")
+		}
+		_, err := rvw.commitToWorkBranch(ctx, *commitMessage)
 		if err != nil {
 			return ValidationResult{}, fmt.Errorf("failed to commit changes to work branch: %w", err)
 		}
