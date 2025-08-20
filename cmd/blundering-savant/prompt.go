@@ -70,7 +70,7 @@ type promptTemplateData struct {
 	StyleGuides            map[string]string // path -> content
 	ReadmeContent          string
 	FileTree               []string
-	FileTreeTruncated      bool
+	FileTreeTruncatedCount int // The number of files that were truncated from the file tree to cap length
 	HasConversationHistory bool
 	// Conversation data structures for template to format
 	IssueComments                      []commentData
@@ -274,10 +274,10 @@ func buildTemplateData(tsk task) promptTemplateData {
 		}
 
 		if len(tsk.CodebaseInfo.FileTree) > 0 {
-			maxFiles := 20
+			maxFiles := 1000
 			if len(tsk.CodebaseInfo.FileTree) > maxFiles {
 				data.FileTree = tsk.CodebaseInfo.FileTree[:maxFiles]
-				data.FileTreeTruncated = true
+				data.FileTreeTruncatedCount = len(tsk.CodebaseInfo.FileTree) - maxFiles
 			} else {
 				data.FileTree = tsk.CodebaseInfo.FileTree
 			}

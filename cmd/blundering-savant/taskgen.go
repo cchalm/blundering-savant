@@ -369,7 +369,7 @@ func (tg *taskGenerator) analyzeCodebase(ctx context.Context, owner, repo string
 // getFileTree retrieves the complete file tree with safety limits
 func (tg *taskGenerator) getFileTree(ctx context.Context, owner, repo string) ([]string, error) {
 	const (
-		maxFiles      = 1000
+		maxFiles      = 2000
 		maxPathLength = 500
 	)
 

@@ -37,12 +37,17 @@ Pull Request #{{.PullRequestNumber}} is open for this issue.
 {{- if .FileTree}}
 
 ## Repository structure
-{{- range .FileTree}}
-- {{.}}
+
+<details>
+<summary>View File Tree</summary>
+
+{{range .FileTree -}}
+- `{{.}}`
+{{end}}
+{{if .FileTreeTruncatedCount -}}
+... ({{.FileTreeTruncatedCount}} more files)
 {{- end}}
-{{- if .FileTreeTruncated}}
-...
-{{- end}}
+</details>
 {{- end}}
 {{- if .HasConversationHistory}}
 
