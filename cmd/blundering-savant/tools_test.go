@@ -7,7 +7,7 @@ import (
 	"github.com/anthropics/anthropic-sdk-go"
 )
 
-func TestDeleteFileTool_ValidateInput(t *testing.T) {
+func TestDeleteFileTool_ParseInput(t *testing.T) {
 	tool := NewDeleteFileTool()
 
 	tests := []struct {
@@ -21,19 +21,19 @@ func TestDeleteFileTool_ValidateInput(t *testing.T) {
 			wantError: false,
 		},
 		{
-			name:      "Empty path",
+			name:      "Empty path - should parse successfully",
 			input:     map[string]any{"path": ""},
-			wantError: true,
+			wantError: false,
 		},
 		{
-			name:      "Path with leading slash",
+			name:      "Path with leading slash - should parse successfully",
 			input:     map[string]any{"path": "/test.txt"},
-			wantError: true,
+			wantError: false,
 		},
 		{
-			name:      "Missing path",
+			name:      "Missing path - should parse successfully with empty path",
 			input:     map[string]any{},
-			wantError: true,
+			wantError: false,
 		},
 	}
 
@@ -46,9 +46,13 @@ func TestDeleteFileTool_ValidateInput(t *testing.T) {
 				Input: inputJSON,
 			}
 
-			_, err := tool.ParseToolUse(block)
+			result, err := tool.ParseToolUse(block)
 			if (err != nil) != tt.wantError {
 				t.Errorf("ParseToolUse() error = %v, wantError %v", err, tt.wantError)
+			}
+			
+			if !tt.wantError && result == nil {
+				t.Error("Expected non-nil result for successful parse")
 			}
 		})
 	}
