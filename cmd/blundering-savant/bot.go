@@ -259,6 +259,12 @@ func (b *Bot) processWithAI(ctx context.Context, task task, workspace Workspace)
 			return fmt.Errorf("unexpected stop reason: %v", response.StopReason)
 		}
 
+		if s, err := conversation.ToMarkdown(); err != nil {
+			log.Printf("Warning: failed to serialize conversation as markdown: %v", err)
+		} else if err := os.WriteFile(fmt.Sprintf("logs/conversation_issue_%d.md", task.Issue.number), []byte(s), 0666); err != nil {
+			log.Printf("Warning: failed to write conversation to markdown file for debugging: %v", err)
+		}
+
 		i++
 	}
 

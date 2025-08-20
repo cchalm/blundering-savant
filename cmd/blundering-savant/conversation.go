@@ -8,7 +8,6 @@ import (
 	"io"
 	"log"
 	"net/http"
-	"os"
 	"strconv"
 	"time"
 
@@ -179,20 +178,6 @@ func (cc *ClaudeConversation) sendMessage(ctx context.Context, setCachePoint boo
 
 	// Record the repsonse
 	cc.messages[len(cc.messages)-1].Response = &response
-
-	// TODO remove this
-	if b, err := json.Marshal(append(messageParams, response.ToParam())); err != nil {
-		log.Printf("Warning: failed to marshal conversation for inspection: %v", err)
-	} else if err := os.WriteFile("logs/conversation.json", b, 0666); err != nil {
-		log.Printf("Warning: failed to write conversation to file for debugging: %v", err)
-	}
-
-	// TODO remove this
-	if s, err := cc.ToMarkdown(); err != nil {
-		log.Printf("Warning: failed to serialize conversation as markdown: %v", err)
-	} else if err := os.WriteFile("logs/conversation.md", []byte(s), 0666); err != nil {
-		log.Printf("Warning: failed to write conversation to markdown file for debugging: %v", err)
-	}
 
 	return &response, nil
 }
