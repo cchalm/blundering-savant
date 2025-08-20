@@ -20,7 +20,16 @@
 
 ### 👤 User
 
+{{if gt (len .Text) 1000 -}}
+<details>
+<summary>View ({{len .Text}} characters)</summary>
+
 {{.Text | indent "> "}}
+
+</details>
+{{- else -}}
+{{.Text | indent "> "}}
+{{- end}}
 {{- else if eq .Type "assistant_text"}}
 
 ### 🤖 Assistant
