@@ -14,10 +14,6 @@ import (
 	"github.com/anthropics/anthropic-sdk-go"
 )
 
-const (
-	maxCachePoints = 4
-)
-
 type ClaudeConversation struct {
 	client anthropic.Client
 
@@ -26,9 +22,7 @@ type ClaudeConversation struct {
 	tools        []anthropic.ToolParam
 	messages     []conversationTurn
 
-	maxTokens            int64 // Maximum number of output tokens per response
-	autoCacheThreshold   int64 // Number of input tokens after which we automatically set a cache point
-	cachePointsRemaining int   // Number of cache points remaining in this conversation
+	maxTokens int64 // Maximum number of output tokens per response
 }
 
 // conversationTurn is a pair of messages: a user message, and an optional assistant response
@@ -52,9 +46,7 @@ func NewClaudeConversation(
 		systemPrompt: systemPrompt,
 		tools:        tools,
 
-		maxTokens:            maxTokens,
-		autoCacheThreshold:   10000,
-		cachePointsRemaining: maxCachePoints,
+		maxTokens: maxTokens,
 	}
 }
 
@@ -65,19 +57,6 @@ func ResumeClaudeConversation(
 	maxTokens int64,
 	tools []anthropic.ToolParam,
 ) (*ClaudeConversation, error) {
-
-	// Calculate remaining cache points by counting cache points already in the conversation
-	remainingCachePoints := maxCachePoints
-	for _, turn := range history.Messages {
-		for _, c := range turn.UserMessage.Content {
-			if cacheControl := c.GetCacheControl(); cacheControl != nil {
-				if *cacheControl == anthropic.NewCacheControlEphemeralParam() {
-					remainingCachePoints--
-				}
-			}
-		}
-	}
-
 	c := &ClaudeConversation{
 		client: anthropicClient,
 
@@ -86,38 +65,20 @@ func ResumeClaudeConversation(
 		tools:        tools,
 		messages:     history.Messages,
 
-		maxTokens:            maxTokens,
-		autoCacheThreshold:   10000,
-		cachePointsRemaining: remainingCachePoints,
+		maxTokens: maxTokens,
 	}
 	return c, nil
 }
 
-// SendMessage sends a user message with the given content and returns Claude's response
-func (cc *ClaudeConversation) SendMessage(ctx context.Context, messageContent ...anthropic.ContentBlockParamUnion) (*anthropic.Message, error) {
-	return cc.sendMessage(ctx, false, messageContent...)
-}
-
-// SendMessage creates a user message with the given content, sets a cache point on that message, sends it, and returns
-// Claude's response
-func (cc *ClaudeConversation) SendMessageAndSetCachePoint(ctx context.Context, messageContent ...anthropic.ContentBlockParamUnion) (*anthropic.Message, error) {
-	return cc.sendMessage(ctx, true, messageContent...)
-}
-
 // sendMessage is the internal implementation with a boolean parameter to specify caching
-func (cc *ClaudeConversation) sendMessage(ctx context.Context, setCachePoint bool, messageContent ...anthropic.ContentBlockParamUnion) (*anthropic.Message, error) {
-	if setCachePoint {
-		if cc.cachePointsRemaining == 0 {
-			log.Printf("Warning: cannot set cache point, no remaining cache points")
-		} else {
-			err := setCachePointOnLastApplicableBlockInContent(messageContent)
-			if err != nil {
-				log.Printf("Warning: failed to set cache point: %s", err)
-			} else {
-				cc.cachePointsRemaining--
-			}
-		}
+func (cc *ClaudeConversation) SendMessage(ctx context.Context, messageContent ...anthropic.ContentBlockParamUnion) (*anthropic.Message, error) {
+	// Always set a cache point. Unsupported cache points, e.g. on content that is below the minimum length for caching,
+	// will be ignored
+	cacheControl, err := getLastCacheControl(messageContent)
+	if err != nil {
+		log.Printf("Warning: failed to set cache point: %s", err)
 	}
+	*cacheControl = anthropic.NewCacheControlEphemeralParam()
 
 	cc.messages = append(cc.messages, conversationTurn{
 		UserMessage: anthropic.NewUserMessage(messageContent...),
@@ -180,39 +141,25 @@ func (cc *ClaudeConversation) sendMessage(ctx context.Context, setCachePoint boo
 		response.Usage.CacheReadInputTokens,
 	)
 
-	if (response.Usage.InputTokens > cc.autoCacheThreshold) && cc.cachePointsRemaining != 0 {
-		log.Println("Auto-caching")
-		// Set the cache point on the last user message rather than the assistant response, since we don't know if there
-		// will be text blocks in the response
-		lastTurn := cc.messages[len(cc.messages)-1]
-		err := setCachePointOnLastApplicableBlockInContent(lastTurn.UserMessage.Content)
-		if err != nil {
-			log.Printf("Warning: failed to set cache point: %s", err)
-		} else {
-			cc.cachePointsRemaining--
-		}
-	}
-
 	// Record the repsonse
 	cc.messages[len(cc.messages)-1].Response = &response
+
+	// Remove the cache control element from the conversation history. Anthropic's automatic prefix checking should
+	// reuse previously-cached sections without explicitly marking them as such in subsequent messages
+	*cacheControl = anthropic.CacheControlEphemeralParam{}
 
 	return &response, nil
 }
 
-func setCachePointOnLastApplicableBlockInContent(content []anthropic.ContentBlockParamUnion) error {
+func getLastCacheControl(content []anthropic.ContentBlockParamUnion) (*anthropic.CacheControlEphemeralParam, error) {
 	for i := len(content) - 1; i >= 0; i-- {
 		c := content[i]
 		if cacheControl := c.GetCacheControl(); cacheControl != nil {
-			*cacheControl = anthropic.NewCacheControlEphemeralParam()
-			break
-		}
-
-		if i == 0 {
-			return fmt.Errorf("no cacheable blocks in content")
+			return cacheControl, nil
 		}
 	}
 
-	return nil
+	return nil, fmt.Errorf("no cacheable blocks in content")
 }
 
 // conversationHistory contains a serializable and resumable snapshot of a ClaudeConversation

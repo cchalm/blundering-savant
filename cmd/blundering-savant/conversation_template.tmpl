@@ -62,9 +62,9 @@
 
 {{- if .ToolResult}}
 **Result:**{{if .IsError}} ⚠️ **Error**{{end}}
-```
-{{truncateContent .ToolResult}}
-```
+
+{{.ToolResult | indent "> "}}
+
 {{- end}}
 
 </details>
