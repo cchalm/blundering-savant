@@ -50,6 +50,26 @@ func NewClaudeConversation(
 	}
 }
 
+func ResumeClaudeConversation(
+	anthropicClient anthropic.Client,
+	history conversationHistory,
+	model anthropic.Model,
+	maxTokens int64,
+	tools []anthropic.ToolParam,
+) (*ClaudeConversation, error) {
+	c := &ClaudeConversation{
+		client: anthropicClient,
+
+		model:        model,
+		systemPrompt: history.SystemPrompt,
+		tools:        tools,
+		messages:     history.Messages,
+
+		maxTokens: maxTokens,
+	}
+	return c, nil
+}
+
 // sendMessage is the internal implementation with a boolean parameter to specify caching
 func (cc *ClaudeConversation) SendMessage(ctx context.Context, messageContent ...anthropic.ContentBlockParamUnion) (*anthropic.Message, error) {
 	// Always set a cache point. Unsupported cache points, e.g. on content that is below the minimum length for caching,
@@ -142,94 +162,94 @@ func getLastCacheControl(content []anthropic.ContentBlockParamUnion) (*anthropic
 	return nil, fmt.Errorf("no cacheable blocks in content")
 }
 
-// GetResponse gets the next response from Claude
-func (cc *ClaudeConversation) GetResponse(ctx context.Context) (*anthropic.Message, error) {
-	// Find the last message without a response
-	var targetIndex = -1
-	for i := len(cc.messages) - 1; i >= 0; i-- {
-		if cc.messages[i].Response == nil {
-			targetIndex = i
-			break
-		}
-	}
 
-	if targetIndex == -1 {
-		return nil, fmt.Errorf("no messages without responses found")
-	}
 
-	// Build the message history for the API call
-	var messageHistory []anthropic.MessageParam
-	for i := 0; i <= targetIndex; i++ {
-		messageHistory = append(messageHistory, cc.messages[i].UserMessage)
-		if cc.messages[i].Response != nil {
-			responseMessage := anthropic.MessageParam{
-				Role:    anthropic.MessageRoleAssistant,
-				Content: make([]anthropic.ContentBlockParamUnion, len(cc.messages[i].Response.Content)),
-			}
-			
-			for j, block := range cc.messages[i].Response.Content {
-				switch block.Type {
-				case anthropic.ContentBlockTypeText:
-					responseMessage.Content[j] = anthropic.TextBlockParam{
-						Type: anthropic.ContentBlockTypeText,
-						Text: block.Text,
-					}
-				case anthropic.ContentBlockTypeToolUse:
-					responseMessage.Content[j] = anthropic.ToolUseBlockParam{
-						Type:  anthropic.ContentBlockTypeToolUse,
-						ID:    block.ToolUse.ID,
-						Name:  block.ToolUse.Name,
-						Input: block.ToolUse.Input,
-					}
-				}
-			}
-			messageHistory = append(messageHistory, responseMessage)
-		}
-	}
-
-	// Create the message request
-	messageRequest := anthropic.MessageNewParams{
-		Model:     anthropic.F(cc.model),
-		MaxTokens: anthropic.F(cc.maxTokens),
-		System:    anthropic.F([]anthropic.TextBlockParam{{Type: anthropic.ContentBlockTypeText, Text: cc.systemPrompt}}),
-		Messages:  anthropic.F(messageHistory),
-		Tools:     anthropic.F(cc.tools),
-	}
-
-	// Make the API call
-	response, err := cc.client.Messages.New(ctx, messageRequest)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create message: %w", err)
-	}
-
-	// Store the response
-	cc.messages[targetIndex].Response = response
-
-	return response, nil
+// conversationHistory contains a serializable and resumable snapshot of a ClaudeConversation
+type conversationHistory struct {
+	SystemPrompt string             `json:"systemPrompt"`
+	Messages     []conversationTurn `json:"messages"`
 }
 
-// GetHistory returns the conversation history
-func (cc *ClaudeConversation) GetHistory() *conversationHistory {
-	return &conversationHistory{
-		Model:        string(cc.model),
+// History returns a serializable conversation history
+func (cc *ClaudeConversation) History() conversationHistory {
+	return conversationHistory{
 		SystemPrompt: cc.systemPrompt,
-		MaxTokens:    cc.maxTokens,
 		Messages:     cc.messages,
 	}
 }
 
-// LoadFromHistory loads a conversation from history
-func (cc *ClaudeConversation) LoadFromHistory(history *conversationHistory) {
-	cc.model = anthropic.Model(history.Model)
-	cc.systemPrompt = history.SystemPrompt
-	cc.maxTokens = history.MaxTokens
-	cc.messages = history.Messages
+type RateLimitedTransport struct {
+	base http.RoundTripper
 }
 
-// conversationHistory represents the serializable history of a conversation
-type conversationHistory struct {
-	Model        string             `json:"model"`
-	SystemPrompt string             `json:"system_prompt"`
-	MaxTokens    int64              `json:"max_tokens"`
-	Messages     []conversationTurn `json:"messages"`
+func WithRateLimiting(base http.RoundTripper) *RateLimitedTransport {
+	if base == nil {
+		base = http.DefaultTransport
+	}
+	return &RateLimitedTransport{base: base}
+}
+
+func (t *RateLimitedTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	// Preserve the original request body for retries
+	var bodyBytes []byte
+	if req.Body != nil {
+		var err error
+		bodyBytes, err = io.ReadAll(req.Body)
+		if err != nil {
+			return nil, fmt.Errorf("failed to read request body: %w", err)
+		}
+		err = req.Body.Close()
+		if err != nil {
+			return nil, fmt.Errorf("failed to close request body: %w", err)
+		}
+	}
+
+	for {
+		// Restore the request body for each attempt
+		if bodyBytes != nil {
+			req.Body = io.NopCloser(bytes.NewReader(bodyBytes))
+		}
+
+		resp, err := t.base.RoundTrip(req)
+		if err != nil {
+			return resp, err
+		}
+
+		// Check for 429 status
+		if resp.StatusCode == http.StatusTooManyRequests {
+			retryAfterStr := resp.Header.Get("retry-after")
+			if retryAfterStr != "" {
+				// Parse retry-after header
+				var waitDuration time.Duration
+
+				// Try parsing as seconds
+				if seconds, err := strconv.Atoi(retryAfterStr); err == nil {
+					waitDuration = time.Duration(seconds) * time.Second
+				} else if retryTime, err := time.Parse(time.RFC1123, retryAfterStr); err == nil {
+					waitDuration = time.Until(retryTime)
+				}
+
+				if waitDuration > 0 {
+					// Close the response body to free resources
+					err = resp.Body.Close()
+					if err != nil {
+						return nil, fmt.Errorf("failed to close request body: %w", err)
+					}
+
+					// Wait for the specified duration
+					log.Printf("Rate limited, waiting %s", waitDuration)
+					select {
+					case <-req.Context().Done():
+						return nil, req.Context().Err()
+					case <-time.After(waitDuration):
+						// Continue the loop to retry
+						continue
+					}
+				}
+			}
+		}
+
+		// Return response for all other cases
+		return resp, err
+	}
 }

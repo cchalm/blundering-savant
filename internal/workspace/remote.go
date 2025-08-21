@@ -3,8 +3,6 @@ package workspace
 import (
 	"context"
 	"fmt"
-	"net/http"
-	"strings"
 	"time"
 
 	"github.com/google/go-github/v72/github"
