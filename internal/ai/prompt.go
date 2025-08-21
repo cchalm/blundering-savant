@@ -239,7 +239,7 @@ func convertReviewsToReviewData(reviews []*github.PullRequestReview) []reviewDat
 				Body:              review.GetBody(),
 				User:              userData{Login: review.GetUser().GetLogin()},
 				AuthorAssociation: review.GetAuthorAssociation(),
-				SubmittedAt:       review.GetSubmittedAt().Time.Format("2006-01-02 15:04:05 UTC"),
+				SubmittedAt:       review.GetSubmittedAt().Format("2006-01-02 15:04:05 UTC"),
 				State:             review.GetState(),
 			})
 		}

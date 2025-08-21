@@ -2,6 +2,7 @@
 package config
 
 import (
+	"log"
 	"os"
 	"time"
 
@@ -22,7 +23,8 @@ type Config struct {
 func Load() Config {
 	// Load environment variables
 	if err := godotenv.Load(); err != nil {
-		// No .env file found, using environment variables
+		// No .env file found, using environment variables directly
+		log.Println("No .env file found, using environment variables")
 	}
 
 	config := Config{
