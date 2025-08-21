@@ -14,6 +14,10 @@ import (
 	"github.com/anthropics/anthropic-sdk-go"
 )
 
+const (
+	maxCachePoints = 4
+)
+
 type ClaudeConversation struct {
 	client anthropic.Client
 
@@ -50,7 +54,7 @@ func NewClaudeConversation(
 
 		maxTokens:            maxTokens,
 		autoCacheThreshold:   10000,
-		cachePointsRemaining: 4,
+		cachePointsRemaining: maxCachePoints,
 	}
 }
 
@@ -61,6 +65,19 @@ func ResumeClaudeConversation(
 	maxTokens int64,
 	tools []anthropic.ToolParam,
 ) (*ClaudeConversation, error) {
+
+	// Calculate remaining cache points by counting cache points already in the conversation
+	remainingCachePoints := maxCachePoints
+	for _, turn := range history.Messages {
+		for _, c := range turn.UserMessage.Content {
+			if cacheControl := c.GetCacheControl(); cacheControl != nil {
+				if *cacheControl == anthropic.NewCacheControlEphemeralParam() {
+					remainingCachePoints--
+				}
+			}
+		}
+	}
+
 	c := &ClaudeConversation{
 		client: anthropicClient,
 
@@ -71,7 +88,7 @@ func ResumeClaudeConversation(
 
 		maxTokens:            maxTokens,
 		autoCacheThreshold:   10000,
-		cachePointsRemaining: 4,
+		cachePointsRemaining: remainingCachePoints,
 	}
 	return c, nil
 }
@@ -185,16 +202,8 @@ func (cc *ClaudeConversation) sendMessage(ctx context.Context, setCachePoint boo
 func setCachePointOnLastApplicableBlockInContent(content []anthropic.ContentBlockParamUnion) error {
 	for i := len(content) - 1; i >= 0; i-- {
 		c := content[i]
-		var cacheControlParam *anthropic.CacheControlEphemeralParam
-		if param := c.OfText; param != nil {
-			cacheControlParam = &param.CacheControl
-		} else if param := c.OfToolResult; param != nil {
-			cacheControlParam = &param.CacheControl
-		} else if param := c.OfToolUse; param != nil {
-			cacheControlParam = &param.CacheControl
-		}
-		if cacheControlParam != nil {
-			*cacheControlParam = anthropic.NewCacheControlEphemeralParam()
+		if cacheControl := c.GetCacheControl(); cacheControl != nil {
+			*cacheControl = anthropic.NewCacheControlEphemeralParam()
 			break
 		}
 
