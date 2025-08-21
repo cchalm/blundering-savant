@@ -101,14 +101,14 @@ func (b *Bot) processTask(ctx context.Context, tsk task.Task) error {
 		GithubClient: b.githubClient,
 	}
 	
-	// Create conversation
-	conversation, err := b.createConversation(ctx, tsk, toolCtx)
+	// Initialize conversation
+	conversation, response, err := b.initConversation(ctx, tsk, toolCtx)
 	if err != nil {
-		return fmt.Errorf("failed to create conversation: %w", err)
+		return fmt.Errorf("failed to initialize conversation: %w", err)
 	}
 	
 	// Process the conversation
-	if err := b.processConversation(ctx, conversation, tsk, toolCtx); err != nil {
+	if err := b.processConversation(ctx, conversation, response, tsk, toolCtx); err != nil {
 		return fmt.Errorf("failed to process conversation: %w", err)
 	}
 	
@@ -120,17 +120,20 @@ func (b *Bot) processTask(ctx context.Context, tsk task.Task) error {
 	return nil
 }
 
-func (b *Bot) createConversation(ctx context.Context, tsk task.Task, toolCtx *tools.ToolContext) (*ai.ClaudeConversation, error) {
+func (b *Bot) initConversation(ctx context.Context, tsk task.Task, toolCtx *tools.ToolContext) (*ai.ClaudeConversation, *anthropic.Message, error) {
+	model := anthropic.ModelClaude3_5Sonnet20241022
+	var maxTokens int64 = 4096
+
 	// Load system prompt
 	systemPrompt, err := ai.LoadSystemPrompt()
 	if err != nil {
-		return nil, fmt.Errorf("failed to load system prompt: %w", err)
+		return nil, nil, fmt.Errorf("failed to load system prompt: %w", err)
 	}
 	
 	// Generate prompt for this task
 	prompt, err := ai.GeneratePrompt(tsk)
 	if err != nil {
-		return nil, fmt.Errorf("failed to generate prompt: %w", err)
+		return nil, nil, fmt.Errorf("failed to generate prompt: %w", err)
 	}
 	
 	// Get tools
@@ -139,56 +142,72 @@ func (b *Bot) createConversation(ctx context.Context, tsk task.Task, toolCtx *to
 	// Create conversation
 	conversation := ai.NewClaudeConversation(
 		b.anthropicClient,
-		anthropic.ModelClaude3_5Sonnet20241022,
-		4096, // max tokens
+		model,
+		maxTokens,
 		toolParams,
 		systemPrompt,
 	)
 	
-	// Add initial prompt
-	conversation.AddUserMessage(prompt)
+	// Send initial message
+	log.Printf("Sending initial message to AI")
+	response, err := conversation.SendMessage(ctx, anthropic.NewTextBlock(prompt))
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to send initial message to AI: %w", err)
+	}
 	
-	return conversation, nil
+	return conversation, response, nil
 }
 
-func (b *Bot) processConversation(ctx context.Context, conversation *ai.ClaudeConversation, tsk task.Task, toolCtx *tools.ToolContext) error {
+func (b *Bot) processConversation(ctx context.Context, conversation *ai.ClaudeConversation, response *anthropic.Message, tsk task.Task, toolCtx *tools.ToolContext) error {
 	const maxIterations = 10
 	
-	for i := 0; i < maxIterations; i++ {
-		response, err := conversation.GetResponse(ctx)
-		if err != nil {
-			return fmt.Errorf("failed to get response from conversation: %w", err)
+	i := 0
+	for response.StopReason != anthropic.StopReasonEndTurn {
+		if i > maxIterations {
+			return fmt.Errorf("exceeded maximum iterations (%d) without completion", maxIterations)
 		}
 		
-		// Process any tool calls in the response
-		hasToolCalls := false
-		for _, block := range response.Content {
-			if block.Type == anthropic.ContentBlockTypeToolUse {
-				hasToolCalls = true
-				toolUseBlock := block.ToolUse
-				
-				tool := b.toolRegistry.GetTool(toolUseBlock.Name)
-				if tool == nil {
-					return fmt.Errorf("unknown tool: %s", toolUseBlock.Name)
-				}
-				
-				result, err := tool.Run(ctx, toolUseBlock, toolCtx)
-				if err != nil {
-					conversation.AddToolResult(toolUseBlock.ID, err.Error())
-				} else {
-					if result != nil {
-						conversation.AddToolResult(toolUseBlock.ID, *result)
-					} else {
-						conversation.AddToolResult(toolUseBlock.ID, "Success")
-					}
+		log.Printf("Processing AI response, iteration: %d", i+1)
+		
+		switch response.StopReason {
+		case anthropic.StopReasonToolUse:
+			// Process tool uses and collect tool results
+			toolUses := []anthropic.ToolUseBlock{}
+			for _, content := range response.Content {
+				switch block := content.AsAny().(type) {
+				case anthropic.ToolUseBlock:
+					toolUses = append(toolUses, block)
 				}
 			}
+
+			toolResults := []anthropic.ContentBlockParamUnion{}
+			for _, toolUse := range toolUses {
+				log.Printf("    Executing tool: %s", toolUse.Name)
+
+				// Process the tool use with the registry
+				toolResult, err := b.toolRegistry.ProcessToolUse(ctx, toolUse, toolCtx)
+				if err != nil {
+					return fmt.Errorf("failed to process tool use: %w", err)
+				}
+				toolResults = append(toolResults, anthropic.ContentBlockParamUnion{OfToolResult: toolResult})
+			}
+			log.Printf("    Sending tool results to AI and streaming response")
+			var err error
+			response, err = conversation.SendMessage(ctx, toolResults...)
+			if err != nil {
+				return fmt.Errorf("failed to send tool results to AI: %w", err)
+			}
+		case anthropic.StopReasonMaxTokens:
+			return fmt.Errorf("exceeded max tokens")
+		case anthropic.StopReasonRefusal:
+			return fmt.Errorf("the AI refused to generate a response due to safety concerns")
+		case anthropic.StopReasonEndTurn:
+			return fmt.Errorf("that's weird, it shouldn't be possible to reach this branch")
+		default:
+			return fmt.Errorf("unexpected stop reason: %v", response.StopReason)
 		}
-		
-		// If there were no tool calls, we're done
-		if !hasToolCalls {
-			break
-		}
+
+		i++
 	}
 	
 	return nil

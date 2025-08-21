@@ -96,3 +96,39 @@ func (tr *ToolRegistry) GetToolParams() []anthropic.ToolParam {
 	}
 	return params
 }
+
+// ProcessToolUse processes a tool use block with the appropriate tool
+func (tr *ToolRegistry) ProcessToolUse(ctx context.Context, block anthropic.ToolUseBlock, toolCtx *ToolContext) (*anthropic.ToolResultBlockParam, error) {
+	tool := tr.tools[block.Name]
+	if tool == nil {
+		return nil, fmt.Errorf("unknown tool: %s", block.Name)
+	}
+
+	response, err := tool.Run(ctx, block, toolCtx)
+
+	var resultBlock anthropic.ToolResultBlockParam
+	var tie ToolInputError
+	if errors.As(err, &tie) {
+		// Respond with an error result block to give the AI the opportunity to correct the inputs
+		resultBlock = newToolResultBlockParam(block.ID, tie.Error(), true)
+		log.Print("Warning: recoverable tool error, reporting to the AI to give it an opportunity to retry")
+	} else if err != nil {
+		return nil, fmt.Errorf("error while running tool: %w", err)
+	} else if response != nil {
+		resultBlock = newToolResultBlockParam(block.ID, *response, false)
+	} else {
+		resultBlock = newToolResultBlockParam(block.ID, "", false)
+	}
+	return &resultBlock, nil
+}
+
+// Helper function to create a ToolResultBlockParam
+func newToolResultBlockParam(toolID string, result string, isError bool) anthropic.ToolResultBlockParam {
+	return anthropic.ToolResultBlockParam{
+		ToolUseID: toolID,
+		Content: []anthropic.ToolResultBlockParamContentUnion{
+			{OfText: &anthropic.TextBlockParam{Text: result}},
+		},
+		IsError: anthropic.Bool(isError),
+	}
+}
