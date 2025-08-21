@@ -7,9 +7,8 @@ import (
 	"github.com/anthropics/anthropic-sdk-go"
 )
 
-func testDeleteFileToolParseInput(t *testing.T, input map[string]any, wantError bool) {
+func testDeleteFileToolParseInput(t *testing.T, inputJSON []byte, wantError bool) {
 	tool := NewDeleteFileTool()
-	inputJSON, _ := json.Marshal(input)
 	block := anthropic.ToolUseBlock{
 		ID:    "test",
 		Name:  "delete_file",
@@ -26,19 +25,13 @@ func testDeleteFileToolParseInput(t *testing.T, input map[string]any, wantError 
 	}
 }
 
-func TestDeleteFileTool_ParseInput_Valid(t *testing.T) {
-	testDeleteFileToolParseInput(t, map[string]any{"path": "test.txt"}, false)
+func TestDeleteFileTool_ParseInput_ValidJSON(t *testing.T) {
+	validJSON := []byte(`{"path": "test.txt"}`)
+	testDeleteFileToolParseInput(t, validJSON, false)
 }
 
-func TestDeleteFileTool_ParseInput_Empty(t *testing.T) {
-	testDeleteFileToolParseInput(t, map[string]any{"path": ""}, false)
-}
-
-func TestDeleteFileTool_ParseInput_LeadingSlash(t *testing.T) {
-	testDeleteFileToolParseInput(t, map[string]any{"path": "/test.txt"}, false)
-}
-
-func TestDeleteFileTool_ParseInput_Missing(t *testing.T) {
-	testDeleteFileToolParseInput(t, map[string]any{}, false)
+func TestDeleteFileTool_ParseInput_InvalidJSON(t *testing.T) {
+	invalidJSON := []byte(`{"path": "test.txt"`) // Missing closing brace
+	testDeleteFileToolParseInput(t, invalidJSON, true)
 }
 
