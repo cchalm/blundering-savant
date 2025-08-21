@@ -190,6 +190,15 @@ func renderConversationMarkdown(data *conversationMarkdownData) (string, error) 
 				return "🔍 Validating changes"
 			case "publish_changes_for_review":
 				return "📤 Publishing changes for review"
+			case "delete_file":
+				// Parse path from input for more specific summary
+				var input map[string]interface{}
+				if err := json.Unmarshal([]byte(toolInput), &input); err == nil {
+					if path, ok := input["path"].(string); ok && path != "" {
+						return fmt.Sprintf("🗑️ Deleting '%s'", path)
+					}
+				}
+				return "🗑️ Deleting file"
 			default:
 				return fmt.Sprintf("🔧 Using tool: %s", toolName)
 			}
