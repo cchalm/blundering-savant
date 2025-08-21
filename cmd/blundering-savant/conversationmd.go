@@ -273,6 +273,8 @@ func convertAssistantMessage(msg *anthropic.Message, pendingToolUses map[string]
 
 	// Track if we've already added token usage to a text message
 	tokenUsageAdded := false
+	// Track the first tool use ID to attach token usage if no text blocks are present
+	var firstToolUseID string
 
 	// Convert content blocks in order
 	for _, contentBlock := range msg.Content {
@@ -298,6 +300,11 @@ func convertAssistantMessage(msg *anthropic.Message, pendingToolUses map[string]
 			}
 			parseToolSpecificFields(&toolMsg)
 
+			// Remember the first tool use if we haven't assigned token usage yet
+			if !tokenUsageAdded && firstToolUseID == "" {
+				firstToolUseID = content.ID
+			}
+
 			// Store the partial message in the pending tool uses map
 			pendingToolUses[content.ID] = toolMsg
 
@@ -312,6 +319,15 @@ func convertAssistantMessage(msg *anthropic.Message, pendingToolUses map[string]
 				Type:     "assistant_thinking",
 				Thinking: "[Thinking content redacted]",
 			})
+		}
+	}
+
+	// If token usage wasn't attached to any text block and we have a first tool use,
+	// attach it to the first tool use
+	if !tokenUsageAdded && firstToolUseID != "" {
+		if toolMsg, exists := pendingToolUses[firstToolUseID]; exists {
+			toolMsg.TokenUsage = tokenUsage
+			pendingToolUses[firstToolUseID] = toolMsg
 		}
 	}
 
