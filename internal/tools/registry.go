@@ -3,11 +3,9 @@ package tools
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
-	"strings"
 
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/google/go-github/v72/github"

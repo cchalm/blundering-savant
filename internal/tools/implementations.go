@@ -240,7 +240,7 @@ type DeleteFileInput struct {
 
 func (t *DeleteFileTool) GetToolParam() anthropic.ToolParam {
 	return anthropic.ToolParam{
-		Name:        t.Name,
+		Name:        "delete_file",
 		Description: anthropic.String("Delete a file"),
 		InputSchema: anthropic.ToolInputSchemaParam{
 			Properties: map[string]any{
@@ -294,7 +294,7 @@ type PostCommentInput struct {
 
 func (t *PostCommentTool) GetToolParam() anthropic.ToolParam {
 	return anthropic.ToolParam{
-		Name:        t.Name,
+		Name:        "post_comment",
 		Description: anthropic.String("Post a comment to engage in discussion"),
 		InputSchema: anthropic.ToolInputSchemaParam{
 			Properties: map[string]any{
@@ -345,7 +345,6 @@ func (t *PostCommentTool) run(ctx context.Context, block anthropic.ToolUseBlock,
 	issueNumber := toolCtx.Task.Issue.GetNumber()
 
 	var commentURL string
-	var err error
 
 	switch input.CommentType {
 	case "issue":
@@ -397,7 +396,7 @@ type AddReactionInput struct {
 
 func (t *AddReactionTool) GetToolParam() anthropic.ToolParam {
 	return anthropic.ToolParam{
-		Name:        t.Name,
+		Name:        "add_reaction",
 		Description: anthropic.String("Add a reaction to acknowledge or respond to a comment"),
 		InputSchema: anthropic.ToolInputSchemaParam{
 			Properties: map[string]any{
