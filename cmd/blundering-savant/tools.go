@@ -604,12 +604,12 @@ func NewDeleteFileTool() *DeleteFileTool {
 func (t *DeleteFileTool) GetToolParam() anthropic.ToolParam {
 	return anthropic.ToolParam{
 		Name:        t.Name,
-		Description: anthropic.String("Delete a file from the filesystem"),
+		Description: anthropic.String("Delete a file"),
 		InputSchema: anthropic.ToolInputSchemaParam{
 			Properties: map[string]any{
 				"path": map[string]any{
 					"type":        "string",
-					"description": "Path to the file to delete. Must be a relative path (no leading slash).",
+					"description": "Path to the file to delete.",
 				},
 			},
 			Required: []string{"path"},
