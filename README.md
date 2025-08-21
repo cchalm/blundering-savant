@@ -1,5 +1,8 @@
 # The Blundering Savant AI Coding Agent
 
+[![Build Status](https://github.com/cchalm/blundering-savant/actions/workflows/go.yml/badge.svg)](https://github.com/cchalm/blundering-savant/actions/workflows/go.yml)
+[![Go Report Card](https://goreportcard.com/badge/github.com/cchalm/blundering-savant)](https://goreportcard.com/report/github.com/cchalm/blundering-savant)
+
 Blundering Savant is a generative AI coding agent that presents as a GitHub user. The agent receives instructions via
 issues, reviews, and comments and proposes code changes by creating and updating pull requests.
 
