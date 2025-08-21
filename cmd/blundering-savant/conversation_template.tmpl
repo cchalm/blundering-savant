@@ -49,9 +49,13 @@
 {{- else if eq .Type "tool_action"}}
 
 <details>
-<summary>{{toolSummary .ToolName .ToolInput .Command .Path}}</summary>
+<summary>{{toolSummary .ToolName .ToolInput .Command .Path}}{{if .TokenUsage}} • Token Usage: {{.TokenUsage.InputTokens}} input, {{.TokenUsage.OutputTokens}} output{{if gt .TokenUsage.CacheCreationTokens 0}}, {{.TokenUsage.CacheCreationTokens}} cache create{{end}}{{if gt .TokenUsage.CacheReadTokens 0}}, {{.TokenUsage.CacheReadTokens}} cache read{{end}}{{end}}</summary>
 
 **Tool:** `{{.ToolName}}`
+{{- if .TokenUsage}}
+
+**Token Usage:** {{.TokenUsage.InputTokens}} input, {{.TokenUsage.OutputTokens}} output{{if gt .TokenUsage.CacheCreationTokens 0}}, {{.TokenUsage.CacheCreationTokens}} cache create{{end}}{{if gt .TokenUsage.CacheReadTokens 0}}, {{.TokenUsage.CacheReadTokens}} cache read{{end}}
+{{- end}}
 
 {{- if .ToolInput}}
 **Input:**
