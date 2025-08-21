@@ -10,6 +10,7 @@ import (
 
 type Changelist interface {
 	ForEachModified(fn func(path string, content string) error) error
+	ForEachDeleted(fn func(path string) error) error
 	IsModified(path string) bool
 	IsDeleted(path string) bool
 	IsEmpty() bool
@@ -81,36 +82,10 @@ func (ggr *githubGitRepo) CommitChanges(ctx context.Context, branch string, chan
 		return nil, fmt.Errorf("failed to get commit: %w", err)
 	}
 
-	// Get the current tree
-	baseTree, _, err := ggr.git.GetTree(ctx, ggr.owner, ggr.repo, *baseCommit.SHA, true)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get current tree: %w", err)
-	}
+	baseTree := baseCommit.Tree
 
-	// Build new tree entries based on current tree + changes
-	var treeEntries []*github.TreeEntry
-
-	// Start with existing files from current tree, excluding deleted ones
-	for _, entry := range baseTree.Entries {
-		if entry.Path == nil {
-			continue
-		}
-
-		path := *entry.Path
-
-		// Skip deleted files
-		if changelist.IsDeleted(path) {
-			continue
-		}
-
-		// Skip files that we're updating (they'll be added below)
-		if changelist.IsModified(path) {
-			continue
-		}
-
-		// Keep existing file as-is
-		treeEntries = append(treeEntries, entry)
-	}
+	// Build tree entries for changes
+	var treeChangeEntries []*github.TreeEntry
 
 	// Add modified/new files
 	err = changelist.ForEachModified(func(path string, content string) error {
@@ -132,15 +107,32 @@ func (ggr *githubGitRepo) CommitChanges(ctx context.Context, branch string, chan
 			Type: github.Ptr("blob"),
 			SHA:  createdBlob.SHA,
 		}
-		treeEntries = append(treeEntries, treeEntry)
+		treeChangeEntries = append(treeChangeEntries, treeEntry)
 
 		return nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to add modified files to new tree: %w", err)
 	}
 
-	newTree, _, err := ggr.git.CreateTree(ctx, ggr.owner, ggr.repo, "", treeEntries)
+	// Mark entries for deletion
+	err = changelist.ForEachDeleted(func(path string) error {
+		// Add tree entry
+		treeEntry := &github.TreeEntry{
+			Path: github.Ptr(path),
+			Mode: github.Ptr("100644"),
+			Type: github.Ptr("blob"),
+			SHA:  nil, // Nil SHA indicates delete
+		}
+		treeChangeEntries = append(treeChangeEntries, treeEntry)
+
+		return nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to mark deleted files in new tree: %w", err)
+	}
+
+	newTree, _, err := ggr.git.CreateTree(ctx, ggr.owner, ggr.repo, *baseTree.SHA, treeChangeEntries)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create tree: %w", err)
 	}
