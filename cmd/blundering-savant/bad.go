@@ -1,1 +1,0 @@
-this is a bad go file that won't compile, for testing purposes
