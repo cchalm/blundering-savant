@@ -6,9 +6,6 @@ import (
 	_ "embed"
 	"fmt"
 	"log"
-	"net/http"
-	"os"
-	"strconv"
 
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/option"
