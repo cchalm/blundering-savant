@@ -6,8 +6,6 @@ import (
 	"fmt"
 	"text/template"
 
-	"github.com/google/go-github/v72/github"
-
 	"github.com/cchalm/blundering-savant/internal/task"
 )
 

@@ -4,8 +4,6 @@ import (
 	"bytes"
 	_ "embed"
 	"fmt"
-	"strconv"
-	"strings"
 	"text/template"
 
 	"github.com/google/go-github/v72/github"
@@ -269,7 +267,7 @@ func convertReviewCommentThreadsToData(threads [][]*github.PullRequestComment) [
 					CommitID:            comment.GetCommitID(),
 					OriginalCommitID:    comment.GetOriginalCommitID(),
 					DiffHunk:            comment.GetDiffHunk(),
-					InReplyToID:         comment.GetInReplyToID(),
+					InReplyToID:         comment.GetInReplyTo(),
 				})
 			}
 		}

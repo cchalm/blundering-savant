@@ -240,15 +240,13 @@ type DeleteFileInput struct {
 
 func (t *DeleteFileTool) GetToolParam() anthropic.ToolParam {
 	return anthropic.ToolParam{
-		Type: "function",
-		Name: "delete_file",
-		Description: "Delete a file",
-		InputSchema: anthropic.ToolParamInputSchema{
-			Type: "object",
-			Properties: map[string]anthropic.ToolParamInputSchemaProperty{
-				"path": {
-					Type:        "string",
-					Description: "Path to the file to delete.",
+		Name:        t.Name,
+		Description: anthropic.String("Delete a file"),
+		InputSchema: anthropic.ToolInputSchemaParam{
+			Properties: map[string]any{
+				"path": map[string]any{
+					"type":        "string",
+					"description": "Path to the file to delete.",
 				},
 			},
 			Required: []string{"path"},
@@ -296,24 +294,22 @@ type PostCommentInput struct {
 
 func (t *PostCommentTool) GetToolParam() anthropic.ToolParam {
 	return anthropic.ToolParam{
-		Type: "function",
-		Name: "post_comment",
-		Description: "Post a comment to engage in discussion",
-		InputSchema: anthropic.ToolParamInputSchema{
-			Type: "object",
-			Properties: map[string]anthropic.ToolParamInputSchemaProperty{
-				"body": {
-					Type:        "string",
-					Description: "The comment text (markdown supported)",
+		Name:        t.Name,
+		Description: anthropic.String("Post a comment to engage in discussion"),
+		InputSchema: anthropic.ToolInputSchemaParam{
+			Properties: map[string]any{
+				"body": map[string]any{
+					"type":        "string",
+					"description": "The comment text (markdown supported)",
 				},
-				"comment_type": {
-					Type:        "string",
-					Description: "Type of comment to post",
-					Enum:        []string{"issue", "pr", "review"},
+				"comment_type": map[string]any{
+					"type":        "string",
+					"description": "Type of comment to post",
+					"enum":        []string{"issue", "pr", "review"},
 				},
-				"in_reply_to": {
-					Type:        "integer",
-					Description: "ID of comment being replied to (for review comments only)",
+				"in_reply_to": map[string]any{
+					"type":        "integer",
+					"description": "ID of comment being replied to (for review comments only)",
 				},
 			},
 			Required: []string{"body", "comment_type"},
@@ -401,25 +397,23 @@ type AddReactionInput struct {
 
 func (t *AddReactionTool) GetToolParam() anthropic.ToolParam {
 	return anthropic.ToolParam{
-		Type: "function",
-		Name: "add_reaction",
-		Description: "Add a reaction to acknowledge or respond to a comment",
-		InputSchema: anthropic.ToolParamInputSchema{
-			Type: "object",
-			Properties: map[string]anthropic.ToolParamInputSchemaProperty{
-				"comment_id": {
-					Type:        "integer",
-					Description: "ID of the comment to react to",
+		Name:        t.Name,
+		Description: anthropic.String("Add a reaction to acknowledge or respond to a comment"),
+		InputSchema: anthropic.ToolInputSchemaParam{
+			Properties: map[string]any{
+				"comment_id": map[string]any{
+					"type":        "integer",
+					"description": "ID of the comment to react to",
 				},
-				"comment_type": {
-					Type:        "string",
-					Description: "Whether this is a comment on an issue, a comment on a PR, or a comment that is part of a PR review",
-					Enum:        []string{"issue", "PR", "PR review"},
+				"comment_type": map[string]any{
+					"type":        "string",
+					"description": "Whether this is a comment on an issue, a comment on a PR, or a comment that is part of a PR review",
+					"enum":        []string{"issue", "PR", "PR review"},
 				},
-				"reaction": {
-					Type:        "string",
-					Description: "The reaction emoji to add",
-					Enum:        []string{"+1", "-1", "laugh", "confused", "heart", "hooray", "rocket", "eyes"},
+				"reaction": map[string]any{
+					"type":        "string",
+					"description": "The reaction emoji to add",
+					"enum":        []string{"+1", "-1", "laugh", "confused", "heart", "hooray", "rocket", "eyes"},
 				},
 			},
 			Required: []string{"comment_id", "comment_type", "reaction"},
@@ -489,15 +483,13 @@ type ValidateChangesInput struct {
 
 func (t *ValidateChangesTool) GetToolParam() anthropic.ToolParam {
 	return anthropic.ToolParam{
-		Type: "function",
-		Name: "validate_changes",
-		Description: "Validate all previous file changes, e.g. run tests and static analysis",
-		InputSchema: anthropic.ToolParamInputSchema{
-			Type: "object",
-			Properties: map[string]anthropic.ToolParamInputSchemaProperty{
-				"commit_message": {
-					Type:        "string",
-					Description: "Commit message for file changes made since the last call to this tool. May or may not be used depending on the implementation, but a non-empty string must be provided",
+		Name:        "validate_changes",
+		Description: anthropic.String("Validate all previous file changes, e.g. run tests and static analysis"),
+		InputSchema: anthropic.ToolInputSchemaParam{
+			Properties: map[string]any{
+				"commit_message": map[string]any{
+					"type":        "string",
+					"description": "Commit message for file changes made since the last call to this tool. May or may not be used depending on the implementation, but a non-empty string must be provided",
 				},
 			},
 			Required: []string{"commit_message"},
@@ -546,19 +538,17 @@ type PublishChangesForReviewInput struct {
 
 func (t *PublishChangesForReviewTool) GetToolParam() anthropic.ToolParam {
 	return anthropic.ToolParam{
-		Type: "function",
-		Name: "publish_changes_for_review",
-		Description: "Publish changes for review by other developers",
-		InputSchema: anthropic.ToolParamInputSchema{
-			Type: "object",
-			Properties: map[string]anthropic.ToolParamInputSchemaProperty{
-				"pull_request_title": {
-					Type:        "string",
-					Description: "Title for the new pull request, if any. Ignored if a pull request already exists",
+		Name:        "publish_changes_for_review",
+		Description: anthropic.String("Publish changes for review by other developers"),
+		InputSchema: anthropic.ToolInputSchemaParam{
+			Properties: map[string]any{
+				"pull_request_title": map[string]any{
+					"type":        "string",
+					"description": "Title for the new pull request, if any. Ignored if a pull request already exists",
 				},
-				"pull_request_body": {
-					Type:        "string",
-					Description: "Description of the solution and what changes were made. Ignored if a pull request already exists",
+				"pull_request_body": map[string]any{
+					"type":        "string",
+					"description": "Description of the solution and what changes were made. Ignored if a pull request already exists",
 				},
 			},
 			Required: []string{"pull_request_title", "pull_request_body"},
@@ -611,23 +601,21 @@ type ReportLimitationInput struct {
 
 func (t *ReportLimitationTool) GetToolParam() anthropic.ToolParam {
 	return anthropic.ToolParam{
-		Type: "function",
-		Name: "report_limitation",
-		Description: "Report when you need to perform an action that you don't have a tool for. Use this instead of trying workarounds with available tools.",
-		InputSchema: anthropic.ToolParamInputSchema{
-			Type: "object",
-			Properties: map[string]anthropic.ToolParamInputSchemaProperty{
-				"action": {
-					Type:        "string",
-					Description: "The action you want to perform but don't have a tool for",
+		Name:        "report_limitation",
+		Description: anthropic.String("Report when you need to perform an action that you don't have a tool for. Use this instead of trying workarounds with available tools."),
+		InputSchema: anthropic.ToolInputSchemaParam{
+			Properties: map[string]any{
+				"action": map[string]any{
+					"type":        "string",
+					"description": "The action you want to perform but don't have a tool for",
 				},
-				"reason": {
-					Type:        "string",
-					Description: "Why this action is needed to complete the task",
+				"reason": map[string]any{
+					"type":        "string",
+					"description": "Why this action is needed to complete the task",
 				},
-				"suggestions": {
-					Type:        "string",
-					Description: "Optional suggestions for how this limitation could be addressed or alternative approaches",
+				"suggestions": map[string]any{
+					"type":        "string",
+					"description": "Optional suggestions for how this limitation could be addressed or alternative approaches",
 				},
 			},
 			Required: []string{"action", "reason"},
