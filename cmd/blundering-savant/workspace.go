@@ -3,7 +3,9 @@ package main
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"strings"
+	"time"
 
 	"github.com/google/go-github/v72/github"
 )
@@ -86,6 +88,16 @@ func NewRemoteValidationWorkspace(
 		return nil, fmt.Errorf("failed to create review branch '%s': %v", reviewBranch, err)
 	}
 
+	// We rely on these branches existing after this point, and it can take a moment, so let's wait
+	err = awaitBranchCreation(ctx, githubClient, owner, repo, workBranch)
+	if err != nil {
+		return nil, fmt.Errorf("failed to await creation of work branch '%s': %v", workBranch, err)
+	}
+	err = awaitBranchCreation(ctx, githubClient, owner, repo, reviewBranch)
+	if err != nil {
+		return nil, fmt.Errorf("failed to await creation of work branch '%s': %v", reviewBranch, err)
+	}
+
 	prService := NewGithubPullRequestService(githubClient.PullRequests, owner, repo, reviewBranch, baseBranch)
 
 	validationWorkflowFileName := "go.yml"
@@ -105,6 +117,41 @@ func NewRemoteValidationWorkspace(
 
 		validator: validator,
 	}, nil
+}
+
+func awaitBranchCreation(ctx context.Context, githubClient *github.Client, owner, repo, branch string) error {
+	timeout := 10 * time.Second
+	checkInterval := 2 * time.Second
+
+	timeoutCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	ticker := time.Tick(checkInterval)
+	for {
+		maxRedirects := 10
+		_, resp, err := githubClient.Repositories.GetBranch(ctx, owner, repo, branch, maxRedirects)
+		if err == nil {
+			// Found the branch
+			break
+		} else if resp == nil || resp.StatusCode != http.StatusNotFound {
+			return fmt.Errorf("unexpected error while waiting for branch creation: %w", err)
+		}
+
+		select {
+		case <-timeoutCtx.Done():
+			if parentErr := ctx.Err(); parentErr != nil {
+				return fmt.Errorf("branch creation check canceled: %w", parentErr)
+			} else if err := timeoutCtx.Err(); err == context.DeadlineExceeded {
+				return fmt.Errorf("branch creation check timed out after %v", timeout)
+			} else {
+				return fmt.Errorf("branch creation check canceled: %w", err)
+			}
+		case <-ticker:
+			continue
+		}
+	}
+
+	return nil
 }
 
 // Read reads a file from the work branch with any in-memory changes applied
