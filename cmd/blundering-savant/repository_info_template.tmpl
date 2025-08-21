@@ -1,0 +1,39 @@
+Repository: {{.Repository}}
+
+Main Language: {{.MainLanguage}}
+
+{{- if .StyleGuides}}
+
+## Style Guides
+{{- range $path, $content := .StyleGuides}}
+
+<details>
+<summary>{{$path}}</summary>
+
+{{$content | indent "> "}}
+
+</details>
+{{- end}}
+{{- end}}
+{{- if .ReadmeContent}}
+
+## README excerpt
+
+{{.ReadmeContent | indent "> "}}
+{{- end}}
+{{- if .FileTree}}
+
+## Repository structure
+
+<details>
+<summary>View File Tree</summary>
+
+{{range .FileTree -}}
+- `{{.}}`
+{{end}}
+{{if .FileTreeTruncatedCount -}}
+... ({{.FileTreeTruncatedCount}} more files)
+{{- end}}
+
+</details>
+{{- end}}
