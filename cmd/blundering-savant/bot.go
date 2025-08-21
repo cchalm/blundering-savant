@@ -411,9 +411,7 @@ func (b *Bot) initConversation(ctx context.Context, tsk task, toolCtx *ToolConte
 			return nil, nil, fmt.Errorf("failed to build prompt: %w", err)
 		}
 
-		// Send initial message with a cache breakpoint, because the initial message tends to be very large and we are
-		// likely to need several back-and-forths after this
-		response, err := c.SendMessageAndSetCachePoint(ctx, anthropic.NewTextBlock(*promptPtr))
+		response, err := c.SendMessage(ctx, anthropic.NewTextBlock(*promptPtr))
 		if err != nil {
 			return nil, nil, fmt.Errorf("failed to send initial message to AI: %w", err)
 		}
