@@ -170,6 +170,16 @@ func (mc MemChangelist) ForEachModified(fn func(path string, content string) err
 	return nil
 }
 
+func (mc MemChangelist) ForEachDeleted(fn func(path string) error) error {
+	for path := range mc.deleted {
+		err := fn(path)
+		if err != nil {
+			return fmt.Errorf("error while handling deleted file '%s': %w", path, err)
+		}
+	}
+	return nil
+}
+
 func (mc MemChangelist) IsModified(path string) bool {
 	_, ok := mc.modified[path]
 	return ok
