@@ -13,20 +13,8 @@ func TestConvertAssistantMessage_ToolOnlyResponse(t *testing.T) {
 	// Create a mock assistant message with only tool uses (no text blocks)
 	msg := &anthropic.Message{
 		Content: []anthropic.ContentBlockUnion{
-			anthropic.ContentBlockUnion{
-				OfToolUse: &anthropic.ToolUseBlock{
-					ID:    "tool1",
-					Name:  "str_replace_based_edit_tool",
-					Input: []byte(`{"command": "view", "path": "test.go"}`),
-				},
-			},
-			anthropic.ContentBlockUnion{
-				OfToolUse: &anthropic.ToolUseBlock{
-					ID:    "tool2",
-					Name:  "post_comment",
-					Input: []byte(`{"comment_type": "issue", "body": "test comment"}`),
-				},
-			},
+			anthropic.NewToolUseBlock("tool1", "str_replace_based_edit_tool", []byte(`{"command": "view", "path": "test.go"}`)),
+			anthropic.NewToolUseBlock("tool2", "post_comment", []byte(`{"comment_type": "issue", "body": "test comment"}`)),
 		},
 		Usage: anthropic.Usage{
 			InputTokens:              100,
@@ -67,18 +55,8 @@ func TestConvertAssistantMessage_ToolOnlyResponse(t *testing.T) {
 func TestConvertAssistantMessage_TextWithTools(t *testing.T) {
 	msg := &anthropic.Message{
 		Content: []anthropic.ContentBlockUnion{
-			anthropic.ContentBlockUnion{
-				OfText: &anthropic.TextBlock{
-					Text: "I'll help you with that task.",
-				},
-			},
-			anthropic.ContentBlockUnion{
-				OfToolUse: &anthropic.ToolUseBlock{
-					ID:    "tool1",
-					Name:  "str_replace_based_edit_tool",
-					Input: []byte(`{"command": "view", "path": "test.go"}`),
-				},
-			},
+			anthropic.NewTextBlock("I'll help you with that task."),
+			anthropic.NewToolUseBlock("tool1", "str_replace_based_edit_tool", []byte(`{"command": "view", "path": "test.go"}`)),
 		},
 		Usage: anthropic.Usage{
 			InputTokens:              100,
@@ -113,11 +91,7 @@ func TestConvertAssistantMessage_TextWithTools(t *testing.T) {
 func TestConvertAssistantMessage_TextOnly(t *testing.T) {
 	msg := &anthropic.Message{
 		Content: []anthropic.ContentBlockUnion{
-			anthropic.ContentBlockUnion{
-				OfText: &anthropic.TextBlock{
-					Text: "This is a text-only response.",
-				},
-			},
+			anthropic.NewTextBlock("This is a text-only response."),
 		},
 		Usage: anthropic.Usage{
 			InputTokens:  75,
