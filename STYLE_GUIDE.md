@@ -21,27 +21,6 @@ This document outlines the coding standards and best practices for the Blunderin
 ### Effective Go
 Follow the official [Effective Go](https://golang.org/doc/effective_go.html) guidelines as the foundation for all Go code.
 
-### Go Proverbs
-Keep these Go proverbs in mind:
-- Don't communicate by sharing memory, share memory by communicating
-- Concurrency is not parallelism
-- Channels orchestrate; mutexes serialize
-- The bigger the interface, the weaker the abstraction
-- Make the zero value useful
-- `interface{}` says nothing
-- Gofmt's style is no one's favorite, yet gofmt is everyone's favorite
-- A little copying is better than a little dependency
-- Syscall must always be guarded with build tags
-- Cgo must always be guarded with build tags
-- Cgo is not Go
-- With the unsafe package there are no guarantees
-- Clear is better than clever
-- Reflection is never clear
-- Errors are values
-- Don't just check errors, handle them gracefully
-- Design the architecture, name the components, document the details
-- Documentation is for users
-
 ## Code Formatting
 
 ### gofmt and goimports
@@ -115,34 +94,6 @@ type EventHandler interface { ... }
 // Bad
 type githubClient struct { ... }    // Should be exported if used across packages
 type eventhandler interface { ... } // Should use PascalCase instead of lowercase
-```
-
-### Interfaces
-- Use `-er` suffix for single-method interfaces (Go convention)
-- Keep interfaces small and focused ("The bigger the interface, the weaker the abstraction")
-- Define interfaces at the point of use, not the point of implementation
-- Accept interfaces, return concrete types
-
-```go
-// Good
-type Reader interface {
-    Read([]byte) (int, error)
-}
-
-type GitHubProcessor interface {
-    ProcessIssue(ctx context.Context, issue *github.Issue) error
-    ProcessPullRequest(ctx context.Context, pr *github.PullRequest) error
-}
-
-// Bad
-type GitHubHandler interface {
-    ProcessIssue(ctx context.Context, issue *github.Issue) error
-    ProcessPullRequest(ctx context.Context, pr *github.PullRequest) error
-    ValidateWebhook(payload []byte) error
-    HandleError(err error)
-    LogActivity(message string)
-    // Too many responsibilities
-}
 ```
 
 ## Package Organization
@@ -342,7 +293,7 @@ The test above is just as likely to contain errors as the code it tests, so it p
 Prefer test harnesses over table-driven tests for better IDE support:
 
 ```go
-// testProcessIssue is an example of a test harness
+// Good - testProcessIssue is a test harness
 func testProcessIssue(t *testing.T, wantErr bool, issue *github.Issue) {
     err := processIssue(context.Background(), issue)
     if (err != nil) != wantErr {
@@ -365,6 +316,40 @@ func TestProcessIssue_Nil(t *testing.T) {
         true, // wantErr
         nil,
     )
+}
+```
+
+```go
+// Bad - avoid table-driven tests, prefer multiple test cases with a test harness
+func TestProcessIssue(t *testing.T) {
+	tests := []struct {
+		name      string
+		issue     *github.Issue
+		wantError bool
+    }{
+		{
+			name:      "Valid",
+			issue:     &github.Issue{
+                Number: github.Int(1),
+                Title:  github.String("Test issue"),
+            },
+			wantError: false,
+		},
+		{
+			name:      "Nil",
+			issue:     nil,
+			wantError: true,
+		},
+    }
+
+    for _, tt := range tests {
+        t.Run(tt.name, func(t *testing.T) {
+            err := processIssue(context.Background(), tt.issue)
+            if (err != nil) != tt.wantError {
+                t.Errorf("processIssue() error = %v, wantError %v", err, tt.wantError)
+            }
+        })
+    }
 }
 ```
 
@@ -484,25 +469,6 @@ func NewGitHubClient() *Client {
 // Bad - Hard coding secrets
 func NewGitHubClient() *Client {
     return &Client{token: "ghp_hardcoded_token_123"} // Never do this!
-}
-```
-
-### Input Validation
-- Validate and sanitize all external inputs
-- Use allowlists instead of blocklists when possible
-- Validate webhook signatures from GitHub
-
-```go
-// Good - Validate webhook payload
-func validateWebhookSignature(payload []byte, signature string, secret string) error {
-    mac := hmac.New(sha256.New, []byte(secret))
-    mac.Write(payload)
-    expectedSignature := "sha256=" + hex.EncodeToString(mac.Sum(nil))
-
-    if !hmac.Equal([]byte(signature), []byte(expectedSignature)) {
-        return errors.New("invalid webhook signature")
-    }
-    return nil
 }
 ```
 
