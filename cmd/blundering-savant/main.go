@@ -5,22 +5,14 @@ import (
 	"log"
 	"os"
 	"os/signal"
-	"time"
 
 	"github.com/google/go-github/v72/github"
-	"github.com/joho/godotenv"
 	"golang.org/x/oauth2"
-)
 
-// Config holds the configuration for the bot
-type Config struct {
-	GitHubToken               string
-	AnthropicAPIKey           string
-	GitHubUsername            string
-	ResumableConversationsDir string
-	CheckInterval             time.Duration
-	ValidationWorkflowName    string
-}
+	"github.com/cchalm/blundering-savant/internal/bot"
+	"github.com/cchalm/blundering-savant/internal/config"
+	"github.com/cchalm/blundering-savant/internal/task"
+)
 
 func main() {
 	ctx, cancel := context.WithCancel(context.Background())
@@ -36,44 +28,26 @@ func main() {
 		log.Fatal("Forcing shutdown")
 	}()
 
-	// Load environment variables
-	if err := godotenv.Load(); err != nil {
-		log.Println("No .env file found, using environment variables")
-	}
+	// Load configuration
+	cfg := config.Load()
 
-	config := Config{
-		GitHubToken:               os.Getenv("GITHUB_TOKEN"),
-		AnthropicAPIKey:           os.Getenv("ANTHROPIC_API_KEY"),
-		GitHubUsername:            os.Getenv("GITHUB_USERNAME"),
-		ResumableConversationsDir: os.Getenv("RESUMABLE_CONVERSATIONS_DIR"),
-		CheckInterval:             5 * time.Minute, // Default
-		ValidationWorkflowName:    os.Getenv("VALIDATION_WORKFLOW_NAME"),
-	}
-
-	if config.GitHubToken == "" || config.AnthropicAPIKey == "" || config.GitHubUsername == "" {
-		log.Fatal("Missing required environment variables: GITHUB_TOKEN, ANTHROPIC_API_KEY, or GITHUB_USERNAME")
-	}
-
-	// Parse check interval if provided
-	if interval := os.Getenv("CHECK_INTERVAL"); interval != "" {
-		if d, err := time.ParseDuration(interval); err == nil {
-			config.CheckInterval = d
-		}
+	if err := cfg.Validate(); err != nil {
+		log.Fatal(err)
 	}
 
 	tokenSource := oauth2.StaticTokenSource(
-		&oauth2.Token{AccessToken: config.GitHubToken},
+		&oauth2.Token{AccessToken: cfg.GitHubToken},
 	)
 	httpClient := oauth2.NewClient(ctx, tokenSource)
 	githubClient := github.NewClient(httpClient)
 
-	taskGen := newTaskGenerator(config, githubClient)
-	b := NewBot(config, githubClient)
+	taskGen := task.NewGenerator(cfg, githubClient)
+	b := bot.NewBot(cfg, githubClient)
 
-	log.Printf("Bot started. Monitoring issues for @%s every %s", config.GitHubUsername, config.CheckInterval)
+	log.Printf("Bot started. Monitoring issues for @%s every %s", cfg.GitHubUsername, cfg.CheckInterval)
 
 	// Start generating tasks asynchronously
-	tasks := taskGen.generate(ctx)
+	tasks := taskGen.Generate(ctx)
 	// Start the bot, which will consume tasks. This is a synchronous call
 	err := b.Run(ctx, tasks)
 	if err != nil {
