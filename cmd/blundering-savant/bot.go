@@ -75,6 +75,11 @@ type Workspace interface {
 	// are only used the first time a review is published, subsequent publishes will ignore these parameters and update
 	// the existing review
 	PublishChangesForReview(ctx context.Context, reviewRequestTitle string, reviewRequestBody string) error
+
+	// Sync attempts to get the workspace up-to-date with the latest changes to the source. Sync will return an error
+	// if there are any local changes. Sync will return an error if upstream changes conflict with changes in the
+	// workspace. Sync will update published changes if and only if there are no unpublished changes in the workspace
+	Sync(ctx context.Context) error
 }
 
 type WorkspaceFactory interface {
@@ -155,6 +160,12 @@ func (b *Bot) doTask(ctx context.Context, tsk task) (err error) {
 	hasUnpublishedChanges, err := workspace.HasUnpublishedChanges(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to check for unpublished changes: %w", err)
+	}
+
+	// Sync upstream changes
+	err = workspace.Sync(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to sync workspace to upstream changes: %w", err)
 	}
 
 	validationResult, err := workspace.ValidateChanges(ctx, nil)
