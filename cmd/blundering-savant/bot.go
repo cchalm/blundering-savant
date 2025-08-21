@@ -102,13 +102,18 @@ func NewBot(config Config, githubClient *github.Client) *Bot {
 	)
 
 	return &Bot{
-		config:                 config,
-		githubClient:           githubClient,
-		anthropicClient:        anthropicClient,
-		toolRegistry:           NewToolRegistry(),
-		workspaceFactory:       remoteValidationWorkspaceFactory{githubClient: githubClient},
-		resumableConversations: FileSystemConversationHistoryStore{dir: config.ResumableConversationsDir},
-		botName:                config.GitHubUsername,
+		config:          config,
+		githubClient:    githubClient,
+		anthropicClient: anthropicClient,
+		toolRegistry:    NewToolRegistry(),
+		workspaceFactory: remoteValidationWorkspaceFactory{
+			githubClient:           githubClient,
+			validationWorkflowName: config.ValidationWorkflowName,
+		},
+		resumableConversations: FileSystemConversationHistoryStore{
+			dir: config.ResumableConversationsDir,
+		},
+		botName: config.GitHubUsername,
 	}
 }
 

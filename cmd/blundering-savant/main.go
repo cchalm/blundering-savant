@@ -19,6 +19,7 @@ type Config struct {
 	GitHubUsername            string
 	ResumableConversationsDir string
 	CheckInterval             time.Duration
+	ValidationWorkflowName    string
 }
 
 func main() {
@@ -46,6 +47,7 @@ func main() {
 		GitHubUsername:            os.Getenv("GITHUB_USERNAME"),
 		ResumableConversationsDir: os.Getenv("RESUMABLE_CONVERSATIONS_DIR"),
 		CheckInterval:             5 * time.Minute, // Default
+		ValidationWorkflowName:    os.Getenv("VALIDATION_WORKFLOW_NAME"),
 	}
 
 	if config.GitHubToken == "" || config.AnthropicAPIKey == "" || config.GitHubUsername == "" {
