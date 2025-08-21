@@ -10,11 +10,12 @@ import (
 
 // remoteValidationWorkspaceFactory creates instances of remoteValidationWorkspace
 type remoteValidationWorkspaceFactory struct {
-	githubClient *github.Client
+	githubClient           *github.Client
+	validationWorkflowName string
 }
 
 func (rvwf remoteValidationWorkspaceFactory) NewWorkspace(ctx context.Context, tsk task) (Workspace, error) {
-	return NewRemoteValidationWorkspace(ctx, rvwf.githubClient, tsk)
+	return NewRemoteValidationWorkspace(ctx, rvwf.githubClient, rvwf.validationWorkflowName, tsk)
 }
 
 // remoteValidationWorkspace is a workspace that tracks working changes in-memory until they need to be validated. For
@@ -55,6 +56,7 @@ type PullRequestService interface {
 func NewRemoteValidationWorkspace(
 	ctx context.Context,
 	githubClient *github.Client,
+	validationWorkflowName string,
 	tsk task,
 ) (*remoteValidationWorkspace, error) {
 	owner, repo := tsk.Issue.owner, tsk.Issue.repo
@@ -88,8 +90,7 @@ func NewRemoteValidationWorkspace(
 
 	prService := NewGithubPullRequestService(githubClient.PullRequests, owner, repo, reviewBranch, baseBranch)
 
-	validationWorkflowFileName := "go.yml"
-	validator := NewGithubActionCommitValidator(githubClient, owner, repo, validationWorkflowFileName)
+	validator := NewGithubActionCommitValidator(githubClient, owner, repo, validationWorkflowName)
 
 	return &remoteValidationWorkspace{
 		git:       &gitRepo,
