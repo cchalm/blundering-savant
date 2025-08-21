@@ -162,7 +162,7 @@ func (ggr *githubGitRepo) Merge(ctx context.Context, baseBranch string, targetBr
 		return nil, fmt.Errorf("failed to merge branches: %w", err)
 	}
 
-	return merge, nil
+	return merge.Commit, nil
 }
 
 // CompareCommits compares two commits and returns the diff

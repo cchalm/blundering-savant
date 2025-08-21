@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"strconv"
 	"strings"
 	"time"
 
@@ -222,7 +221,7 @@ func (tg *Generator) getCodebaseInfo(ctx context.Context, owner, repo string, re
 
 	// Get README
 	var readmeExcerpt string
-	readme, _, _, err := tg.githubClient.Repositories.GetReadme(ctx, owner, repo, nil)
+	readme, _, err := tg.githubClient.Repositories.GetReadme(ctx, owner, repo, nil)
 	if err == nil && readme != nil {
 		content, err := readme.GetContent()
 		if err == nil {
