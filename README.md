@@ -102,9 +102,7 @@ Run `just` or `just help` to see all available commands.
 
 ## Limitations
 
-- The bot cannot compile code
-- The bot cannot run tests
-- The bot can only use one branch and create one PR per issue
+- The bot can only create one PR per issue
 - The bot cannot create new issues
 - The bot cannot approve or merge its own PRs, by design
 - The bot's speed is constrained primarily by generative AI API rate limits
