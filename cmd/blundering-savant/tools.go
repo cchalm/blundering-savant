@@ -756,14 +756,7 @@ func (t *ReportLimitationTool) Run(ctx context.Context, block anthropic.ToolUseB
 		return nil, fmt.Errorf("failed to post limitation report: %w", err)
 	}
 
-	// Add the "blocked" label to the issue so the bot doesn't try to pick it up again
-	labels := []string{"blocked"}
-	_, _, err = toolCtx.GithubClient.Issues.AddLabelsToIssue(ctx, toolCtx.Task.Issue.owner, toolCtx.Task.Issue.repo, toolCtx.Task.Issue.number, labels)
-	if err != nil {
-		return nil, fmt.Errorf("failed to add blocked label: %w", err)
-	}
-
-	result := fmt.Sprintf("Posted limitation report for action: %s and added blocked label", input.Action)
+	result := fmt.Sprintf("Posted limitation report for action: %s", input.Action)
 	return &result, nil
 }
 
