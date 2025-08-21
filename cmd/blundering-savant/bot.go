@@ -75,6 +75,11 @@ type Workspace interface {
 	// are only used the first time a review is published, subsequent publishes will ignore these parameters and update
 	// the existing review
 	PublishChangesForReview(ctx context.Context, reviewRequestTitle string, reviewRequestBody string) error
+
+	// Sync attempts to get the workspace up-to-date with the latest changes to the source. Sync will return an error
+	// if there are any local changes. Sync will return an error if upstream changes conflict with changes in the
+	// workspace. Sync will update published changes if and only if there are no unpublished changes in the workspace
+	Sync(ctx context.Context) error
 }
 
 type WorkspaceFactory interface {
@@ -160,6 +165,12 @@ func (b *Bot) doTask(ctx context.Context, tsk task) (err error) {
 	hasUnpublishedChanges, err := workspace.HasUnpublishedChanges(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to check for unpublished changes: %w", err)
+	}
+
+	// Sync upstream changes
+	err = workspace.Sync(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to sync workspace to upstream changes: %w", err)
 	}
 
 	validationResult, err := workspace.ValidateChanges(ctx, nil)
@@ -262,6 +273,12 @@ func (b *Bot) processWithAI(ctx context.Context, task task, workspace Workspace)
 			return fmt.Errorf("that's weird, it shouldn't be possible to reach this branch")
 		default:
 			return fmt.Errorf("unexpected stop reason: %v", response.StopReason)
+		}
+
+		if s, err := conversation.ToMarkdown(); err != nil {
+			log.Printf("Warning: failed to serialize conversation as markdown: %v", err)
+		} else if err := os.WriteFile(fmt.Sprintf("logs/conversation_issue_%d.md", task.Issue.number), []byte(s), 0666); err != nil {
+			log.Printf("Warning: failed to write conversation to markdown file for debugging: %v", err)
 		}
 
 		i++
@@ -393,10 +410,7 @@ func (b *Bot) initConversation(ctx context.Context, tsk task, toolCtx *ToolConte
 		if err != nil {
 			return nil, nil, fmt.Errorf("failed to build prompt: %w", err)
 		}
-		// TODO remove this
-		if err := os.WriteFile("logs/prompt.txt", []byte(*promptPtr), 0644); err != nil {
-			log.Printf("Warning: failed to write prompt to file for debugging: %v", err)
-		}
+
 		// Send initial message with a cache breakpoint, because the initial message tends to be very large and we are
 		// likely to need several back-and-forths after this
 		response, err := c.SendMessageAndSetCachePoint(ctx, anthropic.NewTextBlock(*promptPtr))

@@ -1,5 +1,9 @@
 # The Blundering Savant AI Coding Agent
 
+[![Build Status](https://github.com/cchalm/blundering-savant/actions/workflows/go.yml/badge.svg)](https://github.com/cchalm/blundering-savant/actions/workflows/go.yml)
+[![Go Report Card](https://goreportcard.com/badge/github.com/cchalm/blundering-savant)](https://goreportcard.com/report/github.com/cchalm/blundering-savant)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+
 Blundering Savant is a generative AI coding agent that presents as a GitHub user. The agent receives instructions via
 issues, reviews, and comments and proposes code changes by creating and updating pull requests.
 
@@ -99,9 +103,7 @@ Run `just` or `just help` to see all available commands.
 
 ## Limitations
 
-- The bot cannot compile code
-- The bot cannot run tests
-- The bot can only use one branch and create one PR per issue
+- The bot can only create one PR per issue
 - The bot cannot create new issues
 - The bot cannot approve or merge its own PRs, by design
 - The bot's speed is constrained primarily by generative AI API rate limits

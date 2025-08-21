@@ -34,29 +34,14 @@ type githubPullRequest struct {
 	baseBranch string
 }
 
-type githubCheckSuite struct {
-	ID         int64
-	Status     string
-	Conclusion string
-	Runs       []githubCheckRun
-}
-
-type githubCheckRun struct {
-	ID          int64
-	Status      string
-	Conclusion  string
-	Annotations []*github.CheckRunAnnotation
-}
-
 type taskOrError struct {
 	task task
 	err  error
 }
 
 type taskGenerator struct {
-	config           Config
-	githubClient     *github.Client
-	workspaceFactory WorkspaceFactory
+	config       Config
+	githubClient *github.Client
 }
 
 func newTaskGenerator(config Config, githubClient *github.Client) *taskGenerator {
@@ -95,7 +80,7 @@ func (tg *taskGenerator) yield(ctx context.Context, yield func(task task, err er
 			return
 		}
 		if len(issues) == 0 {
-			log.Println("No issues found")
+			log.Println("[taskgen] No issues found")
 		}
 
 		for _, issue := range issues {
@@ -105,14 +90,14 @@ func (tg *taskGenerator) yield(ctx context.Context, yield func(task task, err er
 			}
 
 			if tg.needsAttention(*tsk) {
-				log.Printf("Yielding task for issue #%d in %s/%s", issue.number, issue.owner, issue.repo)
+				log.Printf("[taskgen] Yielding task for issue #%d in %s/%s", issue.number, issue.owner, issue.repo)
 				yield(*tsk, nil)
 			} else {
-				log.Printf("Skipping issue #%d in %s/%s: no attention needed", issue.number, issue.owner, issue.repo)
+				log.Printf("[taskgen] Skipping issue #%d in %s/%s: no attention needed", issue.number, issue.owner, issue.repo)
 			}
 		}
 
-		log.Printf("Waiting for next check (up to %v)\n", tg.config.CheckInterval)
+		log.Printf("[taskgen] Waiting for next check (up to %v)\n", tg.config.CheckInterval)
 		select {
 		case <-ticker:
 		case <-ctx.Done():
@@ -133,15 +118,15 @@ func (tg *taskGenerator) searchIssues(ctx context.Context) ([]githubIssue, error
 	// Convert issue response into simpler structures
 	issues := []githubIssue{}
 	for _, issue := range result.Issues {
-		if issue == nil || issue.RepositoryURL == nil || issue.Number == nil || issue.Title == nil || issue.Body == nil || issue.URL == nil {
-			log.Print("Warning: unexpected nil, skipping issue")
+		if issue == nil || issue.RepositoryURL == nil || issue.Number == nil || issue.Title == nil || issue.URL == nil {
+			log.Print("[taskgen] Warning: unexpected nil, skipping issue")
 			continue
 		}
 
 		// Extract owner and repo
 		parts := strings.Split(*issue.RepositoryURL, "/")
 		if len(parts) < 2 {
-			log.Printf("Warning: failed to parse repo URL '%s', skipping issue '%d'", *issue.RepositoryURL, *issue.Number)
+			log.Printf("[taskgen] Warning: failed to parse repo URL '%s', skipping issue '%d'", *issue.RepositoryURL, *issue.Number)
 			continue
 		}
 		owner := parts[len(parts)-2]
@@ -159,7 +144,7 @@ func (tg *taskGenerator) searchIssues(ctx context.Context) ([]githubIssue, error
 			number: *issue.Number,
 
 			title: *issue.Title,
-			body:  *issue.Body,
+			body:  issue.GetBody(),
 			url:   *issue.URL,
 
 			labels: labels,
@@ -205,20 +190,20 @@ func (tg *taskGenerator) buildTask(ctx context.Context, issue githubIssue, botUs
 	// Get style guide
 	styleGuide, err := tg.findStyleGuides(ctx, owner, repo)
 	if err != nil {
-		log.Printf("Warning: Could not find style guides: %v", err)
+		log.Printf("[taskgen] Warning: Could not find style guides: %v", err)
 	}
 	tsk.StyleGuide = styleGuide
 
 	// Get codebase info
 	codebaseInfo, err := tg.analyzeCodebase(ctx, owner, repo)
 	if err != nil {
-		log.Printf("Warning: Could not analyze codebase: %v", err)
+		log.Printf("[taskgen] Warning: Could not analyze codebase: %v", err)
 	}
 	tsk.CodebaseInfo = codebaseInfo
 
 	comments, err := tg.getAllIssueComments(ctx, owner, repo, issue.number)
 	if err != nil {
-		log.Printf("Warning: Could not get issue comments: %v", err)
+		log.Printf("[taskgen] Warning: Could not get issue comments: %v", err)
 	}
 	tsk.IssueComments = comments
 
@@ -347,15 +332,11 @@ func (tg *taskGenerator) analyzeCodebase(ctx context.Context, owner, repo string
 	}
 
 	// Get file tree
-	tree, _, err := tg.githubClient.Git.GetTree(ctx, owner, repo, "HEAD", false)
+	fileTree, err := tg.getFileTree(ctx, owner, repo)
 	if err != nil {
-		log.Printf("Warning: Could not get file tree: %v", err)
+		log.Printf("[taskgen] Warning: Could not get file tree: %v", err)
 	} else {
-		for _, entry := range tree.Entries {
-			if entry.Path != nil {
-				info.FileTree = append(info.FileTree, *entry.Path)
-			}
-		}
+		info.FileTree = fileTree
 	}
 
 	// Get README
@@ -368,6 +349,46 @@ func (tg *taskGenerator) analyzeCodebase(ctx context.Context, owner, repo string
 	}
 
 	return info, nil
+}
+
+// getFileTree retrieves the complete file tree with safety limits
+func (tg *taskGenerator) getFileTree(ctx context.Context, owner, repo string) ([]string, error) {
+	const (
+		maxFiles      = 2000
+		maxPathLength = 500
+	)
+
+	// Get the full recursive tree
+	tree, _, err := tg.githubClient.Git.GetTree(ctx, owner, repo, "HEAD", true)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get recursive tree: %w", err)
+	}
+
+	var fileTree []string
+	fileCount := 0
+
+	for _, entry := range tree.Entries {
+		if entry.Path == nil {
+			continue
+		}
+
+		path := *entry.Path
+
+		// Check path length limit
+		if len(path) > maxPathLength {
+			continue
+		}
+
+		// Check file count limit
+		if fileCount >= maxFiles {
+			break
+		}
+
+		fileTree = append(fileTree, path)
+		fileCount++
+	}
+
+	return fileTree, nil
 }
 
 // Comment retrieval functions
@@ -440,7 +461,7 @@ func (tg *taskGenerator) getAllPRReviewComments(ctx context.Context, owner, repo
 
 		for _, comment := range comments {
 			if comment == nil || comment.ID == nil {
-				log.Println("Warning: comment or comment.ID unexpectedly nil")
+				log.Println("[taskgen] Warning: comment or comment.ID unexpectedly nil")
 				continue
 			}
 
@@ -638,80 +659,4 @@ func organizePRReviewCommentsIntoThreads(comments []*github.PullRequestComment) 
 	}
 
 	return threads, nil
-}
-
-func getCheckSuites(ctx context.Context, githubClient *github.Client, owner string, repo string, branch string) ([]githubCheckSuite, error) {
-	// Get the head SHA for the branch
-	maxRedirects := 10
-	branchInfo, _, err := githubClient.Repositories.GetBranch(ctx, owner, repo, branch, maxRedirects)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get branch info: %w", err)
-	}
-	if branchInfo == nil || branchInfo.Commit == nil || branchInfo.Commit.SHA == nil {
-		return nil, fmt.Errorf("branch '%s' does not have a valid commit", branch)
-	}
-	headSHA := *branchInfo.Commit.SHA
-
-	suites, _, err := githubClient.Checks.ListCheckSuitesForRef(ctx, owner, repo, headSHA, nil)
-	if err != nil {
-		return nil, fmt.Errorf("failed to list check suites: %w", err)
-	}
-
-	if suites == nil || suites.CheckSuites == nil || len(suites.CheckSuites) == 0 {
-		return nil, nil // No check suites found
-	}
-
-	convertedSuites := []githubCheckSuite{}
-	for _, checkSuite := range suites.CheckSuites {
-		runs, err := getCheckRuns(ctx, githubClient, owner, repo, checkSuite.GetID())
-		if err != nil {
-			return nil, fmt.Errorf("failed to get check runs for suite %d: %w", checkSuite.GetID(), err)
-		}
-		convertedSuites = append(convertedSuites, githubCheckSuite{
-			ID:         checkSuite.GetID(),
-			Status:     checkSuite.GetStatus(),
-			Conclusion: checkSuite.GetConclusion(),
-			Runs:       runs,
-		})
-	}
-
-	return convertedSuites, nil
-}
-
-func getCheckRuns(ctx context.Context, githubClient *github.Client, owner string, repo string, checkSuiteID int64) ([]githubCheckRun, error) {
-	runs, _, err := githubClient.Checks.ListCheckRunsCheckSuite(ctx, owner, repo, checkSuiteID, nil)
-	if err != nil {
-		return nil, fmt.Errorf("failed to list check runs: %w", err)
-	}
-
-	convertedRuns := []githubCheckRun{}
-	for _, run := range runs.CheckRuns {
-		annotations, err := getAnnotations(ctx, githubClient, owner, repo, run.GetID())
-		if err != nil {
-			return nil, fmt.Errorf("failed to get annotations for check run %d: %w", run.GetID(), err)
-		}
-		convertedRuns = append(convertedRuns, githubCheckRun{
-			ID:          run.GetID(),
-			Status:      run.GetStatus(),
-			Conclusion:  run.GetConclusion(),
-			Annotations: annotations,
-		})
-	}
-
-	return convertedRuns, nil
-}
-
-func getAnnotations(ctx context.Context, githubClient *github.Client, owner string, repo string, checkRunID int64) ([]*github.CheckRunAnnotation, error) {
-	annotations, _, err := githubClient.Checks.ListCheckRunAnnotations(ctx, owner, repo, checkRunID, nil)
-	if err != nil {
-		return nil, fmt.Errorf("failed to list check run annotations: %w", err)
-	}
-	filteredAnnotations := []*github.CheckRunAnnotation{}
-	for _, annotation := range annotations {
-		if annotation.GetPath() == ".github" {
-			continue // Skip annotations on the .github directory, which seem to be some kind of metadata
-		}
-		filteredAnnotations = append(filteredAnnotations, annotation)
-	}
-	return filteredAnnotations, nil
 }

@@ -8,11 +8,14 @@ import (
 	"io"
 	"log"
 	"net/http"
-	"os"
 	"strconv"
 	"time"
 
 	"github.com/anthropics/anthropic-sdk-go"
+)
+
+const (
+	maxCachePoints = 4
 )
 
 type ClaudeConversation struct {
@@ -51,7 +54,7 @@ func NewClaudeConversation(
 
 		maxTokens:            maxTokens,
 		autoCacheThreshold:   10000,
-		cachePointsRemaining: 4,
+		cachePointsRemaining: maxCachePoints,
 	}
 }
 
@@ -62,6 +65,19 @@ func ResumeClaudeConversation(
 	maxTokens int64,
 	tools []anthropic.ToolParam,
 ) (*ClaudeConversation, error) {
+
+	// Calculate remaining cache points by counting cache points already in the conversation
+	remainingCachePoints := maxCachePoints
+	for _, turn := range history.Messages {
+		for _, c := range turn.UserMessage.Content {
+			if cacheControl := c.GetCacheControl(); cacheControl != nil {
+				if *cacheControl == anthropic.NewCacheControlEphemeralParam() {
+					remainingCachePoints--
+				}
+			}
+		}
+	}
+
 	c := &ClaudeConversation{
 		client: anthropicClient,
 
@@ -72,7 +88,7 @@ func ResumeClaudeConversation(
 
 		maxTokens:            maxTokens,
 		autoCacheThreshold:   10000,
-		cachePointsRemaining: 4,
+		cachePointsRemaining: remainingCachePoints,
 	}
 	return c, nil
 }
@@ -180,36 +196,14 @@ func (cc *ClaudeConversation) sendMessage(ctx context.Context, setCachePoint boo
 	// Record the repsonse
 	cc.messages[len(cc.messages)-1].Response = &response
 
-	// TODO remove this
-	if b, err := json.Marshal(append(messageParams, response.ToParam())); err != nil {
-		log.Printf("Warning: failed to marshal conversation for inspection: %v", err)
-	} else if err := os.WriteFile("logs/conversation.json", b, 0666); err != nil {
-		log.Printf("Warning: failed to write conversation to file for debugging: %v", err)
-	}
-
-	// TODO remove this
-	if s, err := cc.ToMarkdown(); err != nil {
-		log.Printf("Warning: failed to serialize conversation as markdown: %v", err)
-	} else if err := os.WriteFile("logs/conversation.md", []byte(s), 0666); err != nil {
-		log.Printf("Warning: failed to write conversation to markdown file for debugging: %v", err)
-	}
-
 	return &response, nil
 }
 
 func setCachePointOnLastApplicableBlockInContent(content []anthropic.ContentBlockParamUnion) error {
 	for i := len(content) - 1; i >= 0; i-- {
 		c := content[i]
-		var cacheControlParam *anthropic.CacheControlEphemeralParam
-		if param := c.OfText; param != nil {
-			cacheControlParam = &param.CacheControl
-		} else if param := c.OfToolResult; param != nil {
-			cacheControlParam = &param.CacheControl
-		} else if param := c.OfToolUse; param != nil {
-			cacheControlParam = &param.CacheControl
-		}
-		if cacheControlParam != nil {
-			*cacheControlParam = anthropic.NewCacheControlEphemeralParam()
+		if cacheControl := c.GetCacheControl(); cacheControl != nil {
+			*cacheControl = anthropic.NewCacheControlEphemeralParam()
 			break
 		}
 

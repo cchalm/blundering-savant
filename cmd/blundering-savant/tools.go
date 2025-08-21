@@ -583,6 +583,107 @@ func (t *AddReactionTool) Replay(ctx context.Context, block anthropic.ToolUseBlo
 	return nil
 }
 
+// DeleteFileTool implements the delete_file tool
+type DeleteFileTool struct {
+	BaseTool
+}
+
+// DeleteFileInput represents the input for delete_file
+type DeleteFileInput struct {
+	Path string `json:"path"`
+}
+
+// NewDeleteFileTool creates a new delete file tool
+func NewDeleteFileTool() *DeleteFileTool {
+	return &DeleteFileTool{
+		BaseTool: BaseTool{Name: "delete_file"},
+	}
+}
+
+// GetToolParam returns the tool parameter definition
+func (t *DeleteFileTool) GetToolParam() anthropic.ToolParam {
+	return anthropic.ToolParam{
+		Name:        t.Name,
+		Description: anthropic.String("Delete a file"),
+		InputSchema: anthropic.ToolInputSchemaParam{
+			Properties: map[string]any{
+				"path": map[string]any{
+					"type":        "string",
+					"description": "Path to the file to delete.",
+				},
+			},
+			Required: []string{"path"},
+		},
+	}
+}
+
+// ParseToolUse parses the tool use block
+func (t *DeleteFileTool) ParseToolUse(block anthropic.ToolUseBlock) (*DeleteFileInput, error) {
+	if block.Name != t.Name {
+		return nil, fmt.Errorf("tool use block is for %s, not %s", block.Name, t.Name)
+	}
+
+	var input DeleteFileInput
+	if err := parseInputJSON(block, &input); err != nil {
+		return nil, err
+	}
+	return &input, nil
+}
+
+// Run executes the delete file command
+func (t *DeleteFileTool) Run(ctx context.Context, block anthropic.ToolUseBlock, toolCtx *ToolContext) (*string, error) {
+	input, err := t.ParseToolUse(block)
+	if err != nil {
+		return nil, fmt.Errorf("error parsing input: %w", err)
+	}
+
+	if input.Path == "" {
+		return nil, ToolInputError{fmt.Errorf("path is required")}
+	}
+
+	// Validate that the path doesn't start with a leading slash
+	if strings.HasPrefix(input.Path, "/") {
+		return nil, ToolInputError{fmt.Errorf("path must be relative (no leading slash)")}
+	}
+
+	// Check if the file exists before deleting
+	exists, err := toolCtx.Workspace.FileExists(ctx, input.Path)
+	if err != nil {
+		return nil, fmt.Errorf("error checking if file exists: %w", err)
+	}
+	if !exists {
+		return nil, ToolInputError{fmt.Errorf("file does not exist: %s", input.Path)}
+	}
+
+	// Check if it's a directory
+	isDir, err := toolCtx.Workspace.IsDir(ctx, input.Path)
+	if err != nil {
+		return nil, fmt.Errorf("error checking if path is directory: %w", err)
+	}
+	if isDir {
+		return nil, ToolInputError{fmt.Errorf("cannot delete directory: %s (only files can be deleted)", input.Path)}
+	}
+
+	// Delete the file
+	err = toolCtx.Workspace.Delete(ctx, input.Path)
+	if err != nil {
+		return nil, fmt.Errorf("error deleting file: %w", err)
+	}
+
+	result := fmt.Sprintf("Successfully deleted file: %s", input.Path)
+	return &result, nil
+}
+
+func (t *DeleteFileTool) Replay(ctx context.Context, block anthropic.ToolUseBlock, toolCtx *ToolContext) error {
+	input, err := t.ParseToolUse(block)
+	if err != nil {
+		return fmt.Errorf("error parsing input: %w", err)
+	}
+
+	// Replay the deletion (same as the original run since it's an in-memory operation)
+	return toolCtx.Workspace.Delete(ctx, input.Path)
+}
+
 type PublishChangesForReviewTool struct {
 	BaseTool
 }
@@ -662,6 +763,109 @@ func (t *PublishChangesForReviewTool) Replay(ctx context.Context, block anthropi
 	return nil
 }
 
+// ReportLimitationTool implements the report_limitation tool
+type ReportLimitationTool struct {
+	BaseTool
+}
+
+// ReportLimitationInput represents the input for report_limitation
+type ReportLimitationInput struct {
+	Action      string `json:"action"`
+	Reason      string `json:"reason"`
+	Suggestions string `json:"suggestions,omitempty"`
+}
+
+// NewReportLimitationTool creates a new report limitation tool
+func NewReportLimitationTool() *ReportLimitationTool {
+	return &ReportLimitationTool{
+		BaseTool: BaseTool{Name: "report_limitation"},
+	}
+}
+
+// GetToolParam returns the tool parameter definition
+func (t *ReportLimitationTool) GetToolParam() anthropic.ToolParam {
+	return anthropic.ToolParam{
+		Name: t.Name,
+		Description: anthropic.String("Report when you need to perform an action that you don't have a tool for. Use this instead of trying workarounds with available tools."),
+		InputSchema: anthropic.ToolInputSchemaParam{
+			Properties: map[string]any{
+				"action": map[string]any{
+					"type":        "string",
+					"description": "The action you want to perform but don't have a tool for",
+				},
+				"reason": map[string]any{
+					"type":        "string",
+					"description": "Why this action is needed to complete the task",
+				},
+				"suggestions": map[string]any{
+					"type":        "string",
+					"description": "Optional suggestions for how this limitation could be addressed or alternative approaches",
+				},
+			},
+			Required: []string{"action", "reason"},
+		},
+	}
+}
+
+// ParseToolUse parses the tool use block
+func (t *ReportLimitationTool) ParseToolUse(block anthropic.ToolUseBlock) (*ReportLimitationInput, error) {
+	if block.Name != t.Name {
+		return nil, fmt.Errorf("tool use block is for %s, not %s", block.Name, t.Name)
+	}
+
+	var input ReportLimitationInput
+	if err := parseInputJSON(block, &input); err != nil {
+		return nil, err
+	}
+	return &input, nil
+}
+
+// Run executes the report limitation command
+func (t *ReportLimitationTool) Run(ctx context.Context, block anthropic.ToolUseBlock, toolCtx *ToolContext) (*string, error) {
+	input, err := t.ParseToolUse(block)
+	if err != nil {
+		return nil, fmt.Errorf("error parsing input: %w", err)
+	}
+
+	if input.Action == "" {
+		return nil, ToolInputError{fmt.Errorf("action is required")}
+	}
+
+	if input.Reason == "" {
+		return nil, ToolInputError{fmt.Errorf("reason is required")}
+	}
+
+	// Create a formatted limitation report
+	var report strings.Builder
+	report.WriteString("## Tool Limitation Report\n\n")
+	report.WriteString(fmt.Sprintf("**Action needed:** %s\n\n", input.Action))
+	report.WriteString(fmt.Sprintf("**Reason:** %s\n\n", input.Reason))
+	
+	if input.Suggestions != "" {
+		report.WriteString(fmt.Sprintf("**Suggestions:** %s\n\n", input.Suggestions))
+	}
+	
+	report.WriteString("This action cannot be performed with the currently available tools. ")
+	report.WriteString("Human intervention or additional tool support may be required.")
+
+	// Post the limitation report as a comment on the issue
+	comment := &github.IssueComment{
+		Body: github.Ptr(report.String()),
+	}
+	_, _, err = toolCtx.GithubClient.Issues.CreateComment(ctx, toolCtx.Task.Issue.owner, toolCtx.Task.Issue.repo, toolCtx.Task.Issue.number, comment)
+	if err != nil {
+		return nil, fmt.Errorf("failed to post limitation report: %w", err)
+	}
+
+	result := fmt.Sprintf("Posted limitation report for action: %s", input.Action)
+	return &result, nil
+}
+
+func (t *ReportLimitationTool) Replay(ctx context.Context, block anthropic.ToolUseBlock, toolCtx *ToolContext) error {
+	// No side effects to replay - the comment was already posted
+	return nil
+}
+
 // ToolRegistry manages all available tools
 type ToolRegistry struct {
 	tools map[string]AnthropicTool
@@ -675,10 +879,12 @@ func NewToolRegistry() *ToolRegistry {
 
 	// Register all tools
 	registry.Register(NewTextEditorTool())
+	registry.Register(NewDeleteFileTool())
 	registry.Register(NewPostCommentTool())
 	registry.Register(NewAddReactionTool())
 	registry.Register(NewValidateChangesTool())
 	registry.Register(NewPublishChangesForReviewTool())
+	registry.Register(NewReportLimitationTool())
 
 	return registry
 }

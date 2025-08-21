@@ -111,9 +111,9 @@ func TestBuildPrompt_WithFileTree(t *testing.T) {
 	prompt := *promptPtr
 
 	require.Contains(t, prompt, "## Repository structure")
-	require.Contains(t, prompt, "- main.go")
-	require.Contains(t, prompt, "- README.md")
-	require.Contains(t, prompt, "- go.mod")
+	require.Contains(t, prompt, "- `main.go`")
+	require.Contains(t, prompt, "- `README.md`")
+	require.Contains(t, prompt, "- `go.mod`")
 }
 
 func TestBuildPrompt_WithCommentsRequiringResponses(t *testing.T) {
@@ -147,9 +147,10 @@ func TestBuildPrompt_WithCommentsRequiringResponses(t *testing.T) {
 }
 
 func TestBuildTemplateData_TruncatesLongFileTree(t *testing.T) {
-	// Create a file tree with more than 20 files
-	fileTree := make([]string, 25)
-	for i := range 25 {
+	// Create a file tree with more than 1000 files
+	count := 1015
+	fileTree := make([]string, count)
+	for i := range count {
 		fileTree[i] = fmt.Sprintf("file%d.go", i)
 	}
 
@@ -161,8 +162,8 @@ func TestBuildTemplateData_TruncatesLongFileTree(t *testing.T) {
 
 	data := buildTemplateData(tsk)
 
-	require.Len(t, data.FileTree, 20)
-	require.True(t, data.FileTreeTruncated)
+	require.Len(t, data.FileTree, 1000)
+	require.Equal(t, data.FileTreeTruncatedCount, 15)
 }
 
 func TestBuildTemplateData_DoesNotTruncateShortFileTree(t *testing.T) {
@@ -177,5 +178,5 @@ func TestBuildTemplateData_DoesNotTruncateShortFileTree(t *testing.T) {
 	data := buildTemplateData(tsk)
 
 	require.Len(t, data.FileTree, 3)
-	require.False(t, data.FileTreeTruncated)
+	require.Equal(t, data.FileTreeTruncatedCount, 0)
 }

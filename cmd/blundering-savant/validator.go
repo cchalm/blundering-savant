@@ -352,16 +352,19 @@ func httpFetchUTF8(ctx context.Context, url *url.URL) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("failed to fetch URL '%s': %w", url.String(), err)
 	}
-	defer httpResp.Body.Close()
+	defer func() { _ = httpResp.Body.Close() }()
 
 	// Strip the BOM, if present, before reading
 	br := bufio.NewReader(httpResp.Body)
 	r, _, err := br.ReadRune()
 	if err != nil {
-		log.Fatal(err)
+		return "", fmt.Errorf("failed to read rune from response: %w", err)
 	}
 	if r != '\uFEFF' {
-		br.UnreadRune() // Not a BOM -- put the rune back
+		err := br.UnreadRune() // Not a BOM -- put the rune back
+		if err != nil {
+			return "", fmt.Errorf("failed to UN-read rune from response: %w", err)
+		}
 	}
 
 	b, err := io.ReadAll(br)
