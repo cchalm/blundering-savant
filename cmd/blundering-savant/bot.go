@@ -41,7 +41,8 @@ type Bot struct {
 	toolRegistry           *ToolRegistry
 	workspaceFactory       WorkspaceFactory
 	resumableConversations ConversationHistoryStore
-	botName                string
+
+	user *github.User
 }
 
 type ConversationHistoryStore interface {
@@ -91,7 +92,7 @@ type ValidationResult struct {
 	Details   string
 }
 
-func NewBot(config Config, githubClient *github.Client) *Bot {
+func NewBot(config Config, githubClient *github.Client, githubUser *github.User) *Bot {
 	rateLimitedHTTPClient := &http.Client{
 		Transport: WithRateLimiting(nil),
 	}
@@ -113,7 +114,7 @@ func NewBot(config Config, githubClient *github.Client) *Bot {
 		resumableConversations: FileSystemConversationHistoryStore{
 			dir: config.ResumableConversationsDir,
 		},
-		botName: config.GitHubUsername,
+		user: githubUser,
 	}
 }
 
@@ -403,6 +404,14 @@ func (b *Bot) initConversation(ctx context.Context, tsk task, toolCtx *ToolConte
 		}
 		return conv, response, nil
 	} else {
+<<<<<<< HEAD
+=======
+		systemPrompt, err := BuildSystemPrompt("Blundering Savant", *b.user.Login)
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to build system prompt: %w", err)
+		}
+
+>>>>>>> 85ad2e02e098d877fae74171e4d88731e046a788
 		c := NewClaudeConversation(b.anthropicClient, model, maxTokens, tools, systemPrompt)
 
 		log.Printf("Sending initial message to AI")

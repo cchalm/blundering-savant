@@ -32,7 +32,7 @@ func TestBuildPrompt_BasicTemplate(t *testing.T) {
 	require.Contains(t, prompt, "Issue #123: Test Issue")
 	require.Contains(t, prompt, "This is a test issue description")
 	require.Contains(t, prompt, "## Your Task")
-	
+
 	// Repository-specific content should NOT be in the prompt anymore
 	require.NotContains(t, prompt, "Repository: owner/repo")
 	require.NotContains(t, prompt, "Main Language: Go")
