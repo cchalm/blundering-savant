@@ -749,6 +749,10 @@ func (t *PublishChangesForReviewTool) Run(ctx context.Context, block anthropic.T
 		}
 	}
 
+	if toolCtx.Workspace.HasLocalChanges() {
+		return nil, ToolInputError{fmt.Errorf("cannot publish while there are unvalidated changes in the workspace")}
+	}
+
 	err = toolCtx.Workspace.PublishChangesForReview(ctx, input.PullRequestTitle, input.PullRequestBody)
 	if err != nil {
 		return nil, fmt.Errorf("failed to publish changes: %w", err)
@@ -785,7 +789,7 @@ func NewReportLimitationTool() *ReportLimitationTool {
 // GetToolParam returns the tool parameter definition
 func (t *ReportLimitationTool) GetToolParam() anthropic.ToolParam {
 	return anthropic.ToolParam{
-		Name: t.Name,
+		Name:        t.Name,
 		Description: anthropic.String("Report when you need to perform an action that you don't have a tool for. Use this instead of trying workarounds with available tools."),
 		InputSchema: anthropic.ToolInputSchemaParam{
 			Properties: map[string]any{
@@ -840,11 +844,11 @@ func (t *ReportLimitationTool) Run(ctx context.Context, block anthropic.ToolUseB
 	report.WriteString("## Tool Limitation Report\n\n")
 	report.WriteString(fmt.Sprintf("**Action needed:** %s\n\n", input.Action))
 	report.WriteString(fmt.Sprintf("**Reason:** %s\n\n", input.Reason))
-	
+
 	if input.Suggestions != "" {
 		report.WriteString(fmt.Sprintf("**Suggestions:** %s\n\n", input.Suggestions))
 	}
-	
+
 	report.WriteString("This action cannot be performed with the currently available tools. ")
 	report.WriteString("Human intervention or additional tool support may be required.")
 
