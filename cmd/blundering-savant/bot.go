@@ -41,7 +41,8 @@ type Bot struct {
 	toolRegistry           *ToolRegistry
 	workspaceFactory       WorkspaceFactory
 	resumableConversations ConversationHistoryStore
-	botName                string
+
+	user *github.User
 }
 
 type ConversationHistoryStore interface {
@@ -91,7 +92,7 @@ type ValidationResult struct {
 	Details   string
 }
 
-func NewBot(config Config, githubClient *github.Client) *Bot {
+func NewBot(config Config, githubClient *github.Client, githubUser *github.User) *Bot {
 	rateLimitedHTTPClient := &http.Client{
 		Transport: WithRateLimiting(nil),
 	}
@@ -113,7 +114,7 @@ func NewBot(config Config, githubClient *github.Client) *Bot {
 		resumableConversations: FileSystemConversationHistoryStore{
 			dir: config.ResumableConversationsDir,
 		},
-		botName: config.GitHubUsername,
+		user: githubUser,
 	}
 }
 
@@ -192,7 +193,7 @@ func (b *Bot) doTask(ctx context.Context, tsk task) (err error) {
 
 // processWithAI handles the AI interaction with text editor tool support
 func (b *Bot) processWithAI(ctx context.Context, task task, workspace Workspace) error {
-	maxIterations := 50
+	maxIterations := 500
 
 	// Create tool context
 	toolCtx := &ToolContext{
@@ -354,9 +355,6 @@ func (b *Bot) ensureLabelExists(ctx context.Context, owner, repo string, label g
 
 // Utility functions
 
-//go:embed system_prompt.md
-var systemPrompt string
-
 // initConversation either constructs a new conversation or resumes a previous conversation
 func (b *Bot) initConversation(ctx context.Context, tsk task, toolCtx *ToolContext) (*ClaudeConversation, *anthropic.Message, error) {
 	model := anthropic.ModelClaudeSonnet4_0
@@ -403,6 +401,11 @@ func (b *Bot) initConversation(ctx context.Context, tsk task, toolCtx *ToolConte
 		}
 		return conv, response, nil
 	} else {
+		systemPrompt, err := BuildSystemPrompt("Blundering Savant", *b.user.Login)
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to build system prompt: %w", err)
+		}
+
 		c := NewClaudeConversation(b.anthropicClient, model, maxTokens, tools, systemPrompt)
 
 		log.Printf("Sending initial message to AI")

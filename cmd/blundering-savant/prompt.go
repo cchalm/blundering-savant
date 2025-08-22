@@ -11,6 +11,9 @@ import (
 	"github.com/google/go-github/v72/github"
 )
 
+//go:embed system_prompt.tmpl
+var systemPromptTemplate string
+
 //go:embed prompt_template.tmpl
 var promptTemplate string
 
@@ -77,12 +80,32 @@ type promptTemplateData struct {
 	PRComments                         []commentData
 	PRReviewCommentThreads             []reviewCommentThreadData
 	PRReviews                          []reviewData
-	BotUsername                        string
 	IssueCommentsRequiringResponses    []commentData
 	PRCommentsRequiringResponses       []commentData
 	PRReviewCommentsRequiringResponses []reviewCommentData
 	HasUnpublishedChanges              bool
 	ValidationResult                   ValidationResult
+}
+
+func BuildSystemPrompt(botName string, botUsername string) (string, error) {
+	tmpl, err := template.New("system prompt").Parse(systemPromptTemplate)
+	if err != nil {
+		return "", fmt.Errorf("failed to parse system prompt template: %w", err)
+	}
+
+	var buf bytes.Buffer
+	err = tmpl.Execute(&buf, struct {
+		BotName     string
+		BotUsername string
+	}{
+		BotName:     botName,
+		BotUsername: botUsername,
+	})
+	if err != nil {
+		return "", fmt.Errorf("failed to execute system prompt template: %w", err)
+	}
+
+	return buf.String(), nil
 }
 
 // BuildPrompt generates the complete prompt for Claude based on the context
@@ -287,7 +310,6 @@ func buildTemplateData(tsk task) promptTemplateData {
 	// Conversation history - convert GitHub types to template types
 	if len(tsk.IssueComments) > 0 || len(tsk.PRComments) > 0 || len(tsk.PRReviewCommentThreads) > 0 || len(tsk.PRReviews) > 0 {
 		data.HasConversationHistory = true
-		data.BotUsername = tsk.BotUsername
 
 		// Convert issue comments
 		for _, comment := range tsk.IssueComments {

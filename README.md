@@ -60,7 +60,6 @@ cp .env.example .env
 3. Edit `.env` with your credentials:
 ```env
 GITHUB_TOKEN=ghp_<your_github_token>
-GITHUB_USERNAME=<your-bot-username>
 ANTHROPIC_API_KEY=sk-ant-<your-anthropic-api-key>
 ```
 

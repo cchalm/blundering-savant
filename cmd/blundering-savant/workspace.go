@@ -41,6 +41,7 @@ type remoteValidationWorkspace struct {
 }
 
 type GitRepo interface {
+	GetBranchHead(ctx context.Context, branch string) (*github.Commit, error)
 	CreateBranch(ctx context.Context, baseBranch string, newBranch string) error
 	CommitChanges(ctx context.Context, branch string, changelist Changelist, commitMessage string) (*github.Commit, error)
 	Merge(ctx context.Context, baseBranch string, targetBranch string) (*github.Commit, error)
@@ -48,7 +49,8 @@ type GitRepo interface {
 }
 
 type BranchValidator interface {
-	ValidateBranch(ctx context.Context, branch string) (ValidationResult, error)
+	// ValidateBranch validates the given commit SHA, which is expected to be the head of the given branch
+	ValidateBranch(ctx context.Context, branch string, commitSHA string) (ValidationResult, error)
 }
 
 type PullRequestService interface {
@@ -214,21 +216,29 @@ func (rvw *remoteValidationWorkspace) ClearLocalChanges() {
 }
 
 func (rvw *remoteValidationWorkspace) ValidateChanges(ctx context.Context, commitMessage *string) (ValidationResult, error) {
+	var commitSHA string
 	if rvw.HasLocalChanges() {
 		if commitMessage == nil {
 			return ValidationResult{}, fmt.Errorf("no commit message provided for validating local changes")
 		}
-		_, err := rvw.commitToWorkBranch(ctx, *commitMessage)
+		commit, err := rvw.commitToWorkBranch(ctx, *commitMessage)
 		if err != nil {
 			return ValidationResult{}, fmt.Errorf("failed to commit changes to work branch: %w", err)
 		}
+		commitSHA = *commit.SHA
+	} else {
+		headCommit, err := rvw.git.GetBranchHead(ctx, rvw.workBranch)
+		if err != nil {
+			return ValidationResult{}, fmt.Errorf("failed to get work branch info: %w", err)
+		}
+		commitSHA = *headCommit.SHA
 	}
 
 	if rvw.validator == nil {
 		return ValidationResult{}, fmt.Errorf("failed to validate commit, no validator provided")
 	}
 
-	result, err := rvw.validator.ValidateBranch(ctx, rvw.workBranch)
+	result, err := rvw.validator.ValidateBranch(ctx, rvw.workBranch, commitSHA)
 	if err != nil {
 		return ValidationResult{}, fmt.Errorf("failed to validate commit: %w", err)
 	}
