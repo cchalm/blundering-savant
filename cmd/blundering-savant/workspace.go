@@ -312,29 +312,6 @@ func (rvw *remoteValidationWorkspace) mergeWorkBranchToReviewBranch(ctx context.
 	return commit, nil
 }
 
-func (rvw *remoteValidationWorkspace) Sync(ctx context.Context) error {
-	if rvw.HasLocalChanges() {
-		return fmt.Errorf("cannot sync while there are local changes in the workspace")
-	}
-
-	_, err := rvw.git.Merge(ctx, rvw.baseBranch, rvw.workBranch)
-	if err != nil {
-		return fmt.Errorf("failed to merge base branch into work branch: %w", err)
-	}
-
-	if unpub, err := rvw.HasUnpublishedChanges(ctx); err != nil {
-		return fmt.Errorf("failed to check for unpublished changed: %w", err)
-	} else if !unpub {
-		// The review and work branches are identical, so propagate the sync to the review branch too
-		_, err := rvw.git.Merge(ctx, rvw.workBranch, rvw.reviewBranch)
-		if err != nil {
-			return fmt.Errorf("failed to merge work branch into review branch: %w", err)
-		}
-	}
-
-	return nil
-}
-
 func getWorkBranchName(issue githubIssue) string {
 	branchName := fmt.Sprintf("wip/issue-%d-%s", issue.number, sanitizeForBranchName(issue.title))
 	return normalizeBranchName(branchName)
