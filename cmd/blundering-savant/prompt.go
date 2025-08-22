@@ -14,8 +14,11 @@ import (
 //go:embed system_prompt.tmpl
 var systemPromptTemplate string
 
-//go:embed prompt_template.tmpl
-var promptTemplate string
+//go:embed repository_prompt.tmpl
+var repositoryPromptTemplate string
+
+//go:embed task_prompt.tmpl
+var taskPromptTemplate string
 
 // Custom types for template data to avoid pointer dereferencing in templates
 
@@ -108,8 +111,8 @@ func BuildSystemPrompt(botName string, botUsername string) (string, error) {
 	return buf.String(), nil
 }
 
-// BuildPrompt generates the complete prompt for Claude based on the context
-func BuildPrompt(tsk task) (*string, error) {
+// BuildPrompt generates repository-specific and task-specific content blocks for Claude
+func BuildPrompt(tsk task) (repositoryContent, taskContent string, err error) {
 	data := buildTemplateData(tsk)
 
 	// Create template with helper functions
@@ -148,19 +151,31 @@ func BuildPrompt(tsk task) (*string, error) {
 		},
 	}
 
-	tmpl, err := template.New("prompt").Funcs(funcMap).Parse(promptTemplate)
+	// Build repository-specific content
+	repositoryTmpl, err := template.New("repository").Funcs(funcMap).Parse(repositoryPromptTemplate)
 	if err != nil {
-		return nil, fmt.Errorf("failed to parse prompt template: %w", err)
+		return "", "", fmt.Errorf("failed to parse repository prompt template: %w", err)
 	}
 
-	var buf bytes.Buffer
-	err = tmpl.Execute(&buf, data)
+	var repositoryBuf bytes.Buffer
+	err = repositoryTmpl.Execute(&repositoryBuf, data)
 	if err != nil {
-		return nil, fmt.Errorf("failed to execute prompt template: %w", err)
+		return "", "", fmt.Errorf("failed to execute repository prompt template: %w", err)
 	}
 
-	result := buf.String()
-	return &result, nil
+	// Build task-specific content
+	taskTmpl, err := template.New("task").Funcs(funcMap).Parse(taskPromptTemplate)
+	if err != nil {
+		return "", "", fmt.Errorf("failed to parse task prompt template: %w", err)
+	}
+
+	var taskBuf bytes.Buffer
+	err = taskTmpl.Execute(&taskBuf, data)
+	if err != nil {
+		return "", "", fmt.Errorf("failed to execute task prompt template: %w", err)
+	}
+
+	return repositoryBuf.String(), taskBuf.String(), nil
 }
 
 // Helper functions to convert GitHub types to template types

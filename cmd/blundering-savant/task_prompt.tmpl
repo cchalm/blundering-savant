@@ -1,7 +1,3 @@
-Repository: {{.Repository}}
-
-Main Language: {{.MainLanguage}}
-
 ## Issue
 
 Issue #{{.IssueNumber}}: {{.IssueTitle}}
@@ -14,40 +10,6 @@ Issue #{{.IssueNumber}}: {{.IssueTitle}}
 
 ## Pull Request
 Pull Request #{{.PullRequestNumber}} is open for this issue.
-{{- end}}
-{{- if .StyleGuides}}
-
-## Style Guides
-{{- range $path, $content := .StyleGuides}}
-
-<details>
-<summary>{{$path}}</summary>
-
-{{$content | indent "> "}}
-
-</details>
-{{- end}}
-{{- end}}
-{{- if .ReadmeContent}}
-
-## README excerpt
-
-{{.ReadmeContent | indent "> "}}
-{{- end}}
-{{- if .FileTree}}
-
-## Repository structure
-
-<details>
-<summary>View File Tree</summary>
-
-{{range .FileTree -}}
-- `{{.}}`
-{{end}}
-{{if .FileTreeTruncatedCount -}}
-... ({{.FileTreeTruncatedCount}} more files)
-{{- end}}
-</details>
 {{- end}}
 {{- if .HasConversationHistory}}
 
@@ -138,6 +100,8 @@ Status: {{if .ValidationResult.Succeeded}}PASSED{{else}}FAILED{{end}}
 {{if not .ValidationResult.Succeeded -}}
 {{.ValidationResult.Details | indent "    "}}
 {{- end}}
+
+
 
 
 ## Your Task

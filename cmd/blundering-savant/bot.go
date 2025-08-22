@@ -409,12 +409,16 @@ func (b *Bot) initConversation(ctx context.Context, tsk task, toolCtx *ToolConte
 		c := NewClaudeConversation(b.anthropicClient, model, maxTokens, tools, systemPrompt)
 
 		log.Printf("Sending initial message to AI")
-		promptPtr, err := BuildPrompt(tsk)
+		repositoryContent, taskContent, err := BuildPrompt(tsk)
 		if err != nil {
 			return nil, nil, fmt.Errorf("failed to build prompt: %w", err)
 		}
 
-		response, err := c.SendMessage(ctx, anthropic.NewTextBlock(*promptPtr))
+		// Send repository content as cacheable block, followed by task-specific content
+		repositoryBlock := anthropic.NewTextBlock(repositoryContent)
+		taskBlock := anthropic.NewTextBlock(taskContent)
+		
+		response, err := c.SendMessage(ctx, repositoryBlock, taskBlock)
 		if err != nil {
 			return nil, nil, fmt.Errorf("failed to send initial message to AI: %w", err)
 		}

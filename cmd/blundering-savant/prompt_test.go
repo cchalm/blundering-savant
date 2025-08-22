@@ -24,16 +24,25 @@ func TestBuildPrompt_BasicTemplate(t *testing.T) {
 		},
 	}
 
-	promptPtr, err := BuildPrompt(tsk)
+	repositoryContent, taskContent, err := BuildPrompt(tsk)
 	require.NoError(t, err)
-	prompt := *promptPtr
 
-	// Verify the template was executed and contains expected content
-	require.Contains(t, prompt, "Repository: owner/repo")
-	require.Contains(t, prompt, "Main Language: Go")
-	require.Contains(t, prompt, "Issue #123: Test Issue")
-	require.Contains(t, prompt, "This is a test issue description")
-	require.Contains(t, prompt, "## Your Task")
+	// Verify repository content contains repository-specific information
+	require.Contains(t, repositoryContent, "Repository: owner/repo")
+	require.Contains(t, repositoryContent, "Main Language: Go")
+
+	// Verify task content contains task-specific information
+	require.Contains(t, taskContent, "Issue #123: Test Issue")
+	require.Contains(t, taskContent, "This is a test issue description")
+	require.Contains(t, taskContent, "## Your Task")
+
+	// Verify separation: repository info should not be in task content
+	require.NotContains(t, taskContent, "Repository: owner/repo")
+	require.NotContains(t, taskContent, "Main Language: Go")
+
+	// Verify separation: task info should not be in repository content
+	require.NotContains(t, repositoryContent, "Issue #123: Test Issue")
+	require.NotContains(t, repositoryContent, "## Your Task")
 }
 
 func TestBuildPrompt_WithPullRequest(t *testing.T) {
@@ -54,11 +63,12 @@ func TestBuildPrompt_WithPullRequest(t *testing.T) {
 		},
 	}
 
-	promptPtr, err := BuildPrompt(tsk)
+	repositoryContent, taskContent, err := BuildPrompt(tsk)
 	require.NoError(t, err)
-	prompt := *promptPtr
 
-	require.Contains(t, prompt, "Pull Request #456 is open for this issue")
+	// PR information should be in task content, not repository content
+	require.Contains(t, taskContent, "Pull Request #456 is open for this issue")
+	require.NotContains(t, repositoryContent, "Pull Request #456 is open for this issue")
 }
 
 func TestBuildPrompt_WithStyleGuide(t *testing.T) {
@@ -81,13 +91,17 @@ func TestBuildPrompt_WithStyleGuide(t *testing.T) {
 		},
 	}
 
-	promptPtr, err := BuildPrompt(tsk)
+	repositoryContent, taskContent, err := BuildPrompt(tsk)
 	require.NoError(t, err)
-	prompt := *promptPtr
 
-	require.Contains(t, prompt, "## Style Guides")
-	require.Contains(t, prompt, "style_guide.md")
-	require.Contains(t, prompt, "Use tabs for indentation")
+	// Style guides should be in repository content, not task content
+	require.Contains(t, repositoryContent, "## Style Guides")
+	require.Contains(t, repositoryContent, "style_guide.md")
+	require.Contains(t, repositoryContent, "Use tabs for indentation")
+	
+	// Verify style guides are not in task content
+	require.NotContains(t, taskContent, "## Style Guides")
+	require.NotContains(t, taskContent, "Use tabs for indentation")
 }
 
 func TestBuildPrompt_WithFileTree(t *testing.T) {
@@ -106,14 +120,18 @@ func TestBuildPrompt_WithFileTree(t *testing.T) {
 		},
 	}
 
-	promptPtr, err := BuildPrompt(tsk)
+	repositoryContent, taskContent, err := BuildPrompt(tsk)
 	require.NoError(t, err)
-	prompt := *promptPtr
 
-	require.Contains(t, prompt, "## Repository structure")
-	require.Contains(t, prompt, "- `main.go`")
-	require.Contains(t, prompt, "- `README.md`")
-	require.Contains(t, prompt, "- `go.mod`")
+	// File tree should be in repository content, not task content
+	require.Contains(t, repositoryContent, "## Repository structure")
+	require.Contains(t, repositoryContent, "- `main.go`")
+	require.Contains(t, repositoryContent, "- `README.md`")
+	require.Contains(t, repositoryContent, "- `go.mod`")
+	
+	// Verify file tree is not in task content
+	require.NotContains(t, taskContent, "## Repository structure")
+	require.NotContains(t, taskContent, "- `main.go`")
 }
 
 func TestBuildPrompt_WithCommentsRequiringResponses(t *testing.T) {
@@ -138,12 +156,15 @@ func TestBuildPrompt_WithCommentsRequiringResponses(t *testing.T) {
 		},
 	}
 
-	promptPtr, err := BuildPrompt(tsk)
+	repositoryContent, taskContent, err := BuildPrompt(tsk)
 	require.NoError(t, err)
-	prompt := *promptPtr
 
-	require.Contains(t, prompt, "Issue comments requiring responses: 1001, 1002")
-	require.Contains(t, prompt, "PR comments requiring responses: 2001")
+	// Comments requiring responses should be in task content, not repository content
+	require.Contains(t, taskContent, "Issue comments requiring responses: 1001, 1002")
+	require.Contains(t, taskContent, "PR comments requiring responses: 2001")
+	
+	require.NotContains(t, repositoryContent, "Issue comments requiring responses: 1001, 1002")
+	require.NotContains(t, repositoryContent, "PR comments requiring responses: 2001")
 }
 
 func TestBuildTemplateData_TruncatesLongFileTree(t *testing.T) {
