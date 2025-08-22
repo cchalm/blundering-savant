@@ -354,9 +354,6 @@ func (b *Bot) ensureLabelExists(ctx context.Context, owner, repo string, label g
 
 // Utility functions
 
-//go:embed system_prompt.md
-var systemPrompt string
-
 // initConversation either constructs a new conversation or resumes a previous conversation
 func (b *Bot) initConversation(ctx context.Context, tsk task, toolCtx *ToolContext) (*ClaudeConversation, *anthropic.Message, error) {
 	model := anthropic.ModelClaudeSonnet4_0
@@ -403,6 +400,11 @@ func (b *Bot) initConversation(ctx context.Context, tsk task, toolCtx *ToolConte
 		}
 		return conv, response, nil
 	} else {
+		systemPrompt, err := BuildSystemPrompt("Blundering Savant", tsk.BotUsername)
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to build system prompt: %w", err)
+		}
+
 		c := NewClaudeConversation(b.anthropicClient, model, maxTokens, tools, systemPrompt)
 
 		log.Printf("Sending initial message to AI")

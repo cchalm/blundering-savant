@@ -180,3 +180,10 @@ func TestBuildTemplateData_DoesNotTruncateShortFileTree(t *testing.T) {
 	require.Len(t, data.FileTree, 3)
 	require.Equal(t, data.FileTreeTruncatedCount, 0)
 }
+
+func TestBuildSystemTemplate(t *testing.T) {
+	s, err := BuildSystemPrompt("Steve", "steve-the-dude")
+	require.NoError(t, err)
+	require.Contains(t, s, "Steve")
+	require.Contains(t, s, "steve-the-dude")
+}
