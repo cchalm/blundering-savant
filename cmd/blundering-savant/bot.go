@@ -404,14 +404,11 @@ func (b *Bot) initConversation(ctx context.Context, tsk task, toolCtx *ToolConte
 		}
 		return conv, response, nil
 	} else {
-<<<<<<< HEAD
-=======
 		systemPrompt, err := BuildSystemPrompt("Blundering Savant", *b.user.Login)
 		if err != nil {
 			return nil, nil, fmt.Errorf("failed to build system prompt: %w", err)
 		}
 
->>>>>>> 85ad2e02e098d877fae74171e4d88731e046a788
 		c := NewClaudeConversation(b.anthropicClient, model, maxTokens, tools, systemPrompt)
 
 		log.Printf("Sending initial message to AI")
