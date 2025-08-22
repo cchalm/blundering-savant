@@ -80,7 +80,6 @@ type promptTemplateData struct {
 	PRComments                         []commentData
 	PRReviewCommentThreads             []reviewCommentThreadData
 	PRReviews                          []reviewData
-	BotUsername                        string
 	IssueCommentsRequiringResponses    []commentData
 	PRCommentsRequiringResponses       []commentData
 	PRReviewCommentsRequiringResponses []reviewCommentData
@@ -311,7 +310,6 @@ func buildTemplateData(tsk task) promptTemplateData {
 	// Conversation history - convert GitHub types to template types
 	if len(tsk.IssueComments) > 0 || len(tsk.PRComments) > 0 || len(tsk.PRReviewCommentThreads) > 0 || len(tsk.PRReviews) > 0 {
 		data.HasConversationHistory = true
-		data.BotUsername = tsk.BotUsername
 
 		// Convert issue comments
 		for _, comment := range tsk.IssueComments {

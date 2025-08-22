@@ -5,7 +5,6 @@ services:
     restart: unless-stopped
     environment:
       - GITHUB_TOKEN=${GITHUB_TOKEN}
-      - GITHUB_USERNAME=${GITHUB_USERNAME}
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
       - CHECK_INTERVAL=${CHECK_INTERVAL:-5m}
       - LOG_LEVEL=${LOG_LEVEL:-info}

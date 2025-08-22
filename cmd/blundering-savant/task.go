@@ -31,9 +31,6 @@ type task struct {
 	PRCommentsRequiringResponses       []*github.IssueComment
 	PRReviewCommentsRequiringResponses []*github.PullRequestComment
 
-	// Configuration
-	BotUsername string
-
 	// State computed from the workspace after initial task generation (unpopulated until then)
 	HasUnpublishedChanges bool
 	ValidationResult      ValidationResult
