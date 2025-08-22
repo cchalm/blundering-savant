@@ -1,113 +1,143 @@
-Repository: {{.Repository.Owner}}/{{.Repository.Name}}
+Repository: {{.Repository}}
 
-Main Language: {{.CodebaseInfo.MainLanguage}}
+Main Language: {{.MainLanguage}}
 
 ## Issue
 
-Issue #{{.Issue.Number}}: {{.Issue.Title}}
+Issue #{{.IssueNumber}}: {{.IssueTitle}}
 
 ### Description
 
-{{if .Issue.Body}}
-> {{.Issue.Body}}
-{{else}}
-_No description provided._
-{{end}}
+{{.IssueBody | indent "> "}}
 
-{{if .StyleGuide.Exists}}
+{{- if .PullRequestNumber}}
+
+## Pull Request
+Pull Request #{{.PullRequestNumber}} is open for this issue.
+{{- end}}
+{{- if .StyleGuides}}
+
 ## Style Guides
+{{- range $path, $content := .StyleGuides}}
 
 <details>
-<summary>{{.StyleGuide.Name}}</summary>
+<summary>{{$path}}</summary>
 
-> {{.StyleGuide.Content}}
+{{$content | indent "> "}}
 
 </details>
-{{end}}
+{{- end}}
+{{- end}}
+{{- if .ReadmeContent}}
 
-{{if .CodebaseInfo.ReadmeExcerpt}}
 ## README excerpt
 
-> {{.CodebaseInfo.ReadmeExcerpt}}
-{{end}}
+{{.ReadmeContent | indent "> "}}
+{{- end}}
+{{- if .FileTree}}
 
 ## Repository structure
 
 <details>
 <summary>View File Tree</summary>
 
-{{.CodebaseInfo.FileTree}}
-
+{{range .FileTree -}}
+- `{{.}}`
+{{end}}
+{{if .FileTreeTruncatedCount -}}
+... ({{.FileTreeTruncatedCount}} more files)
+{{- end}}
 </details>
+{{- end}}
+{{- if .HasConversationHistory}}
 
-{{if .IssueComments}}
 ## Conversation History
 
 ### Issue Comments
-{{range .IssueComments}}
+{{- range .IssueComments}}
 
 #### Comment {{.ID}} by @{{.User.Login}} ({{.AuthorAssociation}}) - {{.CreatedAt}}
+  {{- if .IsEdited}}
+<edited>
+  {{- end}}
 
-{{if .IsEdited}}*(edited)*{{end}}
+{{.Body | indent "> "}}
 
-> {{.Body}}
-{{end}}
-{{end}}
+{{- end}}
+{{- range .PRReviews}}
 
-{{if .HasPR}}
+### PR Review {{.ID}} by @{{.User.Login}} ({{.AuthorAssociation}}) - {{.SubmittedAt}}
+**Status: {{.State}}**
+  {{- if .Body}}
+
+{{.Body | indent "> "}}
+
+  {{- end}}
+{{- end}}
+
 ### PR Comments
-{{range .PRComments}}
+{{- range .PRComments}}
 
-#### Comment {{.ID}} by @{{.User.Login}} ({{.AuthorAssociation}}) - {{.CreatedAt}}
+#### Comment {{.ID}} by @{{.User.Login}}
+  {{- if ne .AuthorAssociation ""}} ({{.AuthorAssociation}})
+  {{- end}} - {{.CreatedAt}}
+  {{- if .IsEdited}}
+<edited>
+  {{- end}}
 
-{{if .IsEdited}}*(edited)*{{end}}
+{{.Body | indent "> "}}
 
-> {{.Body}}
-{{end}}
+{{- end}}
 
-{{if .PRReviews}}
-### PR Reviews
-{{range .PRReviews}}
-
-#### Review {{.ID}} by @{{.User.Login}} ({{.AuthorAssociation}}) - {{.SubmittedAt}} ({{.State}})
-
-{{if .Body}}
-> {{.Body}}
-{{end}}
-{{end}}
-{{end}}
-
-{{if .PRReviewCommentThreads}}
 ### PR Diff Comment Threads
-{{range $threadIndex, $thread := .PRReviewCommentThreads}}
+{{- range .PRReviewCommentThreads -}}
+  {{- $thread := . -}}
+  {{- if gt (len $thread) 0 -}}
+    {{- $topComment := index $thread 0}}
 
-#### Thread {{add $threadIndex 1}}
-{{range $thread}}
-##### Comment {{.ID}} by @{{.User.Login}} ({{.AuthorAssociation}}) - {{.CreatedAt}}
-{{if .IsEdited}}*(edited)*{{end}}
-
-File: `{{.Path}}`{{if .Position}} (Line {{.Position}}){{end}}
-
-{{if .DiffHunk}}
+#### Comment Thread on `{{$topComment.Path}}`
+    {{- if $topComment.Line -}}
+      {{- if $topComment.StartLine}} (lines {{$topComment.StartLine}}-{{$topComment.Line}})
+      {{- else}} (line {{$topComment.Line}})
+      {{- end -}}
+    {{- end -}}
+    {{- if $topComment.DiffHunk}}
+      {{- $truncated := truncateDiff $topComment.DiffHunk -}}
+      {{- if eq $truncated $topComment.DiffHunk}}
 ```diff
-{{.DiffHunk}}
+{{$truncated}}
 ```
-{{end}}
+      {{- else}}
+{{$truncated}}
+      {{- end -}}
+    {{- end -}}
+    {{- range $thread}}
+Comment {{.ID}} by @{{.User.Login}} ({{.AuthorAssociation}})
+      {{- if .PullRequestReviewID}} in Review {{.PullRequestReviewID}}
+      {{- end}} - {{.CreatedAt}}
 
-> {{.Body}}
-{{end}}
-{{end}}
-{{end}}
-{{end}}
+{{.Body | indent "> "}}
+
+{{end -}}
+  {{- end -}}
+{{- end}}
+{{- end}}
 
 ## Workspace Status
+
+{{- if .HasUnpublishedChanges}}
 There are unpublished changes in the workspace
+{{- else}}
+There are no unpublished changes in the workspace
+{{- end}}
 
 ### Latest validation results
 
-Status: PASSED
+Status: {{if .ValidationResult.Succeeded}}PASSED{{else}}FAILED{{end}}
 
-
+{{if not .ValidationResult.Succeeded -}}
+{{.ValidationResult.Details | indent "    "}}
+{{- end}}
 
 
 ## Your Task
@@ -156,3 +186,15 @@ If there is already a pull request for this issue:
 Review all comments, reviews, and feedback carefully. Make sure to address each point raised using the appropriate text editor commands.
 
 Use tools in parallel whenever possible.
+{{- if .IssueCommentsRequiringResponses}}
+
+Issue comments requiring responses: {{commentIDs .IssueCommentsRequiringResponses}}
+{{- end}}
+{{- if .PRCommentsRequiringResponses}}
+
+PR comments requiring responses: {{commentIDs .PRCommentsRequiringResponses}}
+{{- end}}
+{{- if .PRReviewCommentsRequiringResponses}}
+
+PR review comments requiring responses: {{commentIDs .PRReviewCommentsRequiringResponses}}
+{{- end}}

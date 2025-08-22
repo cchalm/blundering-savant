@@ -1,18 +1,15 @@
-// Package task provides task management and generation for the bot.
-package task
+package main
 
 import (
 	"github.com/google/go-github/v72/github"
-
-	githubpkg "github.com/cchalm/blundering-savant/internal/github"
 )
 
-// Task represents all the context needed for the bot to generate solutions
-type Task struct {
+// task represents all the context needed for the bot to generate solutions
+type task struct {
 	// Core entities
-	Issue       githubpkg.GitHubIssue
+	Issue       githubIssue
 	Repository  *github.Repository
-	PullRequest *githubpkg.GitHubPullRequest // May be nil if no pull request has yet been created
+	PullRequest *githubPullRequest // May be nil if no pull request has yet been created
 
 	// The branch that changes should be merged into to resolve the task
 	TargetBranch string
@@ -32,30 +29,25 @@ type Task struct {
 	// Current work state
 	IssueCommentsRequiringResponses    []*github.IssueComment
 	PRCommentsRequiringResponses       []*github.IssueComment
-	PRReviewCommentThreadsRequiringResponses [][]*github.PullRequestComment
+	PRReviewCommentsRequiringResponses []*github.PullRequestComment
 
-	ValidationFailures []ValidationFailure
+	// Configuration
+	BotUsername string
+
+	// State computed from the workspace after initial task generation (unpopulated until then)
+	HasUnpublishedChanges bool
+	ValidationResult      ValidationResult
 }
 
-// StyleGuide represents style guide information for the repository
-type StyleGuide struct {
-	Exists  bool
-	Name    string
-	Content string
-}
-
-// CodebaseInfo represents information about the codebase
+// CodebaseInfo holds information about the repository structure
 type CodebaseInfo struct {
-	MainLanguage string
-	Languages    map[string]int
-	FileTree     string
-	ReadmeExcerpt string
+	MainLanguage  string
+	FileTree      []string
+	ReadmeContent string
+	PackageInfo   map[string]string
 }
 
-// ValidationFailure represents a validation failure
-type ValidationFailure struct {
-	Type    string
-	Message string
-	File    string
-	Line    int
+// StyleGuide represents coding style information
+type StyleGuide struct {
+	Guides map[string]string // repo path -> style guide content
 }

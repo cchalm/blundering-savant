@@ -1,5 +1,4 @@
-// Package ai provides AI conversation handling and prompt management.
-package ai
+package main
 
 import (
 	"bytes"
@@ -15,7 +14,6 @@ import (
 	"github.com/anthropics/anthropic-sdk-go"
 )
 
-// ClaudeConversation manages a conversation with Claude
 type ClaudeConversation struct {
 	client anthropic.Client
 
@@ -33,7 +31,6 @@ type conversationTurn struct {
 	Response    *anthropic.Message // May be nil
 }
 
-// NewClaudeConversation creates a new Claude conversation
 func NewClaudeConversation(
 	anthropicClient anthropic.Client,
 	model anthropic.Model,
@@ -41,11 +38,14 @@ func NewClaudeConversation(
 	tools []anthropic.ToolParam,
 	systemPrompt string,
 ) *ClaudeConversation {
+
 	return &ClaudeConversation{
 		client: anthropicClient,
+
 		model:        model,
 		systemPrompt: systemPrompt,
 		tools:        tools,
+
 		maxTokens: maxTokens,
 	}
 }
@@ -161,8 +161,6 @@ func getLastCacheControl(content []anthropic.ContentBlockParamUnion) (*anthropic
 
 	return nil, fmt.Errorf("no cacheable blocks in content")
 }
-
-
 
 // conversationHistory contains a serializable and resumable snapshot of a ClaudeConversation
 type conversationHistory struct {

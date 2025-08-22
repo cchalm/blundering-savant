@@ -1,4 +1,4 @@
-package ai
+package main
 
 import (
 	"encoding/json"
@@ -8,27 +8,12 @@ import (
 	"path"
 )
 
-// ConversationHistoryStore manages persistent storage of conversation histories
-type ConversationHistoryStore interface {
-	// Get returns the conversation history stored at the given key, or nil if there is nothing stored at that key
-	Get(key string) (*conversationHistory, error)
-	// Set stores a conversation history with a key
-	Set(key string, value conversationHistory) error
-	// Delete deletes a conversation history with a key
-	Delete(key string) error
-}
-
 // FileSystemConversationHistoryStore implements ConversationHistoryStore using the OS file system
 type FileSystemConversationHistoryStore struct {
 	dir string // The directory keys will be relative to
 }
 
-// NewFileSystemConversationHistoryStore creates a new file system conversation history store
-func NewFileSystemConversationHistoryStore(dir string) ConversationHistoryStore {
-	return &FileSystemConversationHistoryStore{dir: dir}
-}
-
-func (fschv *FileSystemConversationHistoryStore) Get(key string) (*conversationHistory, error) {
+func (fschv FileSystemConversationHistoryStore) Get(key string) (*conversationHistory, error) {
 	path := path.Join(fschv.dir, key)
 	b, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
@@ -45,7 +30,7 @@ func (fschv *FileSystemConversationHistoryStore) Get(key string) (*conversationH
 	return &value, nil
 }
 
-func (fschv *FileSystemConversationHistoryStore) Set(key string, value conversationHistory) error {
+func (fschv FileSystemConversationHistoryStore) Set(key string, value conversationHistory) error {
 	b, err := json.Marshal(value)
 	if err != nil {
 		return fmt.Errorf("failed to marshal conversation history: %w", err)
@@ -58,7 +43,7 @@ func (fschv *FileSystemConversationHistoryStore) Set(key string, value conversat
 	return nil
 }
 
-func (fschv *FileSystemConversationHistoryStore) Delete(key string) error {
+func (fschv FileSystemConversationHistoryStore) Delete(key string) error {
 	path := path.Join(fschv.dir, key)
 	err := os.Remove(path)
 	if err != nil {
