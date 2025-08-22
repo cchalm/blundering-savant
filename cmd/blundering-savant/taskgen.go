@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"github.com/google/go-github/v72/github"
+
+	"github.com/cchalm/blundering-savant/internal/config"
 )
 
 type githubIssue struct {
@@ -40,14 +42,14 @@ type taskOrError struct {
 }
 
 type taskGenerator struct {
-	config       Config
+	config       config.Config
 	githubClient *github.Client
 	githubUser   *github.User
 }
 
-func newTaskGenerator(config Config, githubClient *github.Client, githubUser *github.User) *taskGenerator {
+func newTaskGenerator(cfg config.Config, githubClient *github.Client, githubUser *github.User) *taskGenerator {
 	return &taskGenerator{
-		config:       config,
+		config:       cfg,
 		githubClient: githubClient,
 		githubUser:   githubUser,
 	}

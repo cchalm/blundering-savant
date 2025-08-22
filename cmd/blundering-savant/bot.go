@@ -12,6 +12,8 @@ import (
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/option"
 	"github.com/google/go-github/v72/github"
+
+	"github.com/cchalm/blundering-savant/internal/config"
 )
 
 var (
@@ -35,7 +37,7 @@ var (
 // Bot represents an AI developer capable of addressing GitHub issues by creating and updating PRs and responding to
 // comments from other users
 type Bot struct {
-	config                 Config
+	config                 config.Config
 	githubClient           *github.Client
 	anthropicClient        anthropic.Client
 	toolRegistry           *ToolRegistry
@@ -87,27 +89,27 @@ type ValidationResult struct {
 	Details   string
 }
 
-func NewBot(config Config, githubClient *github.Client, githubUser *github.User) *Bot {
+func NewBot(cfg config.Config, githubClient *github.Client, githubUser *github.User) *Bot {
 	rateLimitedHTTPClient := &http.Client{
 		Transport: WithRateLimiting(nil),
 	}
 	anthropicClient := anthropic.NewClient(
 		option.WithHTTPClient(rateLimitedHTTPClient),
-		option.WithAPIKey(config.AnthropicAPIKey),
+		option.WithAPIKey(cfg.AnthropicAPIKey),
 		option.WithMaxRetries(5),
 	)
 
 	return &Bot{
-		config:          config,
+		config:          cfg,
 		githubClient:    githubClient,
 		anthropicClient: anthropicClient,
 		toolRegistry:    NewToolRegistry(),
 		workspaceFactory: remoteValidationWorkspaceFactory{
 			githubClient:           githubClient,
-			validationWorkflowName: config.ValidationWorkflowName,
+			validationWorkflowName: cfg.ValidationWorkflowName,
 		},
 		resumableConversations: FileSystemConversationHistoryStore{
-			dir: config.ResumableConversationsDir,
+			dir: cfg.ResumableConversationsDir,
 		},
 		user: githubUser,
 	}
