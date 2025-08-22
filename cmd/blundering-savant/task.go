@@ -2,6 +2,8 @@ package main
 
 import (
 	"github.com/google/go-github/v72/github"
+
+	"github.com/cchalm/blundering-savant/internal/workspace"
 )
 
 // task represents all the context needed for the bot to generate solutions
@@ -33,7 +35,7 @@ type task struct {
 
 	// State computed from the workspace after initial task generation (unpopulated until then)
 	HasUnpublishedChanges bool
-	ValidationResult      ValidationResult
+	ValidationResult      workspace.ValidationResult
 }
 
 // CodebaseInfo holds information about the repository structure

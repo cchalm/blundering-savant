@@ -14,6 +14,7 @@ import (
 	"github.com/google/go-github/v72/github"
 
 	"github.com/cchalm/blundering-savant/internal/config"
+	"github.com/cchalm/blundering-savant/internal/workspace"
 )
 
 var (
@@ -73,7 +74,7 @@ type Workspace interface {
 	// ValidateChanges persists local changes remotely, validates them, and returns the results. A commit message must
 	// be provided if there are local changes in the workspace. After calling ValidateChanges, there will be no local
 	// changes in the workspace.
-	ValidateChanges(ctx context.Context, commitMessage *string) (ValidationResult, error)
+	ValidateChanges(ctx context.Context, commitMessage *string) (workspace.ValidationResult, error)
 	// PublishChangesForReview makes validated changes available for review. reviewRequestTitle and reviewRequestBody
 	// are only used the first time a review is published, subsequent publishes will ignore these parameters and update
 	// the existing review
@@ -84,10 +85,7 @@ type WorkspaceFactory interface {
 	NewWorkspace(ctx context.Context, tsk task) (Workspace, error)
 }
 
-type ValidationResult struct {
-	Succeeded bool
-	Details   string
-}
+
 
 func NewBot(cfg config.Config, githubClient *github.Client, githubUser *github.User) *Bot {
 	rateLimitedHTTPClient := &http.Client{

@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"github.com/google/go-github/v72/github"
+
+	"github.com/cchalm/blundering-savant/internal/workspace"
 )
 
 // remoteValidationWorkspaceFactory creates instances of remoteValidationWorkspace
@@ -50,7 +52,7 @@ type GitRepo interface {
 
 type BranchValidator interface {
 	// ValidateBranch validates the given commit SHA, which is expected to be the head of the given branch
-	ValidateBranch(ctx context.Context, branch string, commitSHA string) (ValidationResult, error)
+	ValidateBranch(ctx context.Context, branch string, commitSHA string) (workspace.ValidationResult, error)
 }
 
 type PullRequestService interface {
@@ -215,32 +217,32 @@ func (rvw *remoteValidationWorkspace) ClearLocalChanges() {
 	rvw.fs.Reset()
 }
 
-func (rvw *remoteValidationWorkspace) ValidateChanges(ctx context.Context, commitMessage *string) (ValidationResult, error) {
+func (rvw *remoteValidationWorkspace) ValidateChanges(ctx context.Context, commitMessage *string) (workspace.ValidationResult, error) {
 	var commitSHA string
 	if rvw.HasLocalChanges() {
 		if commitMessage == nil {
-			return ValidationResult{}, fmt.Errorf("no commit message provided for validating local changes")
+			return workspace.ValidationResult{}, fmt.Errorf("no commit message provided for validating local changes")
 		}
 		commit, err := rvw.commitToWorkBranch(ctx, *commitMessage)
 		if err != nil {
-			return ValidationResult{}, fmt.Errorf("failed to commit changes to work branch: %w", err)
+			return workspace.ValidationResult{}, fmt.Errorf("failed to commit changes to work branch: %w", err)
 		}
 		commitSHA = *commit.SHA
 	} else {
 		headCommit, err := rvw.git.GetBranchHead(ctx, rvw.workBranch)
 		if err != nil {
-			return ValidationResult{}, fmt.Errorf("failed to get work branch info: %w", err)
+			return workspace.ValidationResult{}, fmt.Errorf("failed to get work branch info: %w", err)
 		}
 		commitSHA = *headCommit.SHA
 	}
 
 	if rvw.validator == nil {
-		return ValidationResult{}, fmt.Errorf("failed to validate commit, no validator provided")
+		return workspace.ValidationResult{}, fmt.Errorf("failed to validate commit, no validator provided")
 	}
 
 	result, err := rvw.validator.ValidateBranch(ctx, rvw.workBranch, commitSHA)
 	if err != nil {
-		return ValidationResult{}, fmt.Errorf("failed to validate commit: %w", err)
+		return workspace.ValidationResult{}, fmt.Errorf("failed to validate commit: %w", err)
 	}
 
 	return result, nil

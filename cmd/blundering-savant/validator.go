@@ -12,6 +12,8 @@ import (
 	"time"
 
 	"github.com/google/go-github/v72/github"
+
+	"github.com/cchalm/blundering-savant/internal/workspace"
 )
 
 type WorkflowStatus string
@@ -119,13 +121,13 @@ func NewGithubActionCommitValidator(githubClient *github.Client, owner string, r
 	}
 }
 
-func (gacv GithubActionCommitValidator) ValidateBranch(ctx context.Context, branch string, commitSHA string) (ValidationResult, error) {
+func (gacv GithubActionCommitValidator) ValidateBranch(ctx context.Context, branch string, commitSHA string) (workspace.ValidationResult, error) {
 	log.Printf("Validating branch '%s' with workflow '%s'", branch, gacv.workflowFileName)
 
 	// Find existing run for this commit, if any
 	run, err := gacv.findWorkflowRun(ctx, commitSHA)
 	if err != nil {
-		return ValidationResult{}, fmt.Errorf("failed to find workflow run: %w", err)
+		return workspace.ValidationResult{}, fmt.Errorf("failed to find workflow run: %w", err)
 	}
 
 	if run == nil {
@@ -134,19 +136,19 @@ func (gacv GithubActionCommitValidator) ValidateBranch(ctx context.Context, bran
 		// No run found, trigger one
 		run, err = gacv.triggerWorkflowRun(ctx, branch, commitSHA)
 		if err != nil {
-			return ValidationResult{}, fmt.Errorf("failed to trigger workflow: %w", err)
+			return workspace.ValidationResult{}, fmt.Errorf("failed to trigger workflow: %w", err)
 		}
 	} else {
 		log.Printf("Found existing workflow run %d (status: '%s', conclusion: '%s')", *run.ID, run.GetStatus(), run.GetConclusion())
 	}
 
 	if run == nil || run.ID == nil {
-		return ValidationResult{}, fmt.Errorf("unexpected nil in workflow run")
+		return workspace.ValidationResult{}, fmt.Errorf("unexpected nil in workflow run")
 	}
 
 	run, err = gacv.waitForWorkflowCompletion(ctx, *run.ID)
 	if err != nil {
-		return ValidationResult{}, err
+		return workspace.ValidationResult{}, err
 	}
 
 	succeeded := run.GetConclusion() == string(WorkflowConclusionSuccess)
@@ -154,11 +156,11 @@ func (gacv GithubActionCommitValidator) ValidateBranch(ctx context.Context, bran
 	if !succeeded {
 		logs, err = gacv.getWorkflowRunLogs(ctx, run)
 		if err != nil {
-			return ValidationResult{}, fmt.Errorf("failed to get workflow run logs: %w", err)
+			return workspace.ValidationResult{}, fmt.Errorf("failed to get workflow run logs: %w", err)
 		}
 	}
 
-	return ValidationResult{
+	return workspace.ValidationResult{
 		Succeeded: succeeded,
 		Details:   logs,
 	}, nil
