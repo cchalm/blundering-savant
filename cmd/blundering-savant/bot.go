@@ -192,7 +192,7 @@ func (b *Bot) doTask(ctx context.Context, tsk task) (err error) {
 
 // processWithAI handles the AI interaction with text editor tool support
 func (b *Bot) processWithAI(ctx context.Context, task task, workspace Workspace) error {
-	maxIterations := 50
+	maxIterations := 500
 
 	// Create tool context
 	toolCtx := &ToolContext{
