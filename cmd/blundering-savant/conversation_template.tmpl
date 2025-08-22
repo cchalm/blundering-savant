@@ -53,19 +53,18 @@
 
 **Tool:** `{{.ToolName}}`
 
-{{- if .TokenUsage}}
-
+{{if .TokenUsage -}}
 **Token Usage:** {{.TokenUsage.InputTokens}} input, {{.TokenUsage.OutputTokens}} output{{if gt .TokenUsage.CacheCreationTokens 0}}, {{.TokenUsage.CacheCreationTokens}} cache create{{end}}{{if gt .TokenUsage.CacheReadTokens 0}}, {{.TokenUsage.CacheReadTokens}} cache read{{end}}
 {{- end}}
 
-{{- if .ToolInput}}
+{{if .ToolInput -}}
 **Input:**
 ```json
 {{prettifyJSON .ToolInput}}
 ```
 {{- end}}
 
-{{- if .ToolResult}}
+{{if .ToolResult -}}
 **Result:**{{if .IsError}} ⚠️ **Error**{{end}}
 
 {{.ToolResult | indent "> "}}
