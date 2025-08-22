@@ -84,7 +84,7 @@ type promptTemplateData struct {
 	ValidationResult                   ValidationResult
 }
 
-// BuildRepositoryInfo generates the repository-specific content block for Claude
+// BuildRepositoryInfo generates the repository-specific content block
 func BuildRepositoryInfo(tsk task) (*string, error) {
 	data := buildRepositoryTemplateData(tsk)
 
