@@ -196,11 +196,6 @@ func (ggr *githubGitRepo) Merge(ctx context.Context, sourceBranch string, target
 	// Handle no-op case: nothing to merge
 	if *comparison.AheadBy == 0 {
 		// No changes to merge - return the current commit of the target branch
-		targetBranchRef, _, err := ggr.git.GetRef(ctx, ggr.owner, ggr.repo, fmt.Sprintf("refs/heads/%s", targetBranch))
-		if err != nil {
-			return nil, fmt.Errorf("failed to get target branch ref: %w", err)
-		}
-
 		targetCommit, _, err := ggr.git.GetCommit(ctx, ggr.owner, ggr.repo, *targetBranchRef.Object.SHA)
 		if err != nil {
 			return nil, fmt.Errorf("failed to get target branch commit: %w", err)
@@ -229,41 +224,8 @@ func (ggr *githubGitRepo) Merge(ctx context.Context, sourceBranch string, target
 		return sourceCommit, nil
 	}
 
-	// Handle merge commit case: branches have diverged
-	// Get the commits for creating a merge commit
-	sourceBranchCommit, _, err := ggr.git.GetCommit(ctx, ggr.owner, ggr.repo, *sourceBranchRef.Object.SHA)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get source branch commit: %w", err)
-	}
-
-	targetBranchCommit, _, err := ggr.git.GetCommit(ctx, ggr.owner, ggr.repo, *targetBranchRef.Object.SHA)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get target branch commit: %w", err)
-	}
-
-	// Generate commit message for merge commit
-	commitMessage := fmt.Sprintf("Merge branch '%s' into %s", sourceBranch, targetBranch)
-
-	// Create a merge commit with both parents
-	mergeCommit := &github.Commit{
-		Message: github.Ptr(commitMessage),
-		Tree:    sourceBranchCommit.Tree,                                  // Use the tree from source branch (contains all the changes)
-		Parents: []*github.Commit{targetBranchCommit, sourceBranchCommit}, // Both parents for merge commit
-	}
-
-	createdMergeCommit, _, err := ggr.git.CreateCommit(ctx, ggr.owner, ggr.repo, mergeCommit, nil)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create merge commit: %w", err)
-	}
-
-	// Update the target branch reference to point to the new merge commit
-	targetBranchRef.Object.SHA = createdMergeCommit.SHA
-	_, _, err = ggr.git.UpdateRef(ctx, ggr.owner, ggr.repo, targetBranchRef, false)
-	if err != nil {
-		return nil, fmt.Errorf("failed to update target branch ref: %w", err)
-	}
-
-	return createdMergeCommit, nil
+	// Branches have diverged so a three-way merge is required. We will not handle this case at the moment
+	return nil, fmt.Errorf("three-way merge required but not yet implemented")
 }
 
 func (ggr *githubGitRepo) CompareCommits(ctx context.Context, base string, head string) (*github.CommitsComparison, error) {
