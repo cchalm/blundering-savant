@@ -17,6 +17,9 @@ var promptTemplate string
 //go:embed repository_info_template.tmpl
 var repositoryInfoTemplate string
 
+//go:embed system_prompt.md
+var systemPromptTemplate string
+
 // Custom types for template data to avoid pointer dereferencing in templates
 
 // userData represents a user in template data
@@ -112,6 +115,15 @@ func BuildRepositoryInfo(tsk task) (*string, error) {
 	return &result, nil
 }
 
+// BuildSystemPrompt generates the system prompt for the AI agent
+func BuildSystemPrompt(agentName, username string) (string, error) {
+	// For now, we'll use a simple template replacement
+	// In the future, this could be extended to use Go templates if needed
+	systemPrompt := strings.ReplaceAll(systemPromptTemplate, "Blundering Savant", agentName)
+	systemPrompt = strings.ReplaceAll(systemPrompt, "blunderingsavant", username)
+	return systemPrompt, nil
+}
+
 // BuildPrompt generates the complete prompt for Claude based on the context
 func BuildPrompt(tsk task) (*string, error) {
 	data := buildTemplateData(tsk)
@@ -167,36 +179,7 @@ func BuildPrompt(tsk task) (*string, error) {
 	return &result, nil
 }
 
-// BuildRepositoryInfo generates the repository-specific content block
-func BuildRepositoryInfo(tsk task) (*string, error) {
-	data := buildRepositoryTemplateData(tsk)
 
-	// Create template with helper functions
-	funcMap := template.FuncMap{
-		"indent": func(prefix string, text string) string {
-			prefixed := strings.Builder{}
-			for line := range strings.Lines(text) {
-				prefixed.WriteString(prefix)
-				prefixed.WriteString(line)
-			}
-			return prefixed.String()
-		},
-	}
-
-	tmpl, err := template.New("repository_info").Funcs(funcMap).Parse(repositoryInfoTemplate)
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse repository info template: %w", err)
-	}
-
-	var buf bytes.Buffer
-	err = tmpl.Execute(&buf, data)
-	if err != nil {
-		return nil, fmt.Errorf("failed to execute repository info template: %w", err)
-	}
-
-	result := buf.String()
-	return &result, nil
-}
 
 // Helper functions to convert GitHub types to template types
 
@@ -408,48 +391,7 @@ func buildTemplateData(tsk task) promptTemplateData {
 	return data
 }
 
-// buildRepositoryTemplateData creates the data structure for repository info template rendering
-func buildRepositoryTemplateData(tsk task) repositoryInfoTemplateData {
-	data := repositoryInfoTemplateData{}
 
-	// Basic repository information
-	if tsk.Repository != nil && tsk.Repository.FullName != nil {
-		data.Repository = *tsk.Repository.FullName
-	} else {
-		data.Repository = "unknown"
-	}
-
-	if tsk.CodebaseInfo != nil {
-		data.MainLanguage = tsk.CodebaseInfo.MainLanguage
-	}
-	if data.MainLanguage == "" {
-		data.MainLanguage = "unknown"
-	}
-
-	// Style guides
-	if tsk.StyleGuide != nil {
-		data.StyleGuides = tsk.StyleGuide.Guides
-	}
-
-	// Codebase information
-	if tsk.CodebaseInfo != nil {
-		if tsk.CodebaseInfo.ReadmeContent != "" {
-			data.ReadmeContent = truncateString(tsk.CodebaseInfo.ReadmeContent, 1000)
-		}
-
-		if len(tsk.CodebaseInfo.FileTree) > 0 {
-			maxFiles := 1000
-			if len(tsk.CodebaseInfo.FileTree) > maxFiles {
-				data.FileTree = tsk.CodebaseInfo.FileTree[:maxFiles]
-				data.FileTreeTruncatedCount = len(tsk.CodebaseInfo.FileTree) - maxFiles
-			} else {
-				data.FileTree = tsk.CodebaseInfo.FileTree
-			}
-		}
-	}
-
-	return data
-}
 
 // truncateString truncates a string to a maximum length
 func truncateString(s string, maxLen int) string {
