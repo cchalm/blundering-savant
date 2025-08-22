@@ -11,11 +11,11 @@ import (
 	"github.com/google/go-github/v72/github"
 )
 
+//go:embed system_prompt.tmpl
+var systemPromptTemplate string
+
 //go:embed prompt_template.tmpl
 var promptTemplate string
-
-//go:embed repository_info_template.tmpl
-var repositoryInfoTemplate string
 
 // Custom types for template data to avoid pointer dereferencing in templates
 
@@ -64,10 +64,16 @@ type reviewCommentThreadData []reviewCommentData
 
 // promptTemplateData holds the data used to render the prompt template
 type promptTemplateData struct {
+	Repository             string
+	MainLanguage           string
 	IssueNumber            int
 	IssueTitle             string
 	IssueBody              string
 	PullRequestNumber      *int
+	StyleGuides            map[string]string // path -> content
+	ReadmeContent          string
+	FileTree               []string
+	FileTreeTruncatedCount int // The number of files that were truncated from the file tree to cap length
 	HasConversationHistory bool
 	// Conversation data structures for template to format
 	IssueComments                      []commentData
@@ -82,35 +88,25 @@ type promptTemplateData struct {
 	ValidationResult                   ValidationResult
 }
 
-// BuildRepositoryInfo generates the repository-specific content block for Claude
-func BuildRepositoryInfo(tsk task) (*string, error) {
-	data := buildRepositoryTemplateData(tsk)
-
-	// Create template with helper functions
-	funcMap := template.FuncMap{
-		"indent": func(prefix string, text string) string {
-			prefixed := strings.Builder{}
-			for line := range strings.Lines(text) {
-				prefixed.WriteString(prefix)
-				prefixed.WriteString(line)
-			}
-			return prefixed.String()
-		},
-	}
-
-	tmpl, err := template.New("repository_info").Funcs(funcMap).Parse(repositoryInfoTemplate)
+func BuildSystemPrompt(botName string, botUsername string) (string, error) {
+	tmpl, err := template.New("system prompt").Parse(systemPromptTemplate)
 	if err != nil {
-		return nil, fmt.Errorf("failed to parse repository info template: %w", err)
+		return "", fmt.Errorf("failed to parse system prompt template: %w", err)
 	}
 
 	var buf bytes.Buffer
-	err = tmpl.Execute(&buf, data)
+	err = tmpl.Execute(&buf, struct {
+		BotName     string
+		BotUsername string
+	}{
+		BotName:     botName,
+		BotUsername: botUsername,
+	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to execute repository info template: %w", err)
+		return "", fmt.Errorf("failed to execute system prompt template: %w", err)
 	}
 
-	result := buf.String()
-	return &result, nil
+	return buf.String(), nil
 }
 
 // BuildPrompt generates the complete prompt for Claude based on the context
@@ -263,21 +259,11 @@ func derefOr[T any](ptr *T, defaultVal T) T {
 	return *ptr
 }
 
-// repositoryTemplateData holds repository-specific data that can be cached
-type repositoryTemplateData struct {
-	Repository             string
-	MainLanguage           string
-	StyleGuides            map[string]string // path -> content
-	ReadmeContent          string
-	FileTree               []string
-	FileTreeTruncatedCount int // The number of files that were truncated from the file tree to cap length
-}
+// buildTemplateData creates the data structure for template rendering
+func buildTemplateData(tsk task) promptTemplateData {
+	data := promptTemplateData{}
 
-// buildRepositoryTemplateData creates the repository-specific data structure for template rendering
-func buildRepositoryTemplateData(tsk task) repositoryTemplateData {
-	data := repositoryTemplateData{}
-
-	// Basic repository information
+	// Basic repository and issue information
 	if tsk.Repository != nil && tsk.Repository.FullName != nil {
 		data.Repository = *tsk.Repository.FullName
 	} else {
@@ -289,6 +275,15 @@ func buildRepositoryTemplateData(tsk task) repositoryTemplateData {
 	}
 	if data.MainLanguage == "" {
 		data.MainLanguage = "unknown"
+	}
+
+	data.IssueNumber = tsk.Issue.number
+	data.IssueTitle = tsk.Issue.title
+	data.IssueBody = tsk.Issue.body
+
+	// Pull request information
+	if tsk.PullRequest != nil {
+		data.PullRequestNumber = &tsk.PullRequest.number
 	}
 
 	// Style guides
@@ -311,23 +306,6 @@ func buildRepositoryTemplateData(tsk task) repositoryTemplateData {
 				data.FileTree = tsk.CodebaseInfo.FileTree
 			}
 		}
-	}
-
-	return data
-}
-
-// buildTemplateData creates the data structure for template rendering
-func buildTemplateData(tsk task) promptTemplateData {
-	data := promptTemplateData{}
-
-	// Issue information
-	data.IssueNumber = tsk.Issue.number
-	data.IssueTitle = tsk.Issue.title
-	data.IssueBody = tsk.Issue.body
-
-	// Pull request information
-	if tsk.PullRequest != nil {
-		data.PullRequestNumber = &tsk.PullRequest.number
 	}
 
 	// Conversation history - convert GitHub types to template types

@@ -192,7 +192,7 @@ func (b *Bot) doTask(ctx context.Context, tsk task) (err error) {
 
 // processWithAI handles the AI interaction with text editor tool support
 func (b *Bot) processWithAI(ctx context.Context, task task, workspace Workspace) error {
-	maxIterations := 50
+	maxIterations := 500
 
 	// Create tool context
 	toolCtx := &ToolContext{
@@ -354,9 +354,6 @@ func (b *Bot) ensureLabelExists(ctx context.Context, owner, repo string, label g
 
 // Utility functions
 
-//go:embed system_prompt.md
-var systemPrompt string
-
 // initConversation either constructs a new conversation or resumes a previous conversation
 func (b *Bot) initConversation(ctx context.Context, tsk task, toolCtx *ToolContext) (*ClaudeConversation, *anthropic.Message, error) {
 	model := anthropic.ModelClaudeSonnet4_0
@@ -403,25 +400,20 @@ func (b *Bot) initConversation(ctx context.Context, tsk task, toolCtx *ToolConte
 		}
 		return conv, response, nil
 	} else {
+		systemPrompt, err := BuildSystemPrompt("Blundering Savant", tsk.BotUsername)
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to build system prompt: %w", err)
+		}
+
 		c := NewClaudeConversation(b.anthropicClient, model, maxTokens, tools, systemPrompt)
 
 		log.Printf("Sending initial message to AI")
-		
-		// Build repository-specific content (cacheable)
-		repositoryInfoPtr, err := BuildRepositoryInfo(tsk)
-		if err != nil {
-			return nil, nil, fmt.Errorf("failed to build repository info: %w", err)
-		}
-
-		// Build task-specific content
 		promptPtr, err := BuildPrompt(tsk)
 		if err != nil {
 			return nil, nil, fmt.Errorf("failed to build prompt: %w", err)
 		}
 
-		response, err := c.SendMessage(ctx, 
-			anthropic.NewTextBlock(*repositoryInfoPtr),
-			anthropic.NewTextBlock(*promptPtr))
+		response, err := c.SendMessage(ctx, anthropic.NewTextBlock(*promptPtr))
 		if err != nil {
 			return nil, nil, fmt.Errorf("failed to send initial message to AI: %w", err)
 		}
