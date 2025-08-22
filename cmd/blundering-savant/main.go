@@ -16,7 +16,6 @@ import (
 type Config struct {
 	GitHubToken               string
 	AnthropicAPIKey           string
-	GitHubUsername            string
 	ResumableConversationsDir string
 	CheckInterval             time.Duration
 	ValidationWorkflowName    string
@@ -44,14 +43,13 @@ func main() {
 	config := Config{
 		GitHubToken:               os.Getenv("GITHUB_TOKEN"),
 		AnthropicAPIKey:           os.Getenv("ANTHROPIC_API_KEY"),
-		GitHubUsername:            os.Getenv("GITHUB_USERNAME"),
 		ResumableConversationsDir: os.Getenv("RESUMABLE_CONVERSATIONS_DIR"),
 		CheckInterval:             5 * time.Minute, // Default
 		ValidationWorkflowName:    os.Getenv("VALIDATION_WORKFLOW_NAME"),
 	}
 
-	if config.GitHubToken == "" || config.AnthropicAPIKey == "" || config.GitHubUsername == "" {
-		log.Fatal("Missing required environment variables: GITHUB_TOKEN, ANTHROPIC_API_KEY, or GITHUB_USERNAME")
+	if config.GitHubToken == "" || config.AnthropicAPIKey == "" {
+		log.Fatal("Missing required environment variables: GITHUB_TOKEN, ANTHROPIC_API_KEY")
 	}
 
 	// Parse check interval if provided
@@ -67,15 +65,20 @@ func main() {
 	httpClient := oauth2.NewClient(ctx, tokenSource)
 	githubClient := github.NewClient(httpClient)
 
-	taskGen := newTaskGenerator(config, githubClient)
-	b := NewBot(config, githubClient)
+	githubUser, _, err := githubClient.Users.Get(ctx, "")
+	if err != nil {
+		log.Fatalf("failed to get github user: %v", err)
+	}
 
-	log.Printf("Bot started. Monitoring issues for @%s every %s", config.GitHubUsername, config.CheckInterval)
+	taskGen := newTaskGenerator(config, githubClient, githubUser)
+	b := NewBot(config, githubClient, githubUser)
+
+	log.Printf("Bot started. Monitoring issues for @%s every %s", *githubUser.Login, config.CheckInterval)
 
 	// Start generating tasks asynchronously
 	tasks := taskGen.generate(ctx)
 	// Start the bot, which will consume tasks. This is a synchronous call
-	err := b.Run(ctx, tasks)
+	err = b.Run(ctx, tasks)
 	if err != nil {
 		log.Fatalf("Bot encountered an error: %v", err)
 	}

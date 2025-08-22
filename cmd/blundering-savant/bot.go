@@ -41,7 +41,8 @@ type Bot struct {
 	toolRegistry           *ToolRegistry
 	workspaceFactory       WorkspaceFactory
 	resumableConversations ConversationHistoryStore
-	botName                string
+
+	user *github.User
 }
 
 type ConversationHistoryStore interface {
@@ -91,7 +92,7 @@ type ValidationResult struct {
 	Details   string
 }
 
-func NewBot(config Config, githubClient *github.Client) *Bot {
+func NewBot(config Config, githubClient *github.Client, githubUser *github.User) *Bot {
 	rateLimitedHTTPClient := &http.Client{
 		Transport: WithRateLimiting(nil),
 	}
@@ -113,7 +114,7 @@ func NewBot(config Config, githubClient *github.Client) *Bot {
 		resumableConversations: FileSystemConversationHistoryStore{
 			dir: config.ResumableConversationsDir,
 		},
-		botName: config.GitHubUsername,
+		user: githubUser,
 	}
 }
 
@@ -400,7 +401,7 @@ func (b *Bot) initConversation(ctx context.Context, tsk task, toolCtx *ToolConte
 		}
 		return conv, response, nil
 	} else {
-		systemPrompt, err := BuildSystemPrompt("Blundering Savant", tsk.BotUsername)
+		systemPrompt, err := BuildSystemPrompt("Blundering Savant", *b.user.Login)
 		if err != nil {
 			return nil, nil, fmt.Errorf("failed to build system prompt: %w", err)
 		}
