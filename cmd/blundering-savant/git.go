@@ -36,6 +36,20 @@ func NewGithubGitRepo(gitService *github.GitService, reposService *github.Reposi
 	}
 }
 
+func (ggr *githubGitRepo) GetBranchHead(ctx context.Context, branch string) (*github.Commit, error) {
+	ref, _, err := ggr.git.GetRef(ctx, ggr.owner, ggr.repo, fmt.Sprintf("refs/heads/%s", branch))
+	if err != nil {
+		return nil, fmt.Errorf("failed to get branch ref for '%s': %w", branch, err)
+	}
+
+	commit, _, err := ggr.git.GetCommit(ctx, ggr.owner, ggr.repo, *ref.Object.SHA)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get commit from ref: %w", err)
+	}
+
+	return commit, nil
+}
+
 // CreateBranch creates a new branch. If the branch already exists, CreateBranch does not return an error
 func (ggr *githubGitRepo) CreateBranch(ctx context.Context, baseBranch string, newBranch string) error {
 	// Check if branch already exists
