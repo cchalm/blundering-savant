@@ -355,9 +355,6 @@ func (b *Bot) ensureLabelExists(ctx context.Context, owner, repo string, label g
 
 // Utility functions
 
-//go:embed system_prompt.md
-var systemPrompt string
-
 // initConversation either constructs a new conversation or resumes a previous conversation
 func (b *Bot) initConversation(ctx context.Context, tsk task, toolCtx *ToolContext) (*ClaudeConversation, *anthropic.Message, error) {
 	model := anthropic.ModelClaudeSonnet4_0
