@@ -42,12 +42,14 @@ type taskOrError struct {
 type taskGenerator struct {
 	config       Config
 	githubClient *github.Client
+	githubUser   *github.User
 }
 
-func newTaskGenerator(config Config, githubClient *github.Client) *taskGenerator {
+func newTaskGenerator(config Config, githubClient *github.Client, githubUser *github.User) *taskGenerator {
 	return &taskGenerator{
 		config:       config,
 		githubClient: githubClient,
+		githubUser:   githubUser,
 	}
 }
 
@@ -67,12 +69,6 @@ func (tg *taskGenerator) generate(ctx context.Context) chan taskOrError {
 }
 
 func (tg *taskGenerator) yield(ctx context.Context, yield func(task task, err error)) {
-	botUser, _, err := tg.githubClient.Users.Get(ctx, tg.config.GitHubUsername)
-	if err != nil {
-		yield(task{}, fmt.Errorf("failed to get bot user: %w", err))
-		return
-	}
-
 	ticker := time.Tick(tg.config.CheckInterval)
 	for {
 		issues, err := tg.searchIssues(ctx)
@@ -84,7 +80,7 @@ func (tg *taskGenerator) yield(ctx context.Context, yield func(task task, err er
 		}
 
 		for _, issue := range issues {
-			tsk, err := tg.buildTask(ctx, issue, botUser)
+			tsk, err := tg.buildTask(ctx, issue, tg.githubUser)
 			if err != nil {
 				yield(task{}, fmt.Errorf("failed to build task for issue %d: %w", issue.number, err))
 			}
@@ -109,7 +105,7 @@ func (tg *taskGenerator) yield(ctx context.Context, yield func(task task, err er
 
 func (tg *taskGenerator) searchIssues(ctx context.Context) ([]githubIssue, error) {
 	// Search for issues assigned to the bot that are not being worked on and are not blocked
-	query := fmt.Sprintf("assignee:%s is:issue is:open -label:%s -label:%s", tg.config.GitHubUsername, *LabelWorking.Name, *LabelBlocked.Name)
+	query := fmt.Sprintf("assignee:%s is:issue is:open -label:%s -label:%s", *tg.githubUser.Login, *LabelWorking.Name, *LabelBlocked.Name)
 	result, _, err := tg.githubClient.Search.Issues(ctx, query, nil)
 	if err != nil {
 		return nil, fmt.Errorf("error searching issues: %w", err)
@@ -156,8 +152,7 @@ func (tg *taskGenerator) searchIssues(ctx context.Context) ([]githubIssue, error
 
 func (tg *taskGenerator) buildTask(ctx context.Context, issue githubIssue, botUser *github.User) (*task, error) {
 	tsk := task{
-		BotUsername: tg.config.GitHubUsername,
-		Issue:       issue,
+		Issue: issue,
 	}
 
 	owner, repo := issue.owner, issue.repo
@@ -174,7 +169,7 @@ func (tg *taskGenerator) buildTask(ctx context.Context, issue githubIssue, botUs
 	tsk.SourceBranch = getSourceBranchName(issue)
 
 	// Get the existing pull request, if any
-	pr, err := getPullRequest(ctx, tg.githubClient, owner, repo, tsk.SourceBranch, tsk.BotUsername)
+	pr, err := getPullRequest(ctx, tg.githubClient, owner, repo, tsk.SourceBranch, *botUser.Login)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get pull request for branch: %w", err)
 	}
