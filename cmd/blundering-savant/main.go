@@ -5,7 +5,6 @@ import (
 	"log"
 	"os"
 	"os/signal"
-	"time"
 
 	"github.com/google/go-github/v72/github"
 	"github.com/joho/godotenv"
