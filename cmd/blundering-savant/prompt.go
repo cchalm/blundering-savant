@@ -9,6 +9,8 @@ import (
 	"text/template"
 
 	"github.com/google/go-github/v72/github"
+
+	"github.com/cchalm/blundering-savant/internal/workspace"
 )
 
 //go:embed system_prompt.tmpl
@@ -87,7 +89,7 @@ type promptTemplateData struct {
 	PRCommentsRequiringResponses       []commentData
 	PRReviewCommentsRequiringResponses []reviewCommentData
 	HasUnpublishedChanges              bool
-	ValidationResult                   ValidationResult
+	ValidationResult                   workspace.ValidationResult
 }
 
 func BuildSystemPrompt(botName string, botUsername string) (string, error) {
