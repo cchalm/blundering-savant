@@ -49,7 +49,7 @@
 {{- else if eq .Type "tool_action"}}
 
 <details>
-<summary>{{toolSummary .ToolName .ToolInput .Command .Path}}{{if .TokenUsage}} • **Token Usage: {{.TokenUsage.InputTokens}} input, {{.TokenUsage.OutputTokens}} output**{{end}}</summary>
+<summary>{{toolSummary .ToolName .ToolInput .Command .Path}}{{if .TokenUsage}} • Token Usage: {{.TokenUsage.InputTokens}} input, {{.TokenUsage.OutputTokens}} output{{end}}</summary>
 
 **Tool:** `{{.ToolName}}`
 
