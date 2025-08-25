@@ -23,76 +23,6 @@ var repositoryPromptTemplate string
 //go:embed task_prompt.tmpl
 var taskPromptTemplate string
 
-// Custom types for template data to avoid pointer dereferencing in templates
-
-// userData represents a user in template data
-type userData struct {
-	Login string
-}
-
-// commentData represents a comment in template data
-type commentData struct {
-	ID                int64
-	Body              string
-	User              userData
-	AuthorAssociation string
-	CreatedAt         string
-	UpdatedAt         string
-	IsEdited          bool
-}
-
-// reviewData represents a PR review in template data
-type reviewData struct {
-	ID                int64
-	Body              string
-	User              userData
-	AuthorAssociation string
-	SubmittedAt       string
-	State             string
-}
-
-// reviewCommentData represents a PR review comment in template data
-type reviewCommentData struct {
-	ID                  int64
-	Body                string
-	User                userData
-	AuthorAssociation   string
-	CreatedAt           string
-	Path                string
-	Line                *int
-	StartLine           *int
-	DiffHunk            string
-	PullRequestReviewID *int64
-}
-
-// reviewCommentThreadData represents a thread of PR review comments
-type reviewCommentThreadData []reviewCommentData
-
-// promptTemplateData holds the data used to render the prompt template
-type promptTemplateData struct {
-	Repository             string
-	MainLanguage           string
-	IssueNumber            int
-	IssueTitle             string
-	IssueBody              string
-	PullRequestNumber      *int
-	StyleGuides            map[string]string // path -> content
-	ReadmeContent          string
-	FileTree               []string
-	FileTreeTruncatedCount int // The number of files that were truncated from the file tree to cap length
-	HasConversationHistory bool
-	// Conversation data structures for template to format
-	IssueComments                      []commentData
-	PRComments                         []commentData
-	PRReviewCommentThreads             []reviewCommentThreadData
-	PRReviews                          []reviewData
-	IssueCommentsRequiringResponses    []commentData
-	PRCommentsRequiringResponses       []commentData
-	PRReviewCommentsRequiringResponses []reviewCommentData
-	HasUnpublishedChanges              bool
-	ValidationResult                   validator.ValidationResult
-}
-
 func BuildSystemPrompt(botName string, botUsername string) (string, error) {
 	tmpl, err := template.New("system prompt").Parse(systemPromptTemplate)
 	if err != nil {
@@ -379,4 +309,74 @@ func truncateString(s string, maxLen int) string {
 		return s
 	}
 	return s[:maxLen] + "..."
+}
+
+// Custom types for template data to avoid pointer dereferencing in templates
+
+// userData represents a user in template data
+type userData struct {
+	Login string
+}
+
+// commentData represents a comment in template data
+type commentData struct {
+	ID                int64
+	Body              string
+	User              userData
+	AuthorAssociation string
+	CreatedAt         string
+	UpdatedAt         string
+	IsEdited          bool
+}
+
+// reviewData represents a PR review in template data
+type reviewData struct {
+	ID                int64
+	Body              string
+	User              userData
+	AuthorAssociation string
+	SubmittedAt       string
+	State             string
+}
+
+// reviewCommentData represents a PR review comment in template data
+type reviewCommentData struct {
+	ID                  int64
+	Body                string
+	User                userData
+	AuthorAssociation   string
+	CreatedAt           string
+	Path                string
+	Line                *int
+	StartLine           *int
+	DiffHunk            string
+	PullRequestReviewID *int64
+}
+
+// reviewCommentThreadData represents a thread of PR review comments
+type reviewCommentThreadData []reviewCommentData
+
+// promptTemplateData holds the data used to render the prompt template
+type promptTemplateData struct {
+	Repository             string
+	MainLanguage           string
+	IssueNumber            int
+	IssueTitle             string
+	IssueBody              string
+	PullRequestNumber      *int
+	StyleGuides            map[string]string // path -> content
+	ReadmeContent          string
+	FileTree               []string
+	FileTreeTruncatedCount int // The number of files that were truncated from the file tree to cap length
+	HasConversationHistory bool
+	// Conversation data structures for template to format
+	IssueComments                      []commentData
+	PRComments                         []commentData
+	PRReviewCommentThreads             []reviewCommentThreadData
+	PRReviews                          []reviewData
+	IssueCommentsRequiringResponses    []commentData
+	PRCommentsRequiringResponses       []commentData
+	PRReviewCommentsRequiringResponses []reviewCommentData
+	HasUnpublishedChanges              bool
+	ValidationResult                   validator.ValidationResult
 }
