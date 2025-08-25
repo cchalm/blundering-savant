@@ -16,21 +16,21 @@ type TaskOrError struct {
 	Err  error
 }
 
-type taskGenerator struct {
+type generator struct {
 	checkInterval time.Duration
 	githubClient  *github.Client
 	githubUser    *github.User
 }
 
-func NewTaskGenerator(githubClient *github.Client, githubUser *github.User, checkInterval time.Duration) *taskGenerator {
-	return &taskGenerator{
+func NewGenerator(githubClient *github.Client, githubUser *github.User, checkInterval time.Duration) *generator {
+	return &generator{
 		checkInterval: checkInterval,
 		githubClient:  githubClient,
 		githubUser:    githubUser,
 	}
 }
 
-func (tg *taskGenerator) Generate(ctx context.Context) chan TaskOrError {
+func (tg *generator) Generate(ctx context.Context) chan TaskOrError {
 	tasks := make(chan TaskOrError)
 
 	go func() {
@@ -45,7 +45,7 @@ func (tg *taskGenerator) Generate(ctx context.Context) chan TaskOrError {
 	return tasks
 }
 
-func (tg *taskGenerator) yield(ctx context.Context, yield func(task Task, err error)) {
+func (tg *generator) yield(ctx context.Context, yield func(task Task, err error)) {
 	ticker := time.Tick(tg.checkInterval)
 	for {
 		issues, err := tg.searchIssues(ctx)
@@ -80,7 +80,7 @@ func (tg *taskGenerator) yield(ctx context.Context, yield func(task Task, err er
 	}
 }
 
-func (tg *taskGenerator) searchIssues(ctx context.Context) ([]GithubIssue, error) {
+func (tg *generator) searchIssues(ctx context.Context) ([]GithubIssue, error) {
 	// Search for issues assigned to the bot that are not being worked on and are not blocked
 	query := fmt.Sprintf("assignee:%s is:issue is:open -label:%s -label:%s", *tg.githubUser.Login, *LabelWorking.Name, *LabelBlocked.Name)
 	result, _, err := tg.githubClient.Search.Issues(ctx, query, nil)
@@ -127,7 +127,7 @@ func (tg *taskGenerator) searchIssues(ctx context.Context) ([]GithubIssue, error
 	return issues, nil
 }
 
-func (tg *taskGenerator) buildTask(ctx context.Context, issue GithubIssue, botUser *github.User) (*Task, error) {
+func (tg *generator) buildTask(ctx context.Context, issue GithubIssue, botUser *github.User) (*Task, error) {
 	tsk := Task{
 		Issue: issue,
 	}
@@ -228,7 +228,7 @@ func (tg *taskGenerator) buildTask(ctx context.Context, issue GithubIssue, botUs
 	return &tsk, nil
 }
 
-func (tg *taskGenerator) needsAttention(task Task) bool {
+func (tg *generator) needsAttention(task Task) bool {
 	if len(task.IssueComments) == 0 && task.PullRequest == nil {
 		// If there are no issue comments and no pull request, this is a brand new issue and requires our attention
 		return true
@@ -251,7 +251,7 @@ func (tg *taskGenerator) needsAttention(task Task) bool {
 // Repository analysis functions
 
 // findStyleGuides searches for coding style documentation
-func (tg *taskGenerator) findStyleGuides(ctx context.Context, owner, repo string) (*StyleGuide, error) {
+func (tg *generator) findStyleGuides(ctx context.Context, owner, repo string) (*StyleGuide, error) {
 	styleGuide := &StyleGuide{
 		Guides: map[string]string{},
 	}
@@ -283,7 +283,7 @@ func (tg *taskGenerator) findStyleGuides(ctx context.Context, owner, repo string
 }
 
 // analyzeCodebase examines the repository structure
-func (tg *taskGenerator) analyzeCodebase(ctx context.Context, owner, repo string) (*CodebaseInfo, error) {
+func (tg *generator) analyzeCodebase(ctx context.Context, owner, repo string) (*CodebaseInfo, error) {
 	info := &CodebaseInfo{
 		PackageInfo: make(map[string]string),
 	}
@@ -324,7 +324,7 @@ func (tg *taskGenerator) analyzeCodebase(ctx context.Context, owner, repo string
 }
 
 // getFileTree retrieves the complete file tree with safety limits
-func (tg *taskGenerator) getFileTree(ctx context.Context, owner, repo string) ([]string, error) {
+func (tg *generator) getFileTree(ctx context.Context, owner, repo string) ([]string, error) {
 	const (
 		maxFiles      = 2000
 		maxPathLength = 500
@@ -366,7 +366,7 @@ func (tg *taskGenerator) getFileTree(ctx context.Context, owner, repo string) ([
 // Comment retrieval functions
 
 // getAllIssueComments retrieves all comments on an issue
-func (tg *taskGenerator) getAllIssueComments(ctx context.Context, owner, repo string, issueNumber int) ([]*github.IssueComment, error) {
+func (tg *generator) getAllIssueComments(ctx context.Context, owner, repo string, issueNumber int) ([]*github.IssueComment, error) {
 	var allComments []*github.IssueComment
 
 	opts := &github.IssueListCommentsOptions{
@@ -394,7 +394,7 @@ func (tg *taskGenerator) getAllIssueComments(ctx context.Context, owner, repo st
 }
 
 // getAllPRReviews retrieves all reviews on a PR, sorted chronologically
-func (tg *taskGenerator) getAllPRReviews(ctx context.Context, owner, repo string, prNumber int) ([]*github.PullRequestReview, error) {
+func (tg *generator) getAllPRReviews(ctx context.Context, owner, repo string, prNumber int) ([]*github.PullRequestReview, error) {
 	var allReviews []*github.PullRequestReview
 
 	reviews, _, err := tg.githubClient.PullRequests.ListReviews(ctx, owner, repo, prNumber, nil)
@@ -414,7 +414,7 @@ func (tg *taskGenerator) getAllPRReviews(ctx context.Context, owner, repo string
 }
 
 // getAllPRComments retrieves all review comments on a PR, sorted chronologically
-func (tg *taskGenerator) getAllPRReviewComments(ctx context.Context, owner, repo string, prNumber int) ([]*github.PullRequestComment, error) {
+func (tg *generator) getAllPRReviewComments(ctx context.Context, owner, repo string, prNumber int) ([]*github.PullRequestComment, error) {
 	var allComments []*github.PullRequestComment
 
 	opts := &github.PullRequestListCommentsOptions{
@@ -452,7 +452,7 @@ func (tg *taskGenerator) getAllPRReviewComments(ctx context.Context, owner, repo
 // GitHub API helper functions
 
 // pickIssueCommentsRequiringResponse gets regular issue/PR comments that haven't been reacted to by the bot
-func (tg *taskGenerator) pickIssueCommentsRequiringResponse(ctx context.Context, owner, repo string, comments []*github.IssueComment, botUser *github.User) ([]*github.IssueComment, error) {
+func (tg *generator) pickIssueCommentsRequiringResponse(ctx context.Context, owner, repo string, comments []*github.IssueComment, botUser *github.User) ([]*github.IssueComment, error) {
 	var commentsRequiringResponse []*github.IssueComment
 
 	for _, comment := range comments {
@@ -477,7 +477,7 @@ func (tg *taskGenerator) pickIssueCommentsRequiringResponse(ctx context.Context,
 }
 
 // getReviewComments gets PR review comments that haven't been replied to or reacted to by the bot
-func (tg *taskGenerator) pickPRReviewCommentsRequiringResponse(ctx context.Context, owner, repo string, commentThreads [][]*github.PullRequestComment, botUser *github.User) ([]*github.PullRequestComment, error) {
+func (tg *generator) pickPRReviewCommentsRequiringResponse(ctx context.Context, owner, repo string, commentThreads [][]*github.PullRequestComment, botUser *github.User) ([]*github.PullRequestComment, error) {
 	var commentsRequiringResponse []*github.PullRequestComment
 
 	for _, thread := range commentThreads {
@@ -507,13 +507,13 @@ func (tg *taskGenerator) pickPRReviewCommentsRequiringResponse(ctx context.Conte
 }
 
 // isBotComment checks if a comment was made by the bot
-func (tg *taskGenerator) isBotComment(commentUser, botUser *github.User) bool {
+func (tg *generator) isBotComment(commentUser, botUser *github.User) bool {
 	return commentUser != nil && botUser.Login != nil &&
 		commentUser.Login != nil && *commentUser.Login == *botUser.Login
 }
 
 // hasBotReactedToIssueComment checks if the bot has reacted to an issue comment
-func (tg *taskGenerator) hasBotReactedToIssueComment(ctx context.Context, owner, repo string, commentID int64, botUser *github.User) (bool, error) {
+func (tg *generator) hasBotReactedToIssueComment(ctx context.Context, owner, repo string, commentID int64, botUser *github.User) (bool, error) {
 	if botUser.Login == nil {
 		return false, nil
 	}
@@ -534,7 +534,7 @@ func (tg *taskGenerator) hasBotReactedToIssueComment(ctx context.Context, owner,
 }
 
 // hasBotReactedToReviewComment checks if the bot has reacted to a review comment
-func (tg *taskGenerator) hasBotReactedToReviewComment(ctx context.Context, owner, repo string, commentID int64, botUser *github.User) (bool, error) {
+func (tg *generator) hasBotReactedToReviewComment(ctx context.Context, owner, repo string, commentID int64, botUser *github.User) (bool, error) {
 	if botUser.Login == nil {
 		return false, nil
 	}
