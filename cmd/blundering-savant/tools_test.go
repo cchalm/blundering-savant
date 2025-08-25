@@ -18,7 +18,7 @@ func testDeleteFileToolParseInput(t *testing.T, inputJSON []byte, wantError bool
 	if (err != nil) != wantError {
 		t.Errorf("ParseToolUse() error = %v, wantError %v", err, wantError)
 	}
-	
+
 	if !wantError && result == nil {
 		t.Error("Expected non-nil result for successful parse")
 	}
@@ -33,4 +33,3 @@ func TestDeleteFileTool_ParseInput_InvalidJSON(t *testing.T) {
 	invalidJSON := []byte(`{"path": "test.txt"`) // Missing closing brace
 	testDeleteFileToolParseInput(t, invalidJSON, true)
 }
-

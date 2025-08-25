@@ -13,6 +13,7 @@ import (
 	"github.com/anthropics/anthropic-sdk-go/option"
 	"github.com/google/go-github/v72/github"
 
+	"github.com/cchalm/blundering-savant/internal/ai"
 	"github.com/cchalm/blundering-savant/internal/task"
 	"github.com/cchalm/blundering-savant/internal/validator"
 )
@@ -32,9 +33,9 @@ type Bot struct {
 
 type ConversationHistoryStore interface {
 	// Get returns the conversation history stored at the given key, or nil if there is nothing stored at that key
-	Get(key string) (*conversationHistory, error)
+	Get(key string) (*ai.ConversationHistory, error)
 	// Set stores a conversation history with a key
-	Set(key string, value conversationHistory) error
+	Set(key string, value ai.ConversationHistory) error
 	// Delete deletes the conversation history stored at the given key
 	Delete(key string) error
 }
@@ -70,7 +71,7 @@ type WorkspaceFactory interface {
 
 func NewBot(config Config, githubClient *github.Client, githubUser *github.User) *Bot {
 	rateLimitedHTTPClient := &http.Client{
-		Transport: WithRateLimiting(nil),
+		Transport: ai.WithRateLimiting(nil),
 	}
 	anthropicClient := anthropic.NewClient(
 		option.WithHTTPClient(rateLimitedHTTPClient),
@@ -87,9 +88,9 @@ func NewBot(config Config, githubClient *github.Client, githubUser *github.User)
 			githubClient:           githubClient,
 			validationWorkflowName: config.ValidationWorkflowName,
 		},
-		resumableConversations: FileSystemConversationHistoryStore{
-			dir: config.ResumableConversationsDir,
-		},
+		resumableConversations: ai.NewFileSystemConversationHistoryStore(
+			config.ResumableConversationsDir,
+		),
 		user: githubUser,
 	}
 }
@@ -326,7 +327,7 @@ func (b *Bot) ensureLabelExists(ctx context.Context, owner, repo string, label g
 // Utility functions
 
 // initConversation either constructs a new conversation or resumes a previous conversation
-func (b *Bot) initConversation(ctx context.Context, tsk task.Task, toolCtx *ToolContext) (*ClaudeConversation, *anthropic.Message, error) {
+func (b *Bot) initConversation(ctx context.Context, tsk task.Task, toolCtx *ToolContext) (*ai.ClaudeConversation, *anthropic.Message, error) {
 	model := anthropic.ModelClaudeSonnet4_0
 	var maxTokens int64 = 64000
 
@@ -337,7 +338,7 @@ func (b *Bot) initConversation(ctx context.Context, tsk task.Task, toolCtx *Tool
 	tools := b.toolRegistry.GetAllToolParams()
 
 	if conversationStr != nil {
-		conv, err := ResumeClaudeConversation(b.anthropicClient, *conversationStr, model, maxTokens, tools)
+		conv, err := ai.ResumeClaudeConversation(b.anthropicClient, *conversationStr, model, maxTokens, tools)
 		if err != nil {
 			return nil, nil, fmt.Errorf("failed to resume conversation: %w", err)
 		}
@@ -349,7 +350,7 @@ func (b *Bot) initConversation(ctx context.Context, tsk task.Task, toolCtx *Tool
 
 		// Extract the last message of the resumed conversation. If it is a user message, send it and return the
 		// response. If it is an assistant response, simply return that
-		lastTurn := conv.messages[len(conv.messages)-1]
+		lastTurn := conv.Messages[len(conv.Messages)-1]
 		var response *anthropic.Message
 		if lastTurn.Response != nil {
 			// We should be careful here. Assistant message handling is not necessarily idempotent, e.g. if the bot
@@ -371,15 +372,15 @@ func (b *Bot) initConversation(ctx context.Context, tsk task.Task, toolCtx *Tool
 		}
 		return conv, response, nil
 	} else {
-		systemPrompt, err := BuildSystemPrompt("Blundering Savant", *b.user.Login)
+		systemPrompt, err := ai.BuildSystemPrompt("Blundering Savant", *b.user.Login)
 		if err != nil {
 			return nil, nil, fmt.Errorf("failed to build system prompt: %w", err)
 		}
 
-		c := NewClaudeConversation(b.anthropicClient, model, maxTokens, tools, systemPrompt)
+		c := ai.NewClaudeConversation(b.anthropicClient, model, maxTokens, tools, systemPrompt)
 
 		log.Printf("Sending initial message to AI")
-		repositoryContent, taskContent, err := BuildPrompt(tsk)
+		repositoryContent, taskContent, err := ai.BuildPrompt(tsk)
 		if err != nil {
 			return nil, nil, fmt.Errorf("failed to build prompt: %w", err)
 		}
@@ -396,9 +397,9 @@ func (b *Bot) initConversation(ctx context.Context, tsk task.Task, toolCtx *Tool
 	}
 }
 
-func (b *Bot) rerunStatefulToolCalls(ctx context.Context, toolCtx *ToolContext, conversation *ClaudeConversation) error {
-	for turnNumber, turn := range conversation.messages {
-		if turnNumber == len(conversation.messages)-1 {
+func (b *Bot) rerunStatefulToolCalls(ctx context.Context, toolCtx *ToolContext, conversation *ai.ClaudeConversation) error {
+	for turnNumber, turn := range conversation.Messages {
+		if turnNumber == len(conversation.Messages)-1 {
 			// Skip the last message in the conversation, since this message was not previously handled
 			break
 		}

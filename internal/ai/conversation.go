@@ -1,4 +1,4 @@
-package main
+package ai
 
 import (
 	"bytes"
@@ -20,7 +20,7 @@ type ClaudeConversation struct {
 	model        anthropic.Model
 	systemPrompt string
 	tools        []anthropic.ToolParam
-	messages     []conversationTurn
+	Messages     []conversationTurn
 
 	maxTokens int64 // Maximum number of output tokens per response
 }
@@ -52,7 +52,7 @@ func NewClaudeConversation(
 
 func ResumeClaudeConversation(
 	anthropicClient anthropic.Client,
-	history conversationHistory,
+	history ConversationHistory,
 	model anthropic.Model,
 	maxTokens int64,
 	tools []anthropic.ToolParam,
@@ -63,7 +63,7 @@ func ResumeClaudeConversation(
 		model:        model,
 		systemPrompt: history.SystemPrompt,
 		tools:        tools,
-		messages:     history.Messages,
+		Messages:     history.Messages,
 
 		maxTokens: maxTokens,
 	}
@@ -80,12 +80,12 @@ func (cc *ClaudeConversation) SendMessage(ctx context.Context, messageContent ..
 	}
 	*cacheControl = anthropic.NewCacheControlEphemeralParam()
 
-	cc.messages = append(cc.messages, conversationTurn{
+	cc.Messages = append(cc.Messages, conversationTurn{
 		UserMessage: anthropic.NewUserMessage(messageContent...),
 	})
 
 	messageParams := []anthropic.MessageParam{}
-	for _, turn := range cc.messages {
+	for _, turn := range cc.Messages {
 		messageParams = append(messageParams, turn.UserMessage)
 		if turn.Response != nil {
 			messageParams = append(messageParams, turn.Response.ToParam())
@@ -142,7 +142,7 @@ func (cc *ClaudeConversation) SendMessage(ctx context.Context, messageContent ..
 	)
 
 	// Record the repsonse
-	cc.messages[len(cc.messages)-1].Response = &response
+	cc.Messages[len(cc.Messages)-1].Response = &response
 
 	// Remove the cache control element from the conversation history. Anthropic's automatic prefix checking should
 	// reuse previously-cached sections without explicitly marking them as such in subsequent messages
@@ -162,17 +162,17 @@ func getLastCacheControl(content []anthropic.ContentBlockParamUnion) (*anthropic
 	return nil, fmt.Errorf("no cacheable blocks in content")
 }
 
-// conversationHistory contains a serializable and resumable snapshot of a ClaudeConversation
-type conversationHistory struct {
+// ConversationHistory contains a serializable and resumable snapshot of a ClaudeConversation
+type ConversationHistory struct {
 	SystemPrompt string             `json:"systemPrompt"`
 	Messages     []conversationTurn `json:"messages"`
 }
 
 // History returns a serializable conversation history
-func (cc *ClaudeConversation) History() conversationHistory {
-	return conversationHistory{
+func (cc *ClaudeConversation) History() ConversationHistory {
+	return ConversationHistory{
 		SystemPrompt: cc.systemPrompt,
-		Messages:     cc.messages,
+		Messages:     cc.Messages,
 	}
 }
 
