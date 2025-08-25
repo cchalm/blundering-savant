@@ -149,7 +149,7 @@ func (t *TextEditorTool) run(ctx context.Context, block anthropic.ToolUseBlock, 
 	}
 
 	if err != nil {
-		return nil, fmt.Errorf("error running tool: %w", err)
+		return nil, fmt.Errorf("error running command '%s': %w", input.Command, err)
 	}
 	return &result, nil
 }
@@ -247,7 +247,7 @@ func (t *TextEditorTool) executeCreate(ctx context.Context, input *TextEditorInp
 		return "", fmt.Errorf("error checking file existence: %w", err)
 	}
 	if exists {
-		return "", fmt.Errorf("file already exists: %s", input.Path)
+		return "", ToolInputError{fmt.Errorf("file already exists: %s", input.Path)}
 	}
 
 	err = fs.Write(ctx, input.Path, input.FileText)
@@ -466,7 +466,7 @@ func (t *PostCommentTool) Run(ctx context.Context, block anthropic.ToolUseBlock,
 		}
 	case "review":
 		if input.InReplyTo == nil {
-			return nil, fmt.Errorf("InReplyTo must be specified for review comments. The bot is currently unable to create top-level review comments")
+			return nil, ToolInputError{fmt.Errorf("InReplyTo must be specified for review comments. The bot is currently unable to create top-level review comments")}
 		}
 		_, _, err = toolCtx.GithubClient.PullRequests.CreateCommentInReplyTo(
 			ctx,
@@ -749,6 +749,10 @@ func (t *PublishChangesForReviewTool) Run(ctx context.Context, block anthropic.T
 		}
 	}
 
+	if toolCtx.Workspace.HasLocalChanges() {
+		return nil, ToolInputError{fmt.Errorf("cannot publish while there are unvalidated changes in the workspace")}
+	}
+
 	err = toolCtx.Workspace.PublishChangesForReview(ctx, input.PullRequestTitle, input.PullRequestBody)
 	if err != nil {
 		return nil, fmt.Errorf("failed to publish changes: %w", err)
@@ -785,7 +789,7 @@ func NewReportLimitationTool() *ReportLimitationTool {
 // GetToolParam returns the tool parameter definition
 func (t *ReportLimitationTool) GetToolParam() anthropic.ToolParam {
 	return anthropic.ToolParam{
-		Name: t.Name,
+		Name:        t.Name,
 		Description: anthropic.String("Report when you need to perform an action that you don't have a tool for. Use this instead of trying workarounds with available tools."),
 		InputSchema: anthropic.ToolInputSchemaParam{
 			Properties: map[string]any{
@@ -840,11 +844,11 @@ func (t *ReportLimitationTool) Run(ctx context.Context, block anthropic.ToolUseB
 	report.WriteString("## Tool Limitation Report\n\n")
 	report.WriteString(fmt.Sprintf("**Action needed:** %s\n\n", input.Action))
 	report.WriteString(fmt.Sprintf("**Reason:** %s\n\n", input.Reason))
-	
+
 	if input.Suggestions != "" {
 		report.WriteString(fmt.Sprintf("**Suggestions:** %s\n\n", input.Suggestions))
 	}
-	
+
 	report.WriteString("This action cannot be performed with the currently available tools. ")
 	report.WriteString("Human intervention or additional tool support may be required.")
 
@@ -946,10 +950,14 @@ func (r *ToolRegistry) ReplayToolUse(ctx context.Context, toolUseBlock anthropic
 
 	var tie ToolInputError
 	if errors.As(err, &tie) {
-		// If the error is an input issue, the reporting of that error is already in the conversation history, so there
-		// is no need to repeat it. Do nothing
+		// If the error is an input issue, one of two things has probably happened:
+		// - The original call had an input issue, in which case that error was reported to the bot and is already in
+		//   the conversation history
+		// - The original call was successful but repeating it produces an expected error (e.g. cannot create file that
+		//   already exists)
+		// In either case, there is no need to do anything
 	} else if err != nil {
-		return fmt.Errorf("error while running tool: %w", err)
+		return fmt.Errorf("error while replaying tool: %w", err)
 	}
 	return nil
 }

@@ -74,7 +74,8 @@ type Workspace interface {
 	ValidateChanges(ctx context.Context, commitMessage *string) (ValidationResult, error)
 	// PublishChangesForReview makes validated changes available for review. reviewRequestTitle and reviewRequestBody
 	// are only used the first time a review is published, subsequent publishes will ignore these parameters and update
-	// the existing review
+	// the existing review. PublishChangesForReview will return an error if there are unvalidated local changes in the
+	// workspace; all local changes must be validated before calling PublishChangesForReview
 	PublishChangesForReview(ctx context.Context, reviewRequestTitle string, reviewRequestBody string) error
 }
 
@@ -406,7 +407,7 @@ func (b *Bot) initConversation(ctx context.Context, tsk task, toolCtx *ToolConte
 		// Send repository content as cacheable block, followed by task-specific content
 		repositoryBlock := anthropic.NewTextBlock(repositoryContent)
 		taskBlock := anthropic.NewTextBlock(taskContent)
-		
+
 		response, err := c.SendMessage(ctx, repositoryBlock, taskBlock)
 		if err != nil {
 			return nil, nil, fmt.Errorf("failed to send initial message to AI: %w", err)
