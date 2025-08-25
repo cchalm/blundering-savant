@@ -1,4 +1,4 @@
-package main
+package task
 
 import (
 	"context"
@@ -11,56 +11,33 @@ import (
 	"github.com/google/go-github/v72/github"
 )
 
-type githubIssue struct {
-	owner  string
-	repo   string
-	number int
-
-	title string
-	body  string
-	url   string
-
-	labels []string
-}
-
-type githubPullRequest struct {
-	owner  string
-	repo   string
-	number int
-
-	title string
-	url   string
-
-	baseBranch string
-}
-
-type taskOrError struct {
-	task task
-	err  error
+type TaskOrError struct {
+	Task Task
+	Err  error
 }
 
 type taskGenerator struct {
-	config       Config
-	githubClient *github.Client
-	githubUser   *github.User
+	checkInterval time.Duration
+	githubClient  *github.Client
+	githubUser    *github.User
 }
 
-func newTaskGenerator(config Config, githubClient *github.Client, githubUser *github.User) *taskGenerator {
+func NewTaskGenerator(githubClient *github.Client, githubUser *github.User, checkInterval time.Duration) *taskGenerator {
 	return &taskGenerator{
-		config:       config,
-		githubClient: githubClient,
-		githubUser:   githubUser,
+		checkInterval: checkInterval,
+		githubClient:  githubClient,
+		githubUser:    githubUser,
 	}
 }
 
-func (tg *taskGenerator) generate(ctx context.Context) chan taskOrError {
-	tasks := make(chan taskOrError)
+func (tg *taskGenerator) Generate(ctx context.Context) chan TaskOrError {
+	tasks := make(chan TaskOrError)
 
 	go func() {
 		defer close(tasks)
 		for {
-			tg.yield(ctx, func(task task, err error) {
-				tasks <- taskOrError{task: task, err: err}
+			tg.yield(ctx, func(task Task, err error) {
+				tasks <- TaskOrError{Task: task, Err: err}
 			})
 		}
 	}()
@@ -68,8 +45,8 @@ func (tg *taskGenerator) generate(ctx context.Context) chan taskOrError {
 	return tasks
 }
 
-func (tg *taskGenerator) yield(ctx context.Context, yield func(task task, err error)) {
-	ticker := time.Tick(tg.config.CheckInterval)
+func (tg *taskGenerator) yield(ctx context.Context, yield func(task Task, err error)) {
+	ticker := time.Tick(tg.checkInterval)
 	for {
 		issues, err := tg.searchIssues(ctx)
 		if err != nil {
@@ -82,28 +59,28 @@ func (tg *taskGenerator) yield(ctx context.Context, yield func(task task, err er
 		for _, issue := range issues {
 			tsk, err := tg.buildTask(ctx, issue, tg.githubUser)
 			if err != nil {
-				yield(task{}, fmt.Errorf("failed to build task for issue %d: %w", issue.number, err))
+				yield(Task{}, fmt.Errorf("failed to build task for issue %d: %w", issue.Number, err))
 			}
 
 			if tg.needsAttention(*tsk) {
-				log.Printf("[taskgen] Yielding task for issue #%d in %s/%s", issue.number, issue.owner, issue.repo)
+				log.Printf("[taskgen] Yielding task for issue #%d in %s/%s", issue.Number, issue.Owner, issue.Repo)
 				yield(*tsk, nil)
 			} else {
-				log.Printf("[taskgen] Skipping issue #%d in %s/%s: no attention needed", issue.number, issue.owner, issue.repo)
+				log.Printf("[taskgen] Skipping issue #%d in %s/%s: no attention needed", issue.Number, issue.Owner, issue.Repo)
 			}
 		}
 
-		log.Printf("[taskgen] Waiting for next check (up to %v)\n", tg.config.CheckInterval)
+		log.Printf("[taskgen] Waiting for next check (up to %v)\n", tg.checkInterval)
 		select {
 		case <-ticker:
 		case <-ctx.Done():
-			yield(task{}, ctx.Err())
+			yield(Task{}, ctx.Err())
 			return
 		}
 	}
 }
 
-func (tg *taskGenerator) searchIssues(ctx context.Context) ([]githubIssue, error) {
+func (tg *taskGenerator) searchIssues(ctx context.Context) ([]GithubIssue, error) {
 	// Search for issues assigned to the bot that are not being worked on and are not blocked
 	query := fmt.Sprintf("assignee:%s is:issue is:open -label:%s -label:%s", *tg.githubUser.Login, *LabelWorking.Name, *LabelBlocked.Name)
 	result, _, err := tg.githubClient.Search.Issues(ctx, query, nil)
@@ -112,7 +89,7 @@ func (tg *taskGenerator) searchIssues(ctx context.Context) ([]githubIssue, error
 	}
 
 	// Convert issue response into simpler structures
-	issues := []githubIssue{}
+	issues := []GithubIssue{}
 	for _, issue := range result.Issues {
 		if issue == nil || issue.RepositoryURL == nil || issue.Number == nil || issue.Title == nil || issue.URL == nil {
 			log.Print("[taskgen] Warning: unexpected nil, skipping issue")
@@ -134,28 +111,28 @@ func (tg *taskGenerator) searchIssues(ctx context.Context) ([]githubIssue, error
 			labels = append(labels, *label.Name)
 		}
 
-		issues = append(issues, githubIssue{
-			owner:  owner,
-			repo:   repo,
-			number: *issue.Number,
+		issues = append(issues, GithubIssue{
+			Owner:  owner,
+			Repo:   repo,
+			Number: *issue.Number,
 
-			title: *issue.Title,
-			body:  issue.GetBody(),
-			url:   *issue.URL,
+			Title: *issue.Title,
+			Body:  issue.GetBody(),
+			URL:   *issue.URL,
 
-			labels: labels,
+			Labels: labels,
 		})
 	}
 
 	return issues, nil
 }
 
-func (tg *taskGenerator) buildTask(ctx context.Context, issue githubIssue, botUser *github.User) (*task, error) {
-	tsk := task{
+func (tg *taskGenerator) buildTask(ctx context.Context, issue GithubIssue, botUser *github.User) (*Task, error) {
+	tsk := Task{
 		Issue: issue,
 	}
 
-	owner, repo := issue.owner, issue.repo
+	owner, repo := issue.Owner, issue.Repo
 
 	repoInfo, _, err := tg.githubClient.Repositories.Get(ctx, owner, repo)
 	if err != nil {
@@ -196,7 +173,7 @@ func (tg *taskGenerator) buildTask(ctx context.Context, issue githubIssue, botUs
 	}
 	tsk.CodebaseInfo = codebaseInfo
 
-	comments, err := tg.getAllIssueComments(ctx, owner, repo, issue.number)
+	comments, err := tg.getAllIssueComments(ctx, owner, repo, issue.Number)
 	if err != nil {
 		log.Printf("[taskgen] Warning: Could not get issue comments: %v", err)
 	}
@@ -205,21 +182,21 @@ func (tg *taskGenerator) buildTask(ctx context.Context, issue githubIssue, botUs
 	// If there is a PR, get PR comments, reviews, and review comments
 	if pr != nil {
 		// Get PR comments
-		comments, err := tg.getAllIssueComments(ctx, owner, repo, pr.number)
+		comments, err := tg.getAllIssueComments(ctx, owner, repo, pr.Number)
 		if err != nil {
 			return nil, fmt.Errorf("could not get pull request comments: %w", err)
 		}
 		tsk.PRComments = comments
 
 		// Get reviews
-		reviews, err := tg.getAllPRReviews(ctx, owner, repo, pr.number)
+		reviews, err := tg.getAllPRReviews(ctx, owner, repo, pr.Number)
 		if err != nil {
 			return nil, fmt.Errorf("could not get PR reviews: %w", err)
 		}
 		tsk.PRReviews = reviews
 
 		// Get PR review comment threads
-		reviewComments, err := tg.getAllPRReviewComments(ctx, owner, repo, pr.number)
+		reviewComments, err := tg.getAllPRReviewComments(ctx, owner, repo, pr.Number)
 		if err != nil {
 			return nil, fmt.Errorf("could not get PR comments: %w", err)
 		}
@@ -251,7 +228,7 @@ func (tg *taskGenerator) buildTask(ctx context.Context, issue githubIssue, botUs
 	return &tsk, nil
 }
 
-func (tg *taskGenerator) needsAttention(task task) bool {
+func (tg *taskGenerator) needsAttention(task Task) bool {
 	if len(task.IssueComments) == 0 && task.PullRequest == nil {
 		// If there are no issue comments and no pull request, this is a brand new issue and requires our attention
 		return true
@@ -264,7 +241,7 @@ func (tg *taskGenerator) needsAttention(task task) bool {
 		return true
 	}
 	// Check if there is a "bot turn" label, which is a manual prompt for the bot to take action
-	if slices.Contains(task.Issue.labels, *LabelBotTurn.Name) {
+	if slices.Contains(task.Issue.Labels, *LabelBotTurn.Name) {
 		return true
 	}
 
@@ -579,7 +556,7 @@ func (tg *taskGenerator) hasBotReactedToReviewComment(ctx context.Context, owner
 
 // getPullRequest returns a pull request by source branch and owner, if exactly one such pull request exists. If no such
 // pull request exists, returns (nil, nil). If more than one such pull request exists, returns an error
-func getPullRequest(ctx context.Context, githubClient *github.Client, owner, repo, branch, author string) (*githubPullRequest, error) {
+func getPullRequest(ctx context.Context, githubClient *github.Client, owner, repo, branch, author string) (*GithubPullRequest, error) {
 	query := fmt.Sprintf("type:pr repo:%s/%s head:%s author:%s", owner, repo, branch, author)
 
 	opts := &github.SearchOptions{
@@ -611,15 +588,15 @@ func getPullRequest(ctx context.Context, githubClient *github.Client, owner, rep
 		return nil, fmt.Errorf("unexpected nil in pull request struct")
 	}
 
-	return &githubPullRequest{
-		owner:  owner,
-		repo:   repo,
-		number: *pr.Number,
+	return &GithubPullRequest{
+		Owner:  owner,
+		Repo:   repo,
+		Number: *pr.Number,
 
-		title: *pr.Title,
-		url:   *pr.URL,
+		Title: *pr.Title,
+		URL:   *pr.URL,
 
-		baseBranch: *pr.Base.Ref,
+		BaseBranch: *pr.Base.Ref,
 	}, nil
 }
 
@@ -654,4 +631,35 @@ func organizePRReviewCommentsIntoThreads(comments []*github.PullRequestComment) 
 	}
 
 	return threads, nil
+}
+
+func getSourceBranchName(issue GithubIssue) string {
+	branchName := fmt.Sprintf("fix/issue-%d-%s", issue.Number, sanitizeForBranchName(issue.Title))
+	return normalizeBranchName(branchName)
+}
+
+func sanitizeForBranchName(s string) string {
+	// Convert to lowercase and replace invalid characters
+	s = strings.ToLower(s)
+	s = strings.ReplaceAll(s, " ", "-")
+	s = strings.ReplaceAll(s, "_", "-")
+
+	// Remove invalid characters for git branch names
+	invalidChars := []string{"~", "^", ":", "?", "*", "[", "]", "\\", "..", "@{", "/.", "//"}
+	for _, char := range invalidChars {
+		s = strings.ReplaceAll(s, char, "")
+	}
+
+	return s
+}
+
+func normalizeBranchName(s string) string {
+	// Limit length
+	if len(s) > 70 {
+		s = s[:70]
+	}
+	// Clean up trailing separators
+	s = strings.Trim(s, "-.")
+
+	return s
 }

@@ -1,4 +1,4 @@
-package main
+package ai
 
 import (
 	"bytes"
@@ -76,7 +76,7 @@ func (cc *ClaudeConversation) buildMarkdownData() (*conversationMarkdownData, er
 	pendingToolUses := make(map[string]conversationMessage) // toolID -> pointer to message
 
 	// Process each turn
-	for _, turn := range cc.messages {
+	for _, turn := range cc.Messages {
 		// Process user message (which might contain text, tool results, etc.)
 		userMessages := convertUserMessage(turn.UserMessage, pendingToolUses)
 		data.Messages = append(data.Messages, userMessages...)

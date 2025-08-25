@@ -9,6 +9,8 @@ import (
 	"strings"
 
 	"github.com/anthropics/anthropic-sdk-go"
+	"github.com/cchalm/blundering-savant/internal/task"
+	"github.com/cchalm/blundering-savant/internal/workspace"
 	"github.com/google/go-github/v72/github"
 )
 
@@ -34,7 +36,7 @@ type AnthropicTool interface {
 // ToolContext provides context needed by tools during execution
 type ToolContext struct {
 	Workspace    Workspace
-	Task         task
+	Task         task.Task
 	GithubClient *github.Client
 }
 
@@ -155,7 +157,7 @@ func (t *TextEditorTool) run(ctx context.Context, block anthropic.ToolUseBlock, 
 }
 
 // Implementation methods for each command
-func (t *TextEditorTool) executeView(ctx context.Context, input *TextEditorInput, fs FileSystem) (string, error) {
+func (t *TextEditorTool) executeView(ctx context.Context, input *TextEditorInput, fs workspace.FileSystem) (string, error) {
 	if fs == nil {
 		return "", fmt.Errorf("file system not initialized")
 	}
@@ -179,7 +181,7 @@ func (t *TextEditorTool) executeView(ctx context.Context, input *TextEditorInput
 	}
 
 	content, err := fs.Read(ctx, input.Path)
-	if errors.Is(err, ErrFileNotFound) {
+	if errors.Is(err, workspace.ErrFileNotFound) {
 		return "", ToolInputError{err}
 	} else if err != nil {
 		return "", fmt.Errorf("error reading file: %w", err)
@@ -216,9 +218,9 @@ func (t *TextEditorTool) executeView(ctx context.Context, input *TextEditorInput
 	return result.String(), nil
 }
 
-func (t *TextEditorTool) executeStrReplace(ctx context.Context, input *TextEditorInput, fs FileSystem) (string, error) {
+func (t *TextEditorTool) executeStrReplace(ctx context.Context, input *TextEditorInput, fs workspace.FileSystem) (string, error) {
 	content, err := fs.Read(ctx, input.Path)
-	if errors.Is(err, ErrFileNotFound) {
+	if errors.Is(err, workspace.ErrFileNotFound) {
 		return "", ToolInputError{err}
 	} else if err != nil {
 		return "", fmt.Errorf("error reading file: %w", err)
@@ -241,7 +243,7 @@ func (t *TextEditorTool) executeStrReplace(ctx context.Context, input *TextEdito
 	return fmt.Sprintf("Successfully replaced text in %s", input.Path), nil
 }
 
-func (t *TextEditorTool) executeCreate(ctx context.Context, input *TextEditorInput, fs FileSystem) (string, error) {
+func (t *TextEditorTool) executeCreate(ctx context.Context, input *TextEditorInput, fs workspace.FileSystem) (string, error) {
 	exists, err := fs.FileExists(ctx, input.Path)
 	if err != nil {
 		return "", fmt.Errorf("error checking file existence: %w", err)
@@ -258,9 +260,9 @@ func (t *TextEditorTool) executeCreate(ctx context.Context, input *TextEditorInp
 	return fmt.Sprintf("Successfully created file %s", input.Path), nil
 }
 
-func (t *TextEditorTool) executeInsert(ctx context.Context, input *TextEditorInput, fs FileSystem) (string, error) {
+func (t *TextEditorTool) executeInsert(ctx context.Context, input *TextEditorInput, fs workspace.FileSystem) (string, error) {
 	content, err := fs.Read(ctx, input.Path)
-	if errors.Is(err, ErrFileNotFound) {
+	if errors.Is(err, workspace.ErrFileNotFound) {
 		return "", ToolInputError{err}
 	} else if err != nil {
 		return "", fmt.Errorf("error reading file: %w", err)
@@ -450,7 +452,7 @@ func (t *PostCommentTool) Run(ctx context.Context, block anthropic.ToolUseBlock,
 		comment := &github.IssueComment{
 			Body: github.Ptr(input.Body),
 		}
-		_, _, err = toolCtx.GithubClient.Issues.CreateComment(ctx, toolCtx.Task.Issue.owner, toolCtx.Task.Issue.repo, toolCtx.Task.Issue.number, comment)
+		_, _, err = toolCtx.GithubClient.Issues.CreateComment(ctx, toolCtx.Task.Issue.Owner, toolCtx.Task.Issue.Repo, toolCtx.Task.Issue.Number, comment)
 		if err != nil {
 			return nil, err
 		}
@@ -459,7 +461,7 @@ func (t *PostCommentTool) Run(ctx context.Context, block anthropic.ToolUseBlock,
 			comment := &github.IssueComment{
 				Body: github.Ptr(input.Body),
 			}
-			_, _, err = toolCtx.GithubClient.Issues.CreateComment(ctx, toolCtx.Task.Issue.owner, toolCtx.Task.Issue.repo, toolCtx.Task.PullRequest.number, comment)
+			_, _, err = toolCtx.GithubClient.Issues.CreateComment(ctx, toolCtx.Task.Issue.Owner, toolCtx.Task.Issue.Repo, toolCtx.Task.PullRequest.Number, comment)
 			if err != nil {
 				return nil, err
 			}
@@ -470,9 +472,9 @@ func (t *PostCommentTool) Run(ctx context.Context, block anthropic.ToolUseBlock,
 		}
 		_, _, err = toolCtx.GithubClient.PullRequests.CreateCommentInReplyTo(
 			ctx,
-			toolCtx.Task.Issue.owner,
-			toolCtx.Task.Issue.repo,
-			toolCtx.Task.PullRequest.number,
+			toolCtx.Task.Issue.Owner,
+			toolCtx.Task.Issue.Repo,
+			toolCtx.Task.PullRequest.Number,
 			input.Body,
 			*input.InReplyTo,
 		)
@@ -564,12 +566,12 @@ func (t *AddReactionTool) Run(ctx context.Context, block anthropic.ToolUseBlock,
 
 	switch input.CommentType {
 	case "issue", "PR":
-		_, _, err = toolCtx.GithubClient.Reactions.CreateIssueCommentReaction(ctx, toolCtx.Task.Issue.owner, toolCtx.Task.Issue.repo, input.CommentID, input.Reaction)
+		_, _, err = toolCtx.GithubClient.Reactions.CreateIssueCommentReaction(ctx, toolCtx.Task.Issue.Owner, toolCtx.Task.Issue.Repo, input.CommentID, input.Reaction)
 		if err != nil {
 			return nil, err
 		}
 	case "PR review":
-		_, _, err = toolCtx.GithubClient.Reactions.CreatePullRequestCommentReaction(ctx, toolCtx.Task.Issue.owner, toolCtx.Task.Issue.repo, input.CommentID, input.Reaction)
+		_, _, err = toolCtx.GithubClient.Reactions.CreatePullRequestCommentReaction(ctx, toolCtx.Task.Issue.Owner, toolCtx.Task.Issue.Repo, input.CommentID, input.Reaction)
 		if err != nil {
 			return nil, err
 		}
@@ -856,7 +858,7 @@ func (t *ReportLimitationTool) Run(ctx context.Context, block anthropic.ToolUseB
 	comment := &github.IssueComment{
 		Body: github.Ptr(report.String()),
 	}
-	_, _, err = toolCtx.GithubClient.Issues.CreateComment(ctx, toolCtx.Task.Issue.owner, toolCtx.Task.Issue.repo, toolCtx.Task.Issue.number, comment)
+	_, _, err = toolCtx.GithubClient.Issues.CreateComment(ctx, toolCtx.Task.Issue.Owner, toolCtx.Task.Issue.Repo, toolCtx.Task.Issue.Number, comment)
 	if err != nil {
 		return nil, fmt.Errorf("failed to post limitation report: %w", err)
 	}

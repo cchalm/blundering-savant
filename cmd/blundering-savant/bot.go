@@ -12,24 +12,11 @@ import (
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/option"
 	"github.com/google/go-github/v72/github"
-)
 
-var (
-	LabelWorking = github.Label{
-		Name:        github.Ptr("bot-working"),
-		Description: github.Ptr("the bot is actively working on this issue"),
-		Color:       github.Ptr("fbca04"),
-	}
-	LabelBlocked = github.Label{
-		Name:        github.Ptr("bot-blocked"),
-		Description: github.Ptr("the bot encountered a problem and needs human intervention to continue working on this issue"),
-		Color:       github.Ptr("f03010"),
-	}
-	LabelBotTurn = github.Label{
-		Name:        github.Ptr("bot-turn"),
-		Description: github.Ptr("it is the bot's turn to take action on this issue"),
-		Color:       github.Ptr("2020f0"),
-	}
+	"github.com/cchalm/blundering-savant/internal/ai"
+	"github.com/cchalm/blundering-savant/internal/task"
+	"github.com/cchalm/blundering-savant/internal/validator"
+	"github.com/cchalm/blundering-savant/internal/workspace"
 )
 
 // Bot represents an AI developer capable of addressing GitHub issues by creating and updating PRs and responding to
@@ -47,9 +34,9 @@ type Bot struct {
 
 type ConversationHistoryStore interface {
 	// Get returns the conversation history stored at the given key, or nil if there is nothing stored at that key
-	Get(key string) (*conversationHistory, error)
+	Get(key string) (*ai.ConversationHistory, error)
 	// Set stores a conversation history with a key
-	Set(key string, value conversationHistory) error
+	Set(key string, value ai.ConversationHistory) error
 	// Delete deletes the conversation history stored at the given key
 	Delete(key string) error
 }
@@ -58,7 +45,7 @@ type ConversationHistoryStore interface {
 // changes using the FileSystem interface, validate them with ValidateChanges, and publish them for review using
 // PublishChangesForReview
 type Workspace interface {
-	FileSystem
+	workspace.FileSystem
 
 	// HasLocalChanges returns true if there are local (unvalidated) changes in the workspace
 	HasLocalChanges() bool
@@ -71,7 +58,7 @@ type Workspace interface {
 	// ValidateChanges persists local changes remotely, validates them, and returns the results. A commit message must
 	// be provided if there are local changes in the workspace. After calling ValidateChanges, there will be no local
 	// changes in the workspace.
-	ValidateChanges(ctx context.Context, commitMessage *string) (ValidationResult, error)
+	ValidateChanges(ctx context.Context, commitMessage *string) (validator.ValidationResult, error)
 	// PublishChangesForReview makes validated changes available for review. reviewRequestTitle and reviewRequestBody
 	// are only used the first time a review is published, subsequent publishes will ignore these parameters and update
 	// the existing review. PublishChangesForReview will return an error if there are unvalidated local changes in the
@@ -80,17 +67,12 @@ type Workspace interface {
 }
 
 type WorkspaceFactory interface {
-	NewWorkspace(ctx context.Context, tsk task) (Workspace, error)
-}
-
-type ValidationResult struct {
-	Succeeded bool
-	Details   string
+	NewWorkspace(ctx context.Context, tsk task.Task) (Workspace, error)
 }
 
 func NewBot(config Config, githubClient *github.Client, githubUser *github.User) *Bot {
 	rateLimitedHTTPClient := &http.Client{
-		Transport: WithRateLimiting(nil),
+		Transport: ai.WithRateLimiting(nil),
 	}
 	anthropicClient := anthropic.NewClient(
 		option.WithHTTPClient(rateLimitedHTTPClient),
@@ -107,17 +89,17 @@ func NewBot(config Config, githubClient *github.Client, githubUser *github.User)
 			githubClient:           githubClient,
 			validationWorkflowName: config.ValidationWorkflowName,
 		},
-		resumableConversations: FileSystemConversationHistoryStore{
-			dir: config.ResumableConversationsDir,
-		},
+		resumableConversations: ai.NewFileSystemConversationHistoryStore(
+			config.ResumableConversationsDir,
+		),
 		user: githubUser,
 	}
 }
 
 // Run starts the main loop
-func (b *Bot) Run(ctx context.Context, tasks <-chan taskOrError) error {
+func (b *Bot) Run(ctx context.Context, tasks <-chan task.TaskOrError) error {
 	for taskOrError := range tasks {
-		tsk, err := taskOrError.task, taskOrError.err
+		tsk, err := taskOrError.Task, taskOrError.Err
 		if err != nil {
 			return err
 		}
@@ -126,7 +108,7 @@ func (b *Bot) Run(ctx context.Context, tasks <-chan taskOrError) error {
 
 		if err != nil {
 			// Add blocked label if there is an error, to tell the bot not to pick up this item again
-			if err := b.addLabel(ctx, tsk.Issue, LabelBlocked); err != nil {
+			if err := b.addLabel(ctx, tsk.Issue, task.LabelBlocked); err != nil {
 				log.Printf("failed to add blocked label: %v", err)
 			}
 			// Post sanitized error comment
@@ -135,19 +117,19 @@ func (b *Bot) Run(ctx context.Context, tasks <-chan taskOrError) error {
 				log.Printf("failed to post error comment: %v", err)
 			}
 			// Log the error and continue processing other tasks
-			log.Printf("failed to process task for issue %d: %v", tsk.Issue.number, err)
+			log.Printf("failed to process task for issue %d: %v", tsk.Issue.Number, err)
 		}
 	}
 
 	return nil
 }
 
-func (b *Bot) doTask(ctx context.Context, tsk task) (err error) {
-	if err := b.addLabel(ctx, tsk.Issue, LabelWorking); err != nil {
+func (b *Bot) doTask(ctx context.Context, tsk task.Task) (err error) {
+	if err := b.addLabel(ctx, tsk.Issue, task.LabelWorking); err != nil {
 		log.Printf("failed to add in-progress label: %v", err)
 	}
 	defer func() {
-		if err := b.removeLabel(ctx, tsk.Issue, LabelWorking); err != nil {
+		if err := b.removeLabel(ctx, tsk.Issue, task.LabelWorking); err != nil {
 			log.Printf("failed to remove in-progress label: %v", err)
 		}
 	}()
@@ -182,18 +164,18 @@ func (b *Bot) doTask(ctx context.Context, tsk task) (err error) {
 }
 
 // processWithAI handles the AI interaction with text editor tool support
-func (b *Bot) processWithAI(ctx context.Context, task task, workspace Workspace) error {
+func (b *Bot) processWithAI(ctx context.Context, tsk task.Task, workspace Workspace) error {
 	maxIterations := 500
 
 	// Create tool context
 	toolCtx := &ToolContext{
 		Workspace:    workspace,
-		Task:         task,
+		Task:         tsk,
 		GithubClient: b.githubClient,
 	}
 
 	// Initialize conversation
-	conversation, response, err := b.initConversation(ctx, task, toolCtx)
+	conversation, response, err := b.initConversation(ctx, tsk, toolCtx)
 	if err != nil {
 		return fmt.Errorf("failed to initialize conversation: %w", err)
 	}
@@ -204,7 +186,7 @@ func (b *Bot) processWithAI(ctx context.Context, task task, workspace Workspace)
 			return fmt.Errorf("exceeded maximum iterations (%d) without completion", maxIterations)
 		}
 		// Persist the conversation history up to this point
-		err = b.resumableConversations.Set(strconv.Itoa(task.Issue.number), conversation.History())
+		err = b.resumableConversations.Set(strconv.Itoa(tsk.Issue.Number), conversation.History())
 		if err != nil {
 			return fmt.Errorf("failed to persist conversation history: %w", err)
 		}
@@ -268,7 +250,7 @@ func (b *Bot) processWithAI(ctx context.Context, task task, workspace Workspace)
 
 		if s, err := conversation.ToMarkdown(); err != nil {
 			log.Printf("Warning: failed to serialize conversation as markdown: %v", err)
-		} else if err := os.WriteFile(fmt.Sprintf("logs/conversation_issue_%d.md", task.Issue.number), []byte(s), 0666); err != nil {
+		} else if err := os.WriteFile(fmt.Sprintf("logs/conversation_issue_%d.md", tsk.Issue.Number), []byte(s), 0666); err != nil {
 			log.Printf("Warning: failed to write conversation to markdown file for debugging: %v", err)
 		}
 
@@ -276,12 +258,12 @@ func (b *Bot) processWithAI(ctx context.Context, task task, workspace Workspace)
 	}
 
 	// We're done! Delete the conversation history so that we don't try to resume it later
-	err = b.resumableConversations.Delete(strconv.Itoa(task.Issue.number))
+	err = b.resumableConversations.Delete(strconv.Itoa(tsk.Issue.Number))
 	if err != nil {
 		return fmt.Errorf("failed to delete conversation history for concluded conversation: %w", err)
 	}
 
-	err = b.removeLabel(ctx, task.Issue, LabelBotTurn)
+	err = b.removeLabel(ctx, tsk.Issue, task.LabelBotTurn)
 	if err != nil {
 		return fmt.Errorf("failed to remove bot turn label: %w", err)
 	}
@@ -292,36 +274,36 @@ func (b *Bot) processWithAI(ctx context.Context, task task, workspace Workspace)
 
 // Helper functions
 
-func (b *Bot) postIssueComment(ctx context.Context, issue githubIssue, body string) error {
+func (b *Bot) postIssueComment(ctx context.Context, issue task.GithubIssue, body string) error {
 	comment := &github.IssueComment{
 		Body: github.Ptr(body),
 	}
-	_, _, err := b.githubClient.Issues.CreateComment(ctx, issue.owner, issue.repo, issue.number, comment)
+	_, _, err := b.githubClient.Issues.CreateComment(ctx, issue.Owner, issue.Repo, issue.Number, comment)
 	return err
 }
 
 // Label management functions
 
 // addLabel adds a label to an issue
-func (b *Bot) addLabel(ctx context.Context, issue githubIssue, label github.Label) error {
+func (b *Bot) addLabel(ctx context.Context, issue task.GithubIssue, label github.Label) error {
 	if label.Name == nil {
 		return fmt.Errorf("cannot add label with nil name")
 	}
-	if err := b.ensureLabelExists(ctx, issue.owner, issue.repo, label); err != nil {
+	if err := b.ensureLabelExists(ctx, issue.Owner, issue.Repo, label); err != nil {
 		log.Printf("Warning: Could not ensure label exists: %v", err)
 	}
 
 	labels := []string{*label.Name}
-	_, _, err := b.githubClient.Issues.AddLabelsToIssue(ctx, issue.owner, issue.repo, issue.number, labels)
+	_, _, err := b.githubClient.Issues.AddLabelsToIssue(ctx, issue.Owner, issue.Repo, issue.Number, labels)
 	return err
 }
 
 // removeLabel removes a label from an issue, if present
-func (b *Bot) removeLabel(ctx context.Context, issue githubIssue, label github.Label) error {
+func (b *Bot) removeLabel(ctx context.Context, issue task.GithubIssue, label github.Label) error {
 	if label.Name == nil {
 		return fmt.Errorf("cannot remove label with nil name")
 	}
-	resp, err := b.githubClient.Issues.RemoveLabelForIssue(ctx, issue.owner, issue.repo, issue.number, *label.Name)
+	resp, err := b.githubClient.Issues.RemoveLabelForIssue(ctx, issue.Owner, issue.Repo, issue.Number, *label.Name)
 	if err != nil && resp.StatusCode == http.StatusNotFound {
 		// If the label isn't present, ignore the error
 		return nil
@@ -346,18 +328,18 @@ func (b *Bot) ensureLabelExists(ctx context.Context, owner, repo string, label g
 // Utility functions
 
 // initConversation either constructs a new conversation or resumes a previous conversation
-func (b *Bot) initConversation(ctx context.Context, tsk task, toolCtx *ToolContext) (*ClaudeConversation, *anthropic.Message, error) {
+func (b *Bot) initConversation(ctx context.Context, tsk task.Task, toolCtx *ToolContext) (*ai.ClaudeConversation, *anthropic.Message, error) {
 	model := anthropic.ModelClaudeSonnet4_0
 	var maxTokens int64 = 64000
 
-	conversationStr, err := b.resumableConversations.Get(strconv.Itoa(tsk.Issue.number))
+	conversationStr, err := b.resumableConversations.Get(strconv.Itoa(tsk.Issue.Number))
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to look up resumable conversation by issue number: %w", err)
 	}
 	tools := b.toolRegistry.GetAllToolParams()
 
 	if conversationStr != nil {
-		conv, err := ResumeClaudeConversation(b.anthropicClient, *conversationStr, model, maxTokens, tools)
+		conv, err := ai.ResumeClaudeConversation(b.anthropicClient, *conversationStr, model, maxTokens, tools)
 		if err != nil {
 			return nil, nil, fmt.Errorf("failed to resume conversation: %w", err)
 		}
@@ -369,7 +351,7 @@ func (b *Bot) initConversation(ctx context.Context, tsk task, toolCtx *ToolConte
 
 		// Extract the last message of the resumed conversation. If it is a user message, send it and return the
 		// response. If it is an assistant response, simply return that
-		lastTurn := conv.messages[len(conv.messages)-1]
+		lastTurn := conv.Messages[len(conv.Messages)-1]
 		var response *anthropic.Message
 		if lastTurn.Response != nil {
 			// We should be careful here. Assistant message handling is not necessarily idempotent, e.g. if the bot
@@ -391,15 +373,15 @@ func (b *Bot) initConversation(ctx context.Context, tsk task, toolCtx *ToolConte
 		}
 		return conv, response, nil
 	} else {
-		systemPrompt, err := BuildSystemPrompt("Blundering Savant", *b.user.Login)
+		systemPrompt, err := ai.BuildSystemPrompt("Blundering Savant", *b.user.Login)
 		if err != nil {
 			return nil, nil, fmt.Errorf("failed to build system prompt: %w", err)
 		}
 
-		c := NewClaudeConversation(b.anthropicClient, model, maxTokens, tools, systemPrompt)
+		c := ai.NewClaudeConversation(b.anthropicClient, model, maxTokens, tools, systemPrompt)
 
 		log.Printf("Sending initial message to AI")
-		repositoryContent, taskContent, err := BuildPrompt(tsk)
+		repositoryContent, taskContent, err := ai.BuildPrompt(tsk)
 		if err != nil {
 			return nil, nil, fmt.Errorf("failed to build prompt: %w", err)
 		}
@@ -416,9 +398,9 @@ func (b *Bot) initConversation(ctx context.Context, tsk task, toolCtx *ToolConte
 	}
 }
 
-func (b *Bot) rerunStatefulToolCalls(ctx context.Context, toolCtx *ToolContext, conversation *ClaudeConversation) error {
-	for turnNumber, turn := range conversation.messages {
-		if turnNumber == len(conversation.messages)-1 {
+func (b *Bot) rerunStatefulToolCalls(ctx context.Context, toolCtx *ToolContext, conversation *ai.ClaudeConversation) error {
+	for turnNumber, turn := range conversation.Messages {
+		if turnNumber == len(conversation.Messages)-1 {
 			// Skip the last message in the conversation, since this message was not previously handled
 			break
 		}
@@ -434,4 +416,14 @@ func (b *Bot) rerunStatefulToolCalls(ctx context.Context, toolCtx *ToolContext, 
 	}
 
 	return nil
+}
+
+// remoteValidationWorkspaceFactory creates instances of remoteValidationWorkspace
+type remoteValidationWorkspaceFactory struct {
+	githubClient           *github.Client
+	validationWorkflowName string
+}
+
+func (rvwf remoteValidationWorkspaceFactory) NewWorkspace(ctx context.Context, tsk task.Task) (Workspace, error) {
+	return workspace.NewRemoteValidationWorkspace(ctx, rvwf.githubClient, rvwf.validationWorkflowName, tsk)
 }

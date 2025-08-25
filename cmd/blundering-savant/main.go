@@ -7,6 +7,7 @@ import (
 	"os/signal"
 	"time"
 
+	"github.com/cchalm/blundering-savant/internal/task"
 	"github.com/google/go-github/v72/github"
 	"github.com/joho/godotenv"
 	"golang.org/x/oauth2"
@@ -70,13 +71,13 @@ func main() {
 		log.Fatalf("failed to get github user: %v", err)
 	}
 
-	taskGen := newTaskGenerator(config, githubClient, githubUser)
+	taskGen := task.NewTaskGenerator(githubClient, githubUser, config.CheckInterval)
 	b := NewBot(config, githubClient, githubUser)
 
 	log.Printf("Bot started. Monitoring issues for @%s every %s", *githubUser.Login, config.CheckInterval)
 
 	// Start generating tasks asynchronously
-	tasks := taskGen.generate(ctx)
+	tasks := taskGen.Generate(ctx)
 	// Start the bot, which will consume tasks. This is a synchronous call
 	err = b.Run(ctx, tasks)
 	if err != nil {

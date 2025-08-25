@@ -1,4 +1,4 @@
-package main
+package ai
 
 import (
 	"encoding/json"
@@ -13,7 +13,13 @@ type FileSystemConversationHistoryStore struct {
 	dir string // The directory keys will be relative to
 }
 
-func (fschv FileSystemConversationHistoryStore) Get(key string) (*conversationHistory, error) {
+func NewFileSystemConversationHistoryStore(dir string) FileSystemConversationHistoryStore {
+	return FileSystemConversationHistoryStore{
+		dir: dir,
+	}
+}
+
+func (fschv FileSystemConversationHistoryStore) Get(key string) (*ConversationHistory, error) {
 	path := path.Join(fschv.dir, key)
 	b, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
@@ -22,7 +28,7 @@ func (fschv FileSystemConversationHistoryStore) Get(key string) (*conversationHi
 	} else if err != nil {
 		return nil, fmt.Errorf("failed to read file: %w", err)
 	}
-	var value conversationHistory
+	var value ConversationHistory
 	err = json.Unmarshal(b, &value)
 	if err != nil {
 		return nil, fmt.Errorf("failed to unmarshal conversation history: %w", err)
@@ -30,7 +36,7 @@ func (fschv FileSystemConversationHistoryStore) Get(key string) (*conversationHi
 	return &value, nil
 }
 
-func (fschv FileSystemConversationHistoryStore) Set(key string, value conversationHistory) error {
+func (fschv FileSystemConversationHistoryStore) Set(key string, value ConversationHistory) error {
 	b, err := json.Marshal(value)
 	if err != nil {
 		return fmt.Errorf("failed to marshal conversation history: %w", err)

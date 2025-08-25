@@ -1,15 +1,17 @@
-package main
+package task
 
 import (
 	"github.com/google/go-github/v72/github"
+
+	"github.com/cchalm/blundering-savant/internal/validator"
 )
 
-// task represents all the context needed for the bot to generate solutions
-type task struct {
+// Task represents all the context needed for the bot to generate solutions
+type Task struct {
 	// Core entities
-	Issue       githubIssue
+	Issue       GithubIssue
 	Repository  *github.Repository
-	PullRequest *githubPullRequest // May be nil if no pull request has yet been created
+	PullRequest *GithubPullRequest // May be nil if no pull request has yet been created
 
 	// The branch that changes should be merged into to resolve the task
 	TargetBranch string
@@ -33,7 +35,7 @@ type task struct {
 
 	// State computed from the workspace after initial task generation (unpopulated until then)
 	HasUnpublishedChanges bool
-	ValidationResult      ValidationResult
+	ValidationResult      validator.ValidationResult
 }
 
 // CodebaseInfo holds information about the repository structure
