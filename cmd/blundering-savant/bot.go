@@ -16,6 +16,7 @@ import (
 	"github.com/cchalm/blundering-savant/internal/ai"
 	"github.com/cchalm/blundering-savant/internal/task"
 	"github.com/cchalm/blundering-savant/internal/validator"
+	"github.com/cchalm/blundering-savant/internal/workspace"
 )
 
 // Bot represents an AI developer capable of addressing GitHub issues by creating and updating PRs and responding to
@@ -44,7 +45,7 @@ type ConversationHistoryStore interface {
 // changes using the FileSystem interface, validate them with ValidateChanges, and publish them for review using
 // PublishChangesForReview
 type Workspace interface {
-	FileSystem
+	workspace.FileSystem
 
 	// HasLocalChanges returns true if there are local (unvalidated) changes in the workspace
 	HasLocalChanges() bool
@@ -415,4 +416,14 @@ func (b *Bot) rerunStatefulToolCalls(ctx context.Context, toolCtx *ToolContext, 
 	}
 
 	return nil
+}
+
+// remoteValidationWorkspaceFactory creates instances of remoteValidationWorkspace
+type remoteValidationWorkspaceFactory struct {
+	githubClient           *github.Client
+	validationWorkflowName string
+}
+
+func (rvwf remoteValidationWorkspaceFactory) NewWorkspace(ctx context.Context, tsk task.Task) (Workspace, error) {
+	return workspace.NewRemoteValidationWorkspace(ctx, rvwf.githubClient, rvwf.validationWorkflowName, tsk)
 }

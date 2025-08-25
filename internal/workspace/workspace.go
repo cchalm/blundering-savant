@@ -1,4 +1,4 @@
-package main
+package workspace
 
 import (
 	"context"
@@ -13,22 +13,12 @@ import (
 	"github.com/cchalm/blundering-savant/internal/validator"
 )
 
-// remoteValidationWorkspaceFactory creates instances of remoteValidationWorkspace
-type remoteValidationWorkspaceFactory struct {
-	githubClient           *github.Client
-	validationWorkflowName string
-}
-
-func (rvwf remoteValidationWorkspaceFactory) NewWorkspace(ctx context.Context, tsk task.Task) (Workspace, error) {
-	return NewRemoteValidationWorkspace(ctx, rvwf.githubClient, rvwf.validationWorkflowName, tsk)
-}
-
-// remoteValidationWorkspace is a workspace that tracks working changes in-memory until they need to be validated. For
+// RemoteValidationWorkspace is a workspace that tracks working changes in-memory until they need to be validated. For
 // validation, changes are committed to a "work branch" and pushed to GitHub, where GitHub Actions run validation
 // workflows. For publishing, the changes are merged from the "work branch" into a "review branch", from which a PR to
 // the default branch has been/will be created. This workflow is designed to reduce noise on PRs while the bot is
 // iterating on solutions
-type remoteValidationWorkspace struct {
+type RemoteValidationWorkspace struct {
 	git       GitRepo
 	fs        *memDiffFileSystem
 	prService PullRequestService
@@ -65,7 +55,7 @@ func NewRemoteValidationWorkspace(
 	githubClient *github.Client,
 	validationWorkflowName string,
 	tsk task.Task,
-) (*remoteValidationWorkspace, error) {
+) (*RemoteValidationWorkspace, error) {
 	owner, repo := tsk.Issue.Owner, tsk.Issue.Repo
 
 	// Get default branch
@@ -109,7 +99,7 @@ func NewRemoteValidationWorkspace(
 
 	validator := validator.NewGithubActionCommitValidator(githubClient, owner, repo, validationWorkflowName)
 
-	return &remoteValidationWorkspace{
+	return &RemoteValidationWorkspace{
 		git:       &gitRepo,
 		fs:        &diffFS,
 		prService: &prService,
@@ -161,48 +151,48 @@ func awaitBranchCreation(ctx context.Context, githubClient *github.Client, owner
 }
 
 // Read reads a file from the work branch with any in-memory changes applied
-func (rvw remoteValidationWorkspace) Read(ctx context.Context, path string) (string, error) {
+func (rvw RemoteValidationWorkspace) Read(ctx context.Context, path string) (string, error) {
 	path = normalizePath(path)
 	return rvw.fs.Read(ctx, path)
 }
 
 // Write writes a file in-memory
-func (rvw *remoteValidationWorkspace) Write(ctx context.Context, path string, content string) error {
+func (rvw *RemoteValidationWorkspace) Write(ctx context.Context, path string, content string) error {
 	path = normalizePath(path)
 	return rvw.fs.Write(ctx, path, content)
 }
 
 // DeleteFile marks a file as deleted in-memory
-func (rvw *remoteValidationWorkspace) Delete(ctx context.Context, path string) error {
+func (rvw *RemoteValidationWorkspace) Delete(ctx context.Context, path string) error {
 	path = normalizePath(path)
 	return rvw.fs.Delete(ctx, path)
 }
 
 // FileExists checks if a file exists in the current state
-func (rvw remoteValidationWorkspace) FileExists(ctx context.Context, path string) (bool, error) {
+func (rvw RemoteValidationWorkspace) FileExists(ctx context.Context, path string) (bool, error) {
 	path = normalizePath(path)
 	return rvw.fs.FileExists(ctx, path)
 }
 
 // IsDir checks if a path is a directory
-func (rvw remoteValidationWorkspace) IsDir(ctx context.Context, path string) (bool, error) {
+func (rvw RemoteValidationWorkspace) IsDir(ctx context.Context, path string) (bool, error) {
 	path = normalizePath(path)
 	return rvw.fs.IsDir(ctx, path)
 }
 
 // ListDir lists contents of a directory
-func (rvw remoteValidationWorkspace) ListDir(ctx context.Context, path string) ([]string, error) {
+func (rvw RemoteValidationWorkspace) ListDir(ctx context.Context, path string) ([]string, error) {
 	path = normalizePath(path)
 	return rvw.fs.ListDir(ctx, path)
 }
 
-func (rvw remoteValidationWorkspace) HasLocalChanges() bool {
+func (rvw RemoteValidationWorkspace) HasLocalChanges() bool {
 	return rvw.fs.HasChanges()
 }
 
 // HasUnpublishedChanges returns true if there are changes in the working branch that have not been merged to the review
 // branch
-func (rvw remoteValidationWorkspace) HasUnpublishedChanges(ctx context.Context) (bool, error) {
+func (rvw RemoteValidationWorkspace) HasUnpublishedChanges(ctx context.Context) (bool, error) {
 	// Compare the working branch against the review branch
 	comparison, err := rvw.git.CompareCommits(ctx, rvw.reviewBranch, rvw.workBranch)
 	if err != nil {
@@ -214,11 +204,11 @@ func (rvw remoteValidationWorkspace) HasUnpublishedChanges(ctx context.Context) 
 }
 
 // ClearLocalChanges deletes changes staged in-memory
-func (rvw *remoteValidationWorkspace) ClearLocalChanges() {
+func (rvw *RemoteValidationWorkspace) ClearLocalChanges() {
 	rvw.fs.Reset()
 }
 
-func (rvw *remoteValidationWorkspace) ValidateChanges(ctx context.Context, commitMessage *string) (validator.ValidationResult, error) {
+func (rvw *RemoteValidationWorkspace) ValidateChanges(ctx context.Context, commitMessage *string) (validator.ValidationResult, error) {
 	var commitSHA string
 	if rvw.HasLocalChanges() {
 		if commitMessage == nil {
@@ -249,7 +239,7 @@ func (rvw *remoteValidationWorkspace) ValidateChanges(ctx context.Context, commi
 	return result, nil
 }
 
-func (rvw *remoteValidationWorkspace) commitToWorkBranch(ctx context.Context, commitMessage string) (*github.Commit, error) {
+func (rvw *RemoteValidationWorkspace) commitToWorkBranch(ctx context.Context, commitMessage string) (*github.Commit, error) {
 	if !rvw.fs.HasChanges() {
 		return nil, fmt.Errorf("no changes to commit")
 	}
@@ -268,7 +258,7 @@ func (rvw *remoteValidationWorkspace) commitToWorkBranch(ctx context.Context, co
 // PublishChangesForReview merges changes in the working branch into the review branch and creates a pull request, if
 // one doesn't already exist. Returns an error if there are in-memory changes that have not been committed to the work
 // branch via a ValidateChanges call
-func (rvw *remoteValidationWorkspace) PublishChangesForReview(ctx context.Context, reviewRequestTitle string, reviewRequestBody string) error {
+func (rvw *RemoteValidationWorkspace) PublishChangesForReview(ctx context.Context, reviewRequestTitle string, reviewRequestBody string) error {
 	_, err := rvw.mergeWorkBranchToReviewBranch(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to merge work branch into review branch: %w", err)
@@ -285,7 +275,7 @@ func (rvw *remoteValidationWorkspace) PublishChangesForReview(ctx context.Contex
 	return err
 }
 
-func (rvw *remoteValidationWorkspace) createPullRequest(ctx context.Context, title string, body string) error {
+func (rvw *RemoteValidationWorkspace) createPullRequest(ctx context.Context, title string, body string) error {
 	// Add issue reference and disclaimer to PR body
 	body = fmt.Sprintf(`%s
 
@@ -302,7 +292,7 @@ Fixes #%d
 	return nil
 }
 
-func (rvw *remoteValidationWorkspace) mergeWorkBranchToReviewBranch(ctx context.Context) (*github.Commit, error) {
+func (rvw *RemoteValidationWorkspace) mergeWorkBranchToReviewBranch(ctx context.Context) (*github.Commit, error) {
 	if rvw.HasLocalChanges() {
 		return nil, fmt.Errorf("cannot merge from the work branch to the review branch while there are uncommitted changes in-memory")
 	}

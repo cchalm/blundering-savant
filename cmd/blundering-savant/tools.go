@@ -10,6 +10,7 @@ import (
 
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/cchalm/blundering-savant/internal/task"
+	"github.com/cchalm/blundering-savant/internal/workspace"
 	"github.com/google/go-github/v72/github"
 )
 
@@ -156,7 +157,7 @@ func (t *TextEditorTool) run(ctx context.Context, block anthropic.ToolUseBlock, 
 }
 
 // Implementation methods for each command
-func (t *TextEditorTool) executeView(ctx context.Context, input *TextEditorInput, fs FileSystem) (string, error) {
+func (t *TextEditorTool) executeView(ctx context.Context, input *TextEditorInput, fs workspace.FileSystem) (string, error) {
 	if fs == nil {
 		return "", fmt.Errorf("file system not initialized")
 	}
@@ -180,7 +181,7 @@ func (t *TextEditorTool) executeView(ctx context.Context, input *TextEditorInput
 	}
 
 	content, err := fs.Read(ctx, input.Path)
-	if errors.Is(err, ErrFileNotFound) {
+	if errors.Is(err, workspace.ErrFileNotFound) {
 		return "", ToolInputError{err}
 	} else if err != nil {
 		return "", fmt.Errorf("error reading file: %w", err)
@@ -217,9 +218,9 @@ func (t *TextEditorTool) executeView(ctx context.Context, input *TextEditorInput
 	return result.String(), nil
 }
 
-func (t *TextEditorTool) executeStrReplace(ctx context.Context, input *TextEditorInput, fs FileSystem) (string, error) {
+func (t *TextEditorTool) executeStrReplace(ctx context.Context, input *TextEditorInput, fs workspace.FileSystem) (string, error) {
 	content, err := fs.Read(ctx, input.Path)
-	if errors.Is(err, ErrFileNotFound) {
+	if errors.Is(err, workspace.ErrFileNotFound) {
 		return "", ToolInputError{err}
 	} else if err != nil {
 		return "", fmt.Errorf("error reading file: %w", err)
@@ -242,7 +243,7 @@ func (t *TextEditorTool) executeStrReplace(ctx context.Context, input *TextEdito
 	return fmt.Sprintf("Successfully replaced text in %s", input.Path), nil
 }
 
-func (t *TextEditorTool) executeCreate(ctx context.Context, input *TextEditorInput, fs FileSystem) (string, error) {
+func (t *TextEditorTool) executeCreate(ctx context.Context, input *TextEditorInput, fs workspace.FileSystem) (string, error) {
 	exists, err := fs.FileExists(ctx, input.Path)
 	if err != nil {
 		return "", fmt.Errorf("error checking file existence: %w", err)
@@ -259,9 +260,9 @@ func (t *TextEditorTool) executeCreate(ctx context.Context, input *TextEditorInp
 	return fmt.Sprintf("Successfully created file %s", input.Path), nil
 }
 
-func (t *TextEditorTool) executeInsert(ctx context.Context, input *TextEditorInput, fs FileSystem) (string, error) {
+func (t *TextEditorTool) executeInsert(ctx context.Context, input *TextEditorInput, fs workspace.FileSystem) (string, error) {
 	content, err := fs.Read(ctx, input.Path)
-	if errors.Is(err, ErrFileNotFound) {
+	if errors.Is(err, workspace.ErrFileNotFound) {
 		return "", ToolInputError{err}
 	} else if err != nil {
 		return "", fmt.Errorf("error reading file: %w", err)
