@@ -11,7 +11,6 @@ import (
 	"github.com/google/go-github/v72/github"
 
 	"github.com/cchalm/blundering-savant/internal/config"
-	githubTypes "github.com/cchalm/blundering-savant/internal/github"
 )
 
 type githubIssue struct {
