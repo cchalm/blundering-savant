@@ -149,7 +149,7 @@ func (t *TextEditorTool) run(ctx context.Context, block anthropic.ToolUseBlock, 
 	}
 
 	if err != nil {
-		return nil, fmt.Errorf("error running tool: %w", err)
+		return nil, fmt.Errorf("error running command '%s': %w", input.Command, err)
 	}
 	return &result, nil
 }
@@ -247,7 +247,7 @@ func (t *TextEditorTool) executeCreate(ctx context.Context, input *TextEditorInp
 		return "", fmt.Errorf("error checking file existence: %w", err)
 	}
 	if exists {
-		return "", fmt.Errorf("file already exists: %s", input.Path)
+		return "", ToolInputError{fmt.Errorf("file already exists: %s", input.Path)}
 	}
 
 	err = fs.Write(ctx, input.Path, input.FileText)
@@ -466,7 +466,7 @@ func (t *PostCommentTool) Run(ctx context.Context, block anthropic.ToolUseBlock,
 		}
 	case "review":
 		if input.InReplyTo == nil {
-			return nil, fmt.Errorf("InReplyTo must be specified for review comments. The bot is currently unable to create top-level review comments")
+			return nil, ToolInputError{fmt.Errorf("InReplyTo must be specified for review comments. The bot is currently unable to create top-level review comments")}
 		}
 		_, _, err = toolCtx.GithubClient.PullRequests.CreateCommentInReplyTo(
 			ctx,
@@ -950,10 +950,14 @@ func (r *ToolRegistry) ReplayToolUse(ctx context.Context, toolUseBlock anthropic
 
 	var tie ToolInputError
 	if errors.As(err, &tie) {
-		// If the error is an input issue, the reporting of that error is already in the conversation history, so there
-		// is no need to repeat it. Do nothing
+		// If the error is an input issue, one of two things has probably happened:
+		// - The original call had an input issue, in which case that error was reported to the bot and is already in
+		//   the conversation history
+		// - The original call was successful but repeating it produces an expected error (e.g. cannot create file that
+		//   already exists)
+		// In either case, there is no need to do anything
 	} else if err != nil {
-		return fmt.Errorf("error while running tool: %w", err)
+		return fmt.Errorf("error while replaying tool: %w", err)
 	}
 	return nil
 }
