@@ -8,6 +8,9 @@ import (
 	"time"
 
 	"github.com/google/go-github/v72/github"
+
+	"github.com/cchalm/blundering-savant/internal/task"
+	"github.com/cchalm/blundering-savant/internal/validator"
 )
 
 // remoteValidationWorkspaceFactory creates instances of remoteValidationWorkspace
@@ -16,7 +19,7 @@ type remoteValidationWorkspaceFactory struct {
 	validationWorkflowName string
 }
 
-func (rvwf remoteValidationWorkspaceFactory) NewWorkspace(ctx context.Context, tsk task) (Workspace, error) {
+func (rvwf remoteValidationWorkspaceFactory) NewWorkspace(ctx context.Context, tsk task.Task) (Workspace, error) {
 	return NewRemoteValidationWorkspace(ctx, rvwf.githubClient, rvwf.validationWorkflowName, tsk)
 }
 
@@ -50,7 +53,7 @@ type GitRepo interface {
 
 type BranchValidator interface {
 	// ValidateBranch validates the given commit SHA, which is expected to be the head of the given branch
-	ValidateBranch(ctx context.Context, branch string, commitSHA string) (ValidationResult, error)
+	ValidateBranch(ctx context.Context, branch string, commitSHA string) (validator.ValidationResult, error)
 }
 
 type PullRequestService interface {
@@ -61,9 +64,9 @@ func NewRemoteValidationWorkspace(
 	ctx context.Context,
 	githubClient *github.Client,
 	validationWorkflowName string,
-	tsk task,
+	tsk task.Task,
 ) (*remoteValidationWorkspace, error) {
-	owner, repo := tsk.Issue.owner, tsk.Issue.repo
+	owner, repo := tsk.Issue.Owner, tsk.Issue.Repo
 
 	// Get default branch
 	repoInfo, _, err := githubClient.Repositories.Get(ctx, owner, repo)
@@ -104,14 +107,14 @@ func NewRemoteValidationWorkspace(
 
 	prService := NewGithubPullRequestService(githubClient.PullRequests, owner, repo, reviewBranch, baseBranch)
 
-	validator := NewGithubActionCommitValidator(githubClient, owner, repo, validationWorkflowName)
+	validator := validator.NewGithubActionCommitValidator(githubClient, owner, repo, validationWorkflowName)
 
 	return &remoteValidationWorkspace{
 		git:       &gitRepo,
 		fs:        &diffFS,
 		prService: &prService,
 
-		issueNumber:      tsk.Issue.number,
+		issueNumber:      tsk.Issue.Number,
 		needsPullRequest: tsk.PullRequest == nil,
 
 		baseBranch:   baseBranch,
@@ -215,32 +218,32 @@ func (rvw *remoteValidationWorkspace) ClearLocalChanges() {
 	rvw.fs.Reset()
 }
 
-func (rvw *remoteValidationWorkspace) ValidateChanges(ctx context.Context, commitMessage *string) (ValidationResult, error) {
+func (rvw *remoteValidationWorkspace) ValidateChanges(ctx context.Context, commitMessage *string) (validator.ValidationResult, error) {
 	var commitSHA string
 	if rvw.HasLocalChanges() {
 		if commitMessage == nil {
-			return ValidationResult{}, fmt.Errorf("no commit message provided for validating local changes")
+			return validator.ValidationResult{}, fmt.Errorf("no commit message provided for validating local changes")
 		}
 		commit, err := rvw.commitToWorkBranch(ctx, *commitMessage)
 		if err != nil {
-			return ValidationResult{}, fmt.Errorf("failed to commit changes to work branch: %w", err)
+			return validator.ValidationResult{}, fmt.Errorf("failed to commit changes to work branch: %w", err)
 		}
 		commitSHA = *commit.SHA
 	} else {
 		headCommit, err := rvw.git.GetBranchHead(ctx, rvw.workBranch)
 		if err != nil {
-			return ValidationResult{}, fmt.Errorf("failed to get work branch info: %w", err)
+			return validator.ValidationResult{}, fmt.Errorf("failed to get work branch info: %w", err)
 		}
 		commitSHA = *headCommit.SHA
 	}
 
 	if rvw.validator == nil {
-		return ValidationResult{}, fmt.Errorf("failed to validate commit, no validator provided")
+		return validator.ValidationResult{}, fmt.Errorf("failed to validate commit, no validator provided")
 	}
 
 	result, err := rvw.validator.ValidateBranch(ctx, rvw.workBranch, commitSHA)
 	if err != nil {
-		return ValidationResult{}, fmt.Errorf("failed to validate commit: %w", err)
+		return validator.ValidationResult{}, fmt.Errorf("failed to validate commit: %w", err)
 	}
 
 	return result, nil
@@ -312,13 +315,8 @@ func (rvw *remoteValidationWorkspace) mergeWorkBranchToReviewBranch(ctx context.
 	return commit, nil
 }
 
-func getWorkBranchName(issue githubIssue) string {
-	branchName := fmt.Sprintf("wip/issue-%d-%s", issue.number, sanitizeForBranchName(issue.title))
-	return normalizeBranchName(branchName)
-}
-
-func getSourceBranchName(issue githubIssue) string {
-	branchName := fmt.Sprintf("fix/issue-%d-%s", issue.number, sanitizeForBranchName(issue.title))
+func getWorkBranchName(issue task.GithubIssue) string {
+	branchName := fmt.Sprintf("wip/issue-%d-%s", issue.Number, sanitizeForBranchName(issue.Title))
 	return normalizeBranchName(branchName)
 }
 

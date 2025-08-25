@@ -6,20 +6,22 @@ import (
 
 	"github.com/google/go-github/v72/github"
 	"github.com/stretchr/testify/require"
+
+	"github.com/cchalm/blundering-savant/internal/task"
 )
 
 func TestBuildPrompt_BasicTemplate(t *testing.T) {
 	// Create a minimal task for testing
-	tsk := task{
+	tsk := task.Task{
 		Repository: &github.Repository{
 			FullName: github.Ptr("owner/repo"),
 		},
-		Issue: githubIssue{
-			number: 123,
-			title:  "Test Issue",
-			body:   "This is a test issue description",
+		Issue: task.GithubIssue{
+			Number: 123,
+			Title:  "Test Issue",
+			Body:   "This is a test issue description",
 		},
-		CodebaseInfo: &CodebaseInfo{
+		CodebaseInfo: &task.CodebaseInfo{
 			MainLanguage: "Go",
 		},
 	}
@@ -46,19 +48,19 @@ func TestBuildPrompt_BasicTemplate(t *testing.T) {
 }
 
 func TestBuildPrompt_WithPullRequest(t *testing.T) {
-	tsk := task{
+	tsk := task.Task{
 		Repository: &github.Repository{
 			FullName: github.Ptr("owner/repo"),
 		},
-		Issue: githubIssue{
-			number: 123,
-			title:  "Test Issue",
-			body:   "This is a test issue description",
+		Issue: task.GithubIssue{
+			Number: 123,
+			Title:  "Test Issue",
+			Body:   "This is a test issue description",
 		},
-		PullRequest: &githubPullRequest{
-			number: 456,
+		PullRequest: &task.GithubPullRequest{
+			Number: 456,
 		},
-		CodebaseInfo: &CodebaseInfo{
+		CodebaseInfo: &task.CodebaseInfo{
 			MainLanguage: "Go",
 		},
 	}
@@ -72,21 +74,21 @@ func TestBuildPrompt_WithPullRequest(t *testing.T) {
 }
 
 func TestBuildPrompt_WithStyleGuide(t *testing.T) {
-	tsk := task{
+	tsk := task.Task{
 		Repository: &github.Repository{
 			FullName: github.Ptr("owner/repo"),
 		},
-		Issue: githubIssue{
-			number: 123,
-			title:  "Test Issue",
-			body:   "Test description",
+		Issue: task.GithubIssue{
+			Number: 123,
+			Title:  "Test Issue",
+			Body:   "Test description",
 		},
-		StyleGuide: &StyleGuide{
+		StyleGuide: &task.StyleGuide{
 			Guides: map[string]string{
 				"style_guide.md": "Use tabs for indentation",
 			},
 		},
-		CodebaseInfo: &CodebaseInfo{
+		CodebaseInfo: &task.CodebaseInfo{
 			MainLanguage: "Go",
 		},
 	}
@@ -98,23 +100,23 @@ func TestBuildPrompt_WithStyleGuide(t *testing.T) {
 	require.Contains(t, repositoryContent, "## Style Guides")
 	require.Contains(t, repositoryContent, "style_guide.md")
 	require.Contains(t, repositoryContent, "Use tabs for indentation")
-	
+
 	// Verify style guides are not in task content
 	require.NotContains(t, taskContent, "## Style Guides")
 	require.NotContains(t, taskContent, "Use tabs for indentation")
 }
 
 func TestBuildPrompt_WithFileTree(t *testing.T) {
-	tsk := task{
+	tsk := task.Task{
 		Repository: &github.Repository{
 			FullName: github.Ptr("owner/repo"),
 		},
-		Issue: githubIssue{
-			number: 123,
-			title:  "Test Issue",
-			body:   "Test description",
+		Issue: task.GithubIssue{
+			Number: 123,
+			Title:  "Test Issue",
+			Body:   "Test description",
 		},
-		CodebaseInfo: &CodebaseInfo{
+		CodebaseInfo: &task.CodebaseInfo{
 			MainLanguage: "Go",
 			FileTree:     []string{"main.go", "README.md", "go.mod"},
 		},
@@ -128,23 +130,23 @@ func TestBuildPrompt_WithFileTree(t *testing.T) {
 	require.Contains(t, repositoryContent, "- `main.go`")
 	require.Contains(t, repositoryContent, "- `README.md`")
 	require.Contains(t, repositoryContent, "- `go.mod`")
-	
+
 	// Verify file tree is not in task content
 	require.NotContains(t, taskContent, "## Repository structure")
 	require.NotContains(t, taskContent, "- `main.go`")
 }
 
 func TestBuildPrompt_WithCommentsRequiringResponses(t *testing.T) {
-	tsk := task{
+	tsk := task.Task{
 		Repository: &github.Repository{
 			FullName: github.Ptr("owner/repo"),
 		},
-		Issue: githubIssue{
-			number: 123,
-			title:  "Test Issue",
-			body:   "Test description",
+		Issue: task.GithubIssue{
+			Number: 123,
+			Title:  "Test Issue",
+			Body:   "Test description",
 		},
-		CodebaseInfo: &CodebaseInfo{
+		CodebaseInfo: &task.CodebaseInfo{
 			MainLanguage: "Go",
 		},
 		IssueCommentsRequiringResponses: []*github.IssueComment{
@@ -162,7 +164,7 @@ func TestBuildPrompt_WithCommentsRequiringResponses(t *testing.T) {
 	// Comments requiring responses should be in task content, not repository content
 	require.Contains(t, taskContent, "Issue comments requiring responses: 1001, 1002")
 	require.Contains(t, taskContent, "PR comments requiring responses: 2001")
-	
+
 	require.NotContains(t, repositoryContent, "Issue comments requiring responses: 1001, 1002")
 	require.NotContains(t, repositoryContent, "PR comments requiring responses: 2001")
 }
@@ -175,8 +177,8 @@ func TestBuildTemplateData_TruncatesLongFileTree(t *testing.T) {
 		fileTree[i] = fmt.Sprintf("file%d.go", i)
 	}
 
-	tsk := task{
-		CodebaseInfo: &CodebaseInfo{
+	tsk := task.Task{
+		CodebaseInfo: &task.CodebaseInfo{
 			FileTree: fileTree,
 		},
 	}
@@ -190,8 +192,8 @@ func TestBuildTemplateData_TruncatesLongFileTree(t *testing.T) {
 func TestBuildTemplateData_DoesNotTruncateShortFileTree(t *testing.T) {
 	fileTree := []string{"file1.go", "file2.go", "file3.go"}
 
-	tsk := task{
-		CodebaseInfo: &CodebaseInfo{
+	tsk := task.Task{
+		CodebaseInfo: &task.CodebaseInfo{
 			FileTree: fileTree,
 		},
 	}

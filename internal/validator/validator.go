@@ -1,4 +1,4 @@
-package main
+package validator
 
 import (
 	"bufio"
@@ -13,6 +13,11 @@ import (
 
 	"github.com/google/go-github/v72/github"
 )
+
+type ValidationResult struct {
+	Succeeded bool
+	Details   string
+}
 
 type WorkflowStatus string
 

@@ -9,6 +9,9 @@ import (
 	"text/template"
 
 	"github.com/google/go-github/v72/github"
+
+	"github.com/cchalm/blundering-savant/internal/task"
+	"github.com/cchalm/blundering-savant/internal/validator"
 )
 
 //go:embed system_prompt.tmpl
@@ -87,7 +90,7 @@ type promptTemplateData struct {
 	PRCommentsRequiringResponses       []commentData
 	PRReviewCommentsRequiringResponses []reviewCommentData
 	HasUnpublishedChanges              bool
-	ValidationResult                   ValidationResult
+	ValidationResult                   validator.ValidationResult
 }
 
 func BuildSystemPrompt(botName string, botUsername string) (string, error) {
@@ -112,7 +115,7 @@ func BuildSystemPrompt(botName string, botUsername string) (string, error) {
 }
 
 // BuildPrompt generates repository-specific and task-specific content blocks for Claude
-func BuildPrompt(tsk task) (repositoryContent, taskContent string, err error) {
+func BuildPrompt(tsk task.Task) (repositoryContent, taskContent string, err error) {
 	data := buildTemplateData(tsk)
 
 	// Create template with helper functions
@@ -274,7 +277,7 @@ func derefOr[T any](ptr *T, defaultVal T) T {
 }
 
 // buildTemplateData creates the data structure for template rendering
-func buildTemplateData(tsk task) promptTemplateData {
+func buildTemplateData(tsk task.Task) promptTemplateData {
 	data := promptTemplateData{}
 
 	// Basic repository and issue information
@@ -291,13 +294,13 @@ func buildTemplateData(tsk task) promptTemplateData {
 		data.MainLanguage = "unknown"
 	}
 
-	data.IssueNumber = tsk.Issue.number
-	data.IssueTitle = tsk.Issue.title
-	data.IssueBody = tsk.Issue.body
+	data.IssueNumber = tsk.Issue.Number
+	data.IssueTitle = tsk.Issue.Title
+	data.IssueBody = tsk.Issue.Body
 
 	// Pull request information
 	if tsk.PullRequest != nil {
-		data.PullRequestNumber = &tsk.PullRequest.number
+		data.PullRequestNumber = &tsk.PullRequest.Number
 	}
 
 	// Style guides

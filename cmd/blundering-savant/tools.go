@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/anthropics/anthropic-sdk-go"
+	"github.com/cchalm/blundering-savant/internal/task"
 	"github.com/google/go-github/v72/github"
 )
 
@@ -34,7 +35,7 @@ type AnthropicTool interface {
 // ToolContext provides context needed by tools during execution
 type ToolContext struct {
 	Workspace    Workspace
-	Task         task
+	Task         task.Task
 	GithubClient *github.Client
 }
 
@@ -450,7 +451,7 @@ func (t *PostCommentTool) Run(ctx context.Context, block anthropic.ToolUseBlock,
 		comment := &github.IssueComment{
 			Body: github.Ptr(input.Body),
 		}
-		_, _, err = toolCtx.GithubClient.Issues.CreateComment(ctx, toolCtx.Task.Issue.owner, toolCtx.Task.Issue.repo, toolCtx.Task.Issue.number, comment)
+		_, _, err = toolCtx.GithubClient.Issues.CreateComment(ctx, toolCtx.Task.Issue.Owner, toolCtx.Task.Issue.Repo, toolCtx.Task.Issue.Number, comment)
 		if err != nil {
 			return nil, err
 		}
@@ -459,7 +460,7 @@ func (t *PostCommentTool) Run(ctx context.Context, block anthropic.ToolUseBlock,
 			comment := &github.IssueComment{
 				Body: github.Ptr(input.Body),
 			}
-			_, _, err = toolCtx.GithubClient.Issues.CreateComment(ctx, toolCtx.Task.Issue.owner, toolCtx.Task.Issue.repo, toolCtx.Task.PullRequest.number, comment)
+			_, _, err = toolCtx.GithubClient.Issues.CreateComment(ctx, toolCtx.Task.Issue.Owner, toolCtx.Task.Issue.Repo, toolCtx.Task.PullRequest.Number, comment)
 			if err != nil {
 				return nil, err
 			}
@@ -470,9 +471,9 @@ func (t *PostCommentTool) Run(ctx context.Context, block anthropic.ToolUseBlock,
 		}
 		_, _, err = toolCtx.GithubClient.PullRequests.CreateCommentInReplyTo(
 			ctx,
-			toolCtx.Task.Issue.owner,
-			toolCtx.Task.Issue.repo,
-			toolCtx.Task.PullRequest.number,
+			toolCtx.Task.Issue.Owner,
+			toolCtx.Task.Issue.Repo,
+			toolCtx.Task.PullRequest.Number,
 			input.Body,
 			*input.InReplyTo,
 		)
@@ -564,12 +565,12 @@ func (t *AddReactionTool) Run(ctx context.Context, block anthropic.ToolUseBlock,
 
 	switch input.CommentType {
 	case "issue", "PR":
-		_, _, err = toolCtx.GithubClient.Reactions.CreateIssueCommentReaction(ctx, toolCtx.Task.Issue.owner, toolCtx.Task.Issue.repo, input.CommentID, input.Reaction)
+		_, _, err = toolCtx.GithubClient.Reactions.CreateIssueCommentReaction(ctx, toolCtx.Task.Issue.Owner, toolCtx.Task.Issue.Repo, input.CommentID, input.Reaction)
 		if err != nil {
 			return nil, err
 		}
 	case "PR review":
-		_, _, err = toolCtx.GithubClient.Reactions.CreatePullRequestCommentReaction(ctx, toolCtx.Task.Issue.owner, toolCtx.Task.Issue.repo, input.CommentID, input.Reaction)
+		_, _, err = toolCtx.GithubClient.Reactions.CreatePullRequestCommentReaction(ctx, toolCtx.Task.Issue.Owner, toolCtx.Task.Issue.Repo, input.CommentID, input.Reaction)
 		if err != nil {
 			return nil, err
 		}
@@ -856,7 +857,7 @@ func (t *ReportLimitationTool) Run(ctx context.Context, block anthropic.ToolUseB
 	comment := &github.IssueComment{
 		Body: github.Ptr(report.String()),
 	}
-	_, _, err = toolCtx.GithubClient.Issues.CreateComment(ctx, toolCtx.Task.Issue.owner, toolCtx.Task.Issue.repo, toolCtx.Task.Issue.number, comment)
+	_, _, err = toolCtx.GithubClient.Issues.CreateComment(ctx, toolCtx.Task.Issue.Owner, toolCtx.Task.Issue.Repo, toolCtx.Task.Issue.Number, comment)
 	if err != nil {
 		return nil, fmt.Errorf("failed to post limitation report: %w", err)
 	}
