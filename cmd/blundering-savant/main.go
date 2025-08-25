@@ -71,7 +71,7 @@ func main() {
 		log.Fatalf("failed to get github user: %v", err)
 	}
 
-	taskGen := task.NewTaskGenerator(githubClient, githubUser, config.CheckInterval)
+	taskGen := task.NewGenerator(githubClient, githubUser, config.CheckInterval)
 	b := NewBot(config, githubClient, githubUser)
 
 	log.Printf("Bot started. Monitoring issues for @%s every %s", *githubUser.Login, config.CheckInterval)
