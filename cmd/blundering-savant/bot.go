@@ -328,7 +328,7 @@ func (b *Bot) ensureLabelExists(ctx context.Context, owner, repo string, label g
 // Utility functions
 
 // initConversation either constructs a new conversation or resumes a previous conversation
-func (b *Bot) initConversation(ctx context.Context, tsk task.Task, toolCtx *ToolContext) (*ai.Conversation, *anthropic.Message, error) {
+func (b *Bot) initConversation(ctx context.Context, tsk task.Task, toolCtx *ToolContext) (*ai.ClaudeConversation, *anthropic.Message, error) {
 	model := anthropic.ModelClaudeSonnet4_0
 	var maxTokens int64 = 64000
 
@@ -339,7 +339,7 @@ func (b *Bot) initConversation(ctx context.Context, tsk task.Task, toolCtx *Tool
 	tools := b.toolRegistry.GetAllToolParams()
 
 	if conversationStr != nil {
-		conv, err := ai.ResumeConversation(b.anthropicClient, *conversationStr, model, maxTokens, tools)
+		conv, err := ai.ResumeClaudeConversation(b.anthropicClient, *conversationStr, model, maxTokens, tools)
 		if err != nil {
 			return nil, nil, fmt.Errorf("failed to resume conversation: %w", err)
 		}
@@ -378,7 +378,7 @@ func (b *Bot) initConversation(ctx context.Context, tsk task.Task, toolCtx *Tool
 			return nil, nil, fmt.Errorf("failed to build system prompt: %w", err)
 		}
 
-		c := ai.NewConversation(b.anthropicClient, model, maxTokens, tools, systemPrompt)
+		c := ai.NewClaudeConversation(b.anthropicClient, model, maxTokens, tools, systemPrompt)
 
 		log.Printf("Sending initial message to AI")
 		repositoryContent, taskContent, err := ai.BuildPrompt(tsk)
@@ -398,7 +398,7 @@ func (b *Bot) initConversation(ctx context.Context, tsk task.Task, toolCtx *Tool
 	}
 }
 
-func (b *Bot) rerunStatefulToolCalls(ctx context.Context, toolCtx *ToolContext, conversation *ai.Conversation) error {
+func (b *Bot) rerunStatefulToolCalls(ctx context.Context, toolCtx *ToolContext, conversation *ai.ClaudeConversation) error {
 	for turnNumber, turn := range conversation.Messages {
 		if turnNumber == len(conversation.Messages)-1 {
 			// Skip the last message in the conversation, since this message was not previously handled

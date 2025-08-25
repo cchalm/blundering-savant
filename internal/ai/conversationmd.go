@@ -55,7 +55,7 @@ type messageTokenUsage struct {
 }
 
 // ToMarkdown converts the ClaudeConversation to a well-organized markdown string
-func (cc *Conversation) ToMarkdown() (string, error) {
+func (cc *ClaudeConversation) ToMarkdown() (string, error) {
 	data, err := cc.buildMarkdownData()
 	if err != nil {
 		return "", fmt.Errorf("failed to build conversation data: %w", err)
@@ -65,7 +65,7 @@ func (cc *Conversation) ToMarkdown() (string, error) {
 }
 
 // buildMarkdownData converts ClaudeConversation to simplified markdown data
-func (cc *Conversation) buildMarkdownData() (*conversationMarkdownData, error) {
+func (cc *ClaudeConversation) buildMarkdownData() (*conversationMarkdownData, error) {
 	data := &conversationMarkdownData{
 		SystemPrompt: cc.systemPrompt,
 		CreatedAt:    time.Now().Format("2006-01-02 15:04:05 MST"),

@@ -19,6 +19,95 @@ type ValidationResult struct {
 	Details   string
 }
 
+type WorkflowStatus string
+
+const (
+	WorkflowStatusCompleted  WorkflowStatus = "completed"
+	WorkflowStatusInProgress WorkflowStatus = "in_progress"
+	WorkflowStatusQueued     WorkflowStatus = "queued"
+	WorkflowStatusPending    WorkflowStatus = "pending"
+	WorkflowStatusRequested  WorkflowStatus = "requested"
+	WorkflowStatusWaiting    WorkflowStatus = "waiting"
+)
+
+type WorkflowConclusion string
+
+const (
+	WorkflowConclusionSuccess WorkflowConclusion = "success"
+	WorkflowConclusionFailure WorkflowConclusion = "failure"
+)
+
+type JobStatus string
+
+const (
+	JobStatusCompleted  JobStatus = "completed"
+	JobStatusInProgress JobStatus = "in_progress"
+	JobStatusQueued     JobStatus = "queued"
+	JobStatusPending    JobStatus = "pending"
+	JobStatusRequested  JobStatus = "requested"
+	JobStatusWaiting    JobStatus = "waiting"
+)
+
+type JobConclusion string
+
+const (
+	JobConclusionSuccess JobConclusion = "success"
+	JobConclusionFailure JobConclusion = "failure"
+)
+
+type StepStatus string
+
+const (
+	StepStatusCompleted  StepStatus = "completed"
+	StepStatusInProgress StepStatus = "in_progress"
+	StepStatusQueued     StepStatus = "queued"
+	StepStatusPending    StepStatus = "pending"
+	StepStatusRequested  StepStatus = "requested"
+	StepStatusWaiting    StepStatus = "waiting"
+)
+
+type StepConclusion string
+
+const (
+	StepConclusionSuccess StepConclusion = "success"
+	StepConclusionFailure StepConclusion = "failure"
+)
+
+type CheckSuiteConclusion string
+
+const (
+	CheckSuiteConclusionSuccess CheckSuiteConclusion = "success"
+	CheckSuiteConclusionFailure CheckSuiteConclusion = "failure"
+)
+
+type WorkflowRun struct {
+	ID         int64
+	Status     WorkflowStatus
+	Conclusion WorkflowConclusion
+
+	Jobs []WorkflowJob
+}
+
+type WorkflowJob struct {
+	ID         int64
+	Status     JobStatus
+	Conclusion JobConclusion
+
+	Steps []WorkflowStep
+}
+
+type WorkflowStep struct {
+	Number     int64
+	Name       string
+	Status     StepStatus
+	Conclusion StepConclusion
+
+	StartedAt   time.Time
+	CompletedAt time.Time
+
+	Logs string
+}
+
 type GithubActionCommitValidator struct {
 	githubClient     *github.Client
 	owner            string
@@ -65,7 +154,7 @@ func (gacv GithubActionCommitValidator) ValidateBranch(ctx context.Context, bran
 		return ValidationResult{}, err
 	}
 
-	succeeded := run.GetConclusion() == string(workflowConclusionSuccess)
+	succeeded := run.GetConclusion() == string(WorkflowConclusionSuccess)
 	var logs string
 	if !succeeded {
 		logs, err = gacv.getWorkflowRunLogs(ctx, run)
@@ -182,15 +271,15 @@ func (gacv GithubActionCommitValidator) waitForWorkflowCompletion(ctx context.Co
 
 		status := run.GetStatus()
 
-		switch workflowStatus(status) {
-		case workflowStatusCompleted:
+		switch WorkflowStatus(status) {
+		case WorkflowStatusCompleted:
 			log.Printf("Workflow run %d completed (status: '%s', conclusion: '%s')", *run.ID, status, run.GetConclusion())
 			return run, nil
-		case workflowStatusInProgress,
-			workflowStatusQueued,
-			workflowStatusPending,
-			workflowStatusRequested,
-			workflowStatusWaiting:
+		case WorkflowStatusInProgress,
+			WorkflowStatusQueued,
+			WorkflowStatusPending,
+			WorkflowStatusRequested,
+			WorkflowStatusWaiting:
 			// Do nothing, continue polling
 		default:
 			return nil, fmt.Errorf("unexpected workflow status: %s", status)
@@ -279,21 +368,3 @@ func httpFetchUTF8(ctx context.Context, url *url.URL) (string, error) {
 
 	return string(b), nil
 }
-
-type workflowStatus string
-
-const (
-	workflowStatusCompleted  workflowStatus = "completed"
-	workflowStatusInProgress workflowStatus = "in_progress"
-	workflowStatusQueued     workflowStatus = "queued"
-	workflowStatusPending    workflowStatus = "pending"
-	workflowStatusRequested  workflowStatus = "requested"
-	workflowStatusWaiting    workflowStatus = "waiting"
-)
-
-type workflowConclusion string
-
-const (
-	workflowConclusionSuccess workflowConclusion = "success"
-	workflowConclusionFailure workflowConclusion = "failure"
-)
