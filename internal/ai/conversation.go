@@ -14,7 +14,7 @@ import (
 	"github.com/anthropics/anthropic-sdk-go"
 )
 
-type ClaudeConversation struct {
+type Conversation struct {
 	client anthropic.Client
 
 	model        anthropic.Model
@@ -31,15 +31,15 @@ type conversationTurn struct {
 	Response    *anthropic.Message // May be nil
 }
 
-func NewClaudeConversation(
+func NewConversation(
 	anthropicClient anthropic.Client,
 	model anthropic.Model,
 	maxTokens int64,
 	tools []anthropic.ToolParam,
 	systemPrompt string,
-) *ClaudeConversation {
+) *Conversation {
 
-	return &ClaudeConversation{
+	return &Conversation{
 		client: anthropicClient,
 
 		model:        model,
@@ -50,14 +50,14 @@ func NewClaudeConversation(
 	}
 }
 
-func ResumeClaudeConversation(
+func ResumeConversation(
 	anthropicClient anthropic.Client,
 	history ConversationHistory,
 	model anthropic.Model,
 	maxTokens int64,
 	tools []anthropic.ToolParam,
-) (*ClaudeConversation, error) {
-	c := &ClaudeConversation{
+) (*Conversation, error) {
+	c := &Conversation{
 		client: anthropicClient,
 
 		model:        model,
@@ -71,7 +71,7 @@ func ResumeClaudeConversation(
 }
 
 // sendMessage is the internal implementation with a boolean parameter to specify caching
-func (cc *ClaudeConversation) SendMessage(ctx context.Context, messageContent ...anthropic.ContentBlockParamUnion) (*anthropic.Message, error) {
+func (cc *Conversation) SendMessage(ctx context.Context, messageContent ...anthropic.ContentBlockParamUnion) (*anthropic.Message, error) {
 	// Always set a cache point. Unsupported cache points, e.g. on content that is below the minimum length for caching,
 	// will be ignored
 	cacheControl, err := getLastCacheControl(messageContent)
@@ -162,14 +162,14 @@ func getLastCacheControl(content []anthropic.ContentBlockParamUnion) (*anthropic
 	return nil, fmt.Errorf("no cacheable blocks in content")
 }
 
-// ConversationHistory contains a serializable and resumable snapshot of a ClaudeConversation
+// ConversationHistory contains a serializable and resumable snapshot of a Conversation
 type ConversationHistory struct {
 	SystemPrompt string             `json:"systemPrompt"`
 	Messages     []conversationTurn `json:"messages"`
 }
 
 // History returns a serializable conversation history
-func (cc *ClaudeConversation) History() ConversationHistory {
+func (cc *Conversation) History() ConversationHistory {
 	return ConversationHistory{
 		SystemPrompt: cc.systemPrompt,
 		Messages:     cc.Messages,
