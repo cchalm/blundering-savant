@@ -3,14 +3,21 @@ package main
 import (
 	"context"
 	"log"
+	"net/http"
 	"os"
 	"os/signal"
 	"time"
 
-	"github.com/cchalm/blundering-savant/internal/task"
+	"github.com/anthropics/anthropic-sdk-go"
+	"github.com/anthropics/anthropic-sdk-go/option"
 	"github.com/google/go-github/v72/github"
 	"github.com/joho/godotenv"
 	"golang.org/x/oauth2"
+
+	"github.com/cchalm/blundering-savant/internal/ai"
+	"github.com/cchalm/blundering-savant/internal/bot"
+	"github.com/cchalm/blundering-savant/internal/task"
+	"github.com/cchalm/blundering-savant/internal/transport"
 )
 
 // Config holds the configuration for the bot
@@ -71,8 +78,26 @@ func main() {
 		log.Fatalf("failed to get github user: %v", err)
 	}
 
+	rateLimitedHTTPClient := &http.Client{
+		Transport: transport.WithRateLimiting(nil),
+	}
+	anthropicClient := anthropic.NewClient(
+		option.WithHTTPClient(rateLimitedHTTPClient),
+		option.WithAPIKey(config.AnthropicAPIKey),
+		option.WithMaxRetries(5),
+	)
+
+	historyStore := ai.NewFileSystemConversationHistoryStore(
+		config.ResumableConversationsDir,
+	)
+
+	workspaceFactory := remoteValidationWorkspaceFactory{
+		githubClient:           githubClient,
+		validationWorkflowName: config.ValidationWorkflowName,
+	}
+
 	taskGen := task.NewGenerator(githubClient, githubUser, config.CheckInterval)
-	b := NewBot(config, githubClient, githubUser)
+	b := bot.New(githubClient, githubUser, anthropicClient, historyStore, workspaceFactory)
 
 	log.Printf("Bot started. Monitoring issues for @%s every %s", *githubUser.Login, config.CheckInterval)
 
