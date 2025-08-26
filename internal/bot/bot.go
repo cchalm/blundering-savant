@@ -1,4 +1,4 @@
-package main
+package bot
 
 import (
 	"context"
@@ -10,7 +10,6 @@ import (
 	"strconv"
 
 	"github.com/anthropics/anthropic-sdk-go"
-	"github.com/anthropics/anthropic-sdk-go/option"
 	"github.com/google/go-github/v72/github"
 
 	"github.com/cchalm/blundering-savant/internal/ai"
@@ -22,12 +21,11 @@ import (
 // Bot represents an AI developer capable of addressing GitHub issues by creating and updating PRs and responding to
 // comments from other users
 type Bot struct {
-	config                 Config
 	githubClient           *github.Client
 	anthropicClient        anthropic.Client
 	toolRegistry           *ToolRegistry
 	workspaceFactory       WorkspaceFactory
-	resumableConversations ConversationHistoryStore
+	resumableConversations ConversationHistoryStore // May be nil
 
 	user *github.User
 }
@@ -70,29 +68,20 @@ type WorkspaceFactory interface {
 	NewWorkspace(ctx context.Context, tsk task.Task) (Workspace, error)
 }
 
-func NewBot(config Config, githubClient *github.Client, githubUser *github.User) *Bot {
-	rateLimitedHTTPClient := &http.Client{
-		Transport: ai.WithRateLimiting(nil),
-	}
-	anthropicClient := anthropic.NewClient(
-		option.WithHTTPClient(rateLimitedHTTPClient),
-		option.WithAPIKey(config.AnthropicAPIKey),
-		option.WithMaxRetries(5),
-	)
-
+func New(
+	githubClient *github.Client,
+	githubUser *github.User,
+	anthropicClient anthropic.Client,
+	historyStore ConversationHistoryStore,
+	workspaceFactory WorkspaceFactory,
+) *Bot {
 	return &Bot{
-		config:          config,
-		githubClient:    githubClient,
-		anthropicClient: anthropicClient,
-		toolRegistry:    NewToolRegistry(),
-		workspaceFactory: remoteValidationWorkspaceFactory{
-			githubClient:           githubClient,
-			validationWorkflowName: config.ValidationWorkflowName,
-		},
-		resumableConversations: ai.NewFileSystemConversationHistoryStore(
-			config.ResumableConversationsDir,
-		),
-		user: githubUser,
+		githubClient:           githubClient,
+		anthropicClient:        anthropicClient,
+		toolRegistry:           NewToolRegistry(),
+		workspaceFactory:       workspaceFactory,
+		resumableConversations: historyStore,
+		user:                   githubUser,
 	}
 }
 
@@ -185,10 +174,13 @@ func (b *Bot) processWithAI(ctx context.Context, tsk task.Task, workspace Worksp
 		if i > maxIterations {
 			return fmt.Errorf("exceeded maximum iterations (%d) without completion", maxIterations)
 		}
-		// Persist the conversation history up to this point
-		err = b.resumableConversations.Set(strconv.Itoa(tsk.Issue.Number), conversation.History())
-		if err != nil {
-			return fmt.Errorf("failed to persist conversation history: %w", err)
+
+		if b.resumableConversations != nil {
+			// Persist the conversation history up to this point
+			err = b.resumableConversations.Set(strconv.Itoa(tsk.Issue.Number), conversation.History())
+			if err != nil {
+				return fmt.Errorf("failed to persist conversation history: %w", err)
+			}
 		}
 
 		log.Printf("Processing AI response, iteration: %d", i+1)
@@ -257,10 +249,14 @@ func (b *Bot) processWithAI(ctx context.Context, tsk task.Task, workspace Worksp
 		i++
 	}
 
-	// We're done! Delete the conversation history so that we don't try to resume it later
-	err = b.resumableConversations.Delete(strconv.Itoa(tsk.Issue.Number))
-	if err != nil {
-		return fmt.Errorf("failed to delete conversation history for concluded conversation: %w", err)
+	// We're done!
+
+	if b.resumableConversations != nil {
+		// Delete the conversation history so that we don't try to resume it later
+		err = b.resumableConversations.Delete(strconv.Itoa(tsk.Issue.Number))
+		if err != nil {
+			return fmt.Errorf("failed to delete conversation history for concluded conversation: %w", err)
+		}
 	}
 
 	err = b.removeLabel(ctx, tsk.Issue, task.LabelBotTurn)
@@ -332,14 +328,20 @@ func (b *Bot) initConversation(ctx context.Context, tsk task.Task, toolCtx *Tool
 	model := anthropic.ModelClaudeSonnet4_0
 	var maxTokens int64 = 64000
 
-	conversationStr, err := b.resumableConversations.Get(strconv.Itoa(tsk.Issue.Number))
-	if err != nil {
-		return nil, nil, fmt.Errorf("failed to look up resumable conversation by issue number: %w", err)
-	}
 	tools := b.toolRegistry.GetAllToolParams()
 
-	if conversationStr != nil {
-		conv, err := ai.ResumeConversation(b.anthropicClient, *conversationStr, model, maxTokens, tools)
+	var history *ai.ConversationHistory
+	if b.resumableConversations != nil {
+		// Check if there is a resumable conversation for this task
+		var err error
+		history, err = b.resumableConversations.Get(strconv.Itoa(tsk.Issue.Number))
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to look up resumable conversation by issue number: %w", err)
+		}
+	}
+
+	if history != nil {
+		conv, err := ai.ResumeConversation(b.anthropicClient, *history, model, maxTokens, tools)
 		if err != nil {
 			return nil, nil, fmt.Errorf("failed to resume conversation: %w", err)
 		}
@@ -373,6 +375,8 @@ func (b *Bot) initConversation(ctx context.Context, tsk task.Task, toolCtx *Tool
 		}
 		return conv, response, nil
 	} else {
+		// Start a new conversation
+
 		systemPrompt, err := ai.BuildSystemPrompt("Blundering Savant", *b.user.Login)
 		if err != nil {
 			return nil, nil, fmt.Errorf("failed to build system prompt: %w", err)
@@ -416,14 +420,4 @@ func (b *Bot) rerunStatefulToolCalls(ctx context.Context, toolCtx *ToolContext, 
 	}
 
 	return nil
-}
-
-// remoteValidationWorkspaceFactory creates instances of remoteValidationWorkspace
-type remoteValidationWorkspaceFactory struct {
-	githubClient           *github.Client
-	validationWorkflowName string
-}
-
-func (rvwf remoteValidationWorkspaceFactory) NewWorkspace(ctx context.Context, tsk task.Task) (Workspace, error) {
-	return workspace.NewRemoteValidationWorkspace(ctx, rvwf.githubClient, rvwf.validationWorkflowName, tsk)
 }
