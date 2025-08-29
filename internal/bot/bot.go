@@ -93,7 +93,7 @@ func (b *Bot) Run(ctx context.Context, tasks <-chan task.TaskOrError) error {
 			return err
 		}
 
-		err = b.doTask(ctx, tsk)
+		err = b.DoTask(ctx, tsk)
 
 		if err != nil {
 			// Add blocked label if there is an error, to tell the bot not to pick up this item again
@@ -113,7 +113,7 @@ func (b *Bot) Run(ctx context.Context, tasks <-chan task.TaskOrError) error {
 	return nil
 }
 
-func (b *Bot) doTask(ctx context.Context, tsk task.Task) (err error) {
+func (b *Bot) DoTask(ctx context.Context, tsk task.Task) (err error) {
 	if err := b.addLabel(ctx, tsk.Issue, task.LabelWorking); err != nil {
 		log.Printf("failed to add in-progress label: %v", err)
 	}
