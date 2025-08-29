@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
+	"strings"
 
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/option"
@@ -106,7 +107,7 @@ func main() {
 	if config.IssueNumber != nil {
 		issueNumber = *config.IssueNumber
 	} else if config.PRBranch != nil {
-		n, err := fmt.Sscanf(*config.PRBranch, "fix/%d", &issueNumber)
+		n, err := fmt.Sscanf(*config.PRBranch, "fix/issue-%d", &issueNumber)
 		if err != nil {
 			log.Fatalf("Failed to parse issue number from PR branch name '%s': %v", *config.PRBranch, err)
 		}
@@ -115,11 +116,11 @@ func main() {
 		log.Fatal("Issue number and PR branch are both nil")
 	}
 
-	var owner, repo string
-	_, err = fmt.Sscanf(config.QualifiedRepoName, "%s/%s", &owner, &repo)
-	if err != nil {
+	parts := strings.Split(config.QualifiedRepoName, "/")
+	if len(parts) != 2 {
 		log.Fatalf("Failed to parse owner and repo from qualified repo name '%s'", config.QualifiedRepoName)
 	}
+	owner, repo := parts[0], parts[1]
 
 	taskBuilder := task.NewBuilder(systemGithubClient, botUser)
 	tsk, err := taskBuilder.BuildTask(ctx, owner, repo, issueNumber)
