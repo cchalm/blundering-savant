@@ -22,16 +22,6 @@ jobs:
       )
 
     steps:
-    - name: Debug event
-      run: |
-        echo "Event name: ${{ github.event_name }}"
-        echo "Event action: ${{ github.event.action }}"
-        echo "Actor: ${{ github.actor }}"
-        echo "Authorized username: ${{ vars.AUTHORIZED_USERNAME }}"
-        echo "Bot username: ${{ vars.BOT_USERNAME }}"
-        echo "Issue assignee: ${{ github.event.issue.assignee.login }}"
-        echo "PR user: ${{ github.event.pull_request.user.login }}"
-
     - name: Checkout code
       uses: actions/checkout@v4
 
