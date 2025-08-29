@@ -1,6 +1,11 @@
 package task
 
-import "github.com/google/go-github/v72/github"
+import (
+	"fmt"
+	"strings"
+
+	"github.com/google/go-github/v72/github"
+)
 
 type GithubIssue struct {
 	Owner  string
@@ -42,3 +47,35 @@ var (
 		Color:       github.Ptr("2020f0"),
 	}
 )
+
+func convertIssue(issue *github.Issue) (GithubIssue, error) {
+	if issue == nil || issue.RepositoryURL == nil || issue.Number == nil || issue.Title == nil || issue.URL == nil {
+		return GithubIssue{}, fmt.Errorf("unexpected nil")
+	}
+
+	// Extract owner and repo
+	parts := strings.Split(*issue.RepositoryURL, "/")
+	if len(parts) < 2 {
+		return GithubIssue{}, fmt.Errorf("failed to parse repo URL '%s'", *issue.RepositoryURL)
+	}
+	owner := parts[len(parts)-2]
+	repo := parts[len(parts)-1]
+
+	// Convert labels into a list of strings
+	labels := []string{}
+	for _, label := range issue.Labels {
+		labels = append(labels, *label.Name)
+	}
+
+	return GithubIssue{
+		Owner:  owner,
+		Repo:   repo,
+		Number: *issue.Number,
+
+		Title: *issue.Title,
+		Body:  issue.GetBody(),
+		URL:   *issue.URL,
+
+		Labels: labels,
+	}, nil
+}

@@ -1,0 +1,68 @@
+name: Bot Runner
+on:
+  issues:
+    types: [assigned, labeled]
+  issue_comment:
+    types: [created]
+  pull_request:
+    types: [synchronize]
+  pull_request_review:
+    types: [submitted]
+  pull_request_review_comment:
+    types: [created]
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    if: >
+      github.actor == '${{ vars.AUTHORIZED_USERNAME }}' &&
+      (
+        (github.event.issue && github.event.issue.assignee.login == '${{ vars.BOT_USERNAME }}') ||
+        (github.event.pull_request && github.event.pull_request.user.login == '${{ vars.BOT_USERNAME }}')
+      )
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v4
+      with:
+        go-version: '1.24.4'
+
+    - name: Build bot
+      run: go build -o handler ./cmd/action-handler
+
+    - name: Run bot
+      timeout-minutes: 30
+      env:
+        SYSTEM_GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        BOT_GITHUB_TOKEN: ${{ secrets.BOT_GITHUB_TOKEN }}
+        ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        LOG_LEVEL: info
+        VALIDATION_WORKFLOW_NAME: go.yml
+        # Task-specific
+        QUALIFIED_REPO_NAME: ${{ github.repository }}
+        ISSUE_NUMBER: ${{ github.event.issue.number }}
+        PR_BRANCH: ${{ github.event.pull_request.base.ref }}
+      run: |
+        echo "Processing ${{ github.event_name }}.${{ github.event.action }}"
+        echo "Repository: '$QUALIFIED_REPO_NAME' / Issue #$ISSUE_NUMBER / PR branch '$PR_BRANCH'"
+        echo "Triggerer: ${{ github.actor }}"
+
+        ./handler
+
+        if [ $? -ne 0 ]; then
+          echo "Bot failed with exit code $?"
+          exit 1
+        fi
+
+        echo "Bot completed successfully"
+
+    - name: Upload logs on failure
+      if: failure()
+      uses: actions/upload-artifact@v4
+      with:
+        name: bot-logs-${{ github.run_id }}
+        path: logs/
+        retention-days: 7
