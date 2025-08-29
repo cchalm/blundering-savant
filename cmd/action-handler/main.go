@@ -63,7 +63,7 @@ func main() {
 	if s := os.Getenv("ISSUE_NUMBER"); s != "" {
 		n, err := strconv.Atoi(s)
 		if err != nil {
-			log.Fatalf("Failed to parse issue number '%s' as integer: %v", err)
+			log.Fatalf("Failed to parse issue number '%s' as integer: %v", s, err)
 		}
 		config.IssueNumber = &n
 	}
