@@ -46,9 +46,8 @@ jobs:
         ISSUE_NUMBER: ${{ github.event.issue.number }}
         PR_BRANCH: ${{ github.event.pull_request.base.ref }}
       run: |
-        echo "Processing ${{ github.event_name }}.${{ github.event.action }}"
+        echo "Processing ${{ github.event_name }}.${{ github.event.action }} by ${{ github.actor }}"
         echo "Repository: '$QUALIFIED_REPO_NAME' / Issue #$ISSUE_NUMBER / PR branch '$PR_BRANCH'"
-        echo "Triggerer: ${{ github.actor }}"
 
         ./handler
 
