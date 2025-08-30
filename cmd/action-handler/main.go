@@ -97,7 +97,7 @@ func main() {
 	)
 
 	workspaceFactory := remoteValidationWorkspaceFactory{
-		githubClient:           systemGithubClient,
+		githubClient:           botGithubClient,
 		validationWorkflowName: config.ValidationWorkflowName,
 	}
 
