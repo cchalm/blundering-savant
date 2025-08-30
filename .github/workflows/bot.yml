@@ -20,11 +20,17 @@ jobs:
       pull-requests: write  # To edit labels and comment on pull requests
 
     runs-on: ubuntu-latest
+
+    # Run if the triggering user is the authorized user configured for the repository AND:
+    # - The affected issue is assigned to the bot, OR
+    # - The affected pull request is owned by the bot, OR
+    # - The affected issue is owned by the bot (for pull request comments, which are issue comments)
     if: >
       github.actor == vars.AUTHORIZED_USERNAME &&
       (
         (github.event.issue && github.event.issue.assignee.login == vars.BOT_USERNAME) ||
-        (github.event.pull_request && github.event.pull_request.user.login == vars.BOT_USERNAME)
+        (github.event.pull_request && github.event.pull_request.user.login == vars.BOT_USERNAME) ||
+        (github.event.issue && github.event.issue.user.login == vars.BOT_USERNAME)
       )
 
     steps:
