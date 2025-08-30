@@ -13,6 +13,12 @@ on:
 
 jobs:
   run:
+    permissions:
+      actions: write        # To create workflow dispatch events
+      contents: write       # To make code changes
+      issues: write         # To edit labels and comment on issues
+      pull-requests: write  # To edit labels and comment on pull requests
+
     runs-on: ubuntu-latest
     if: >
       github.actor == vars.AUTHORIZED_USERNAME &&
