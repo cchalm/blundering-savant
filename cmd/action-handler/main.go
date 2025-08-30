@@ -107,11 +107,10 @@ func main() {
 	if config.IssueNumber != nil {
 		issueNumber = *config.IssueNumber
 	} else if config.PRBranch != nil {
-		n, err := fmt.Sscanf(*config.PRBranch, "fix/issue-%d", &issueNumber)
+		_, err := fmt.Sscanf(*config.PRBranch, "fix/issue-%d", &issueNumber)
 		if err != nil {
 			log.Fatalf("Failed to parse issue number from PR branch name '%s': %v", *config.PRBranch, err)
 		}
-		issueNumber = n
 	} else {
 		log.Fatal("Issue number and PR branch are both nil")
 	}
