@@ -41,7 +41,7 @@ jobs:
         go-version: '1.24.4'
 
     - name: Build bot
-      run: go build -o handler ./cmd/action-handler
+      run: go build -o blundering-savant ./app/blundering-savant
 
     - name: Run bot
       timeout-minutes: 30
@@ -49,17 +49,15 @@ jobs:
         SYSTEM_GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         BOT_GITHUB_TOKEN: ${{ secrets.BOT_GITHUB_TOKEN }}
         ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-        LOG_LEVEL: info
-        VALIDATION_WORKFLOW_NAME: go.yml
-        # Task-specific
-        QUALIFIED_REPO_NAME: ${{ github.repository }}
-        ISSUE_NUMBER: ${{ github.event.issue.number }}
-        PR_BRANCH: ${{ github.event.pull_request.head.ref }}
       run: |
         echo "Processing ${{ github.event_name }}.${{ github.event.action }} by ${{ github.actor }}"
         echo "Repository: '$QUALIFIED_REPO_NAME' / Issue #$ISSUE_NUMBER / PR branch '$PR_BRANCH'"
 
-        ./handler
+        ./blundering-savant \
+          --repo ${{ github.repository }} \
+          --issue ${{ github.event.issue.number }} \
+          --pr-branch ${{ github.event.pull_request.head.ref }} \
+          --validation-workflow go.yml
 
         if [ $? -ne 0 ]; then
           echo "Bot failed with exit code $?"
