@@ -51,13 +51,24 @@ jobs:
         ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
       run: |
         echo "Processing ${{ github.event_name }}.${{ github.event.action }} by ${{ github.actor }}"
-        echo "Repository: '$QUALIFIED_REPO_NAME' / Issue #$ISSUE_NUMBER / PR branch '$PR_BRANCH'"
 
-        ./blundering-savant \
-          --repo ${{ github.repository }} \
-          --issue ${{ github.event.issue.number }} \
-          --pr-branch ${{ github.event.pull_request.head.ref }} \
-          --validation-workflow go.yml
+        # Determine whether to use issue number or PR branch
+        if [ -n "${{ github.event.issue.number }}" ]; then
+          echo "Repository: ${{ github.repository }} / Issue #${{ github.event.issue.number }}"
+          ./blundering-savant \
+            --repo ${{ github.repository }} \
+            --issue ${{ github.event.issue.number }} \
+            --validation-workflow go.yml
+        elif [ -n "${{ github.event.pull_request.head.ref }}" ]; then
+          echo "Repository: ${{ github.repository }} / PR branch '${{ github.event.pull_request.head.ref }}'"
+          ./blundering-savant \
+            --repo ${{ github.repository }} \
+            --pr-branch ${{ github.event.pull_request.head.ref }} \
+            --validation-workflow go.yml
+        else
+          echo "Error: Neither issue number nor PR branch available"
+          exit 1
+        fi
 
         if [ $? -ne 0 ]; then
           echo "Bot failed with exit code $?"
