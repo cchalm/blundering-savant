@@ -42,7 +42,7 @@ func parseFromEnv[T any](dest *T, key string, parseFn func(string) (T, error)) {
 	}
 	v, err := parseFn(str)
 	if err != nil {
-		log.Fatal("failed to parse environment variable '%s' value '%s' as '%T': %v", key, str, dest, err)
+		log.Fatalf("failed to parse environment variable '%s' value '%s' as '%T': %v", key, str, dest, err)
 	}
 	*dest = v
 }

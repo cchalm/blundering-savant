@@ -23,7 +23,7 @@ func init() {
 	oneShotCmd.Flags().IntVar(config.IssueNumber, "issue", 0, "Issue number to process")
 	oneShotCmd.Flags().StringVar(config.PRBranch, "pr-branch", "", "Pull request branch name")
 
-	oneShotCmd.MarkFlagRequired("repo")
+	_ = oneShotCmd.MarkFlagRequired("repo")
 	oneShotCmd.MarkFlagsOneRequired("issue", "pr-branch")
 
 	rootCmd.AddCommand(oneShotCmd)
