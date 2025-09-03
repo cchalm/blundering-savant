@@ -16,13 +16,18 @@ var pollCmd = &cobra.Command{
 	Short: "Run in polling mode",
 	Long: `Starts the bot in long-running mode where it continuously polls GitHub
 for issues assigned to it and processes them automatically.`,
-	RunE: runPollMode,
+	PreRun: loadPollConfig,
+	RunE:   runPollMode,
+}
+
+func loadPollConfig(cmd *cobra.Command, args []string) {
+	cmd.Parent().PreRun(cmd.Parent(), args)
+
+	parseFromEnv(&config.CheckInterval, "CHECK_INTERVAL", time.ParseDuration)
+	loadFromEnv(&config.ResumableConversationsDir, "RESUMABLE_CONVERSATIONS_DIR")
 }
 
 func init() {
-	parseFromEnv(&config.CheckInterval, "CHECK_INTERVAL", time.ParseDuration)
-	loadFromEnv(&config.ResumableConversationsDir, "RESUMABLE_CONVERSATIONS_DIR")
-
 	rootCmd.AddCommand(pollCmd)
 }
 
