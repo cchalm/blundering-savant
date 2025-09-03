@@ -11,7 +11,7 @@ import (
 )
 
 var oneShotCmd = &cobra.Command{
-	Use:   "task",
+	Use:   "oneshot",
 	Short: "Process a single specified task",
 	Long: `Processes a single issue or pull request. This mode is designed to be
 triggered by GitHub Actions, webhooks, etc.`,

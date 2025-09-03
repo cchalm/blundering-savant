@@ -55,13 +55,13 @@ jobs:
         # Determine whether to use issue number or PR branch
         if [ -n "${{ github.event.issue.number }}" ]; then
           echo "Repository: ${{ github.repository }} / Issue #${{ github.event.issue.number }}"
-          ./blundering-savant \
+          ./blundering-savant oneshot \
             --repo ${{ github.repository }} \
             --issue ${{ github.event.issue.number }} \
             --validation-workflow go.yml
         elif [ -n "${{ github.event.pull_request.head.ref }}" ]; then
           echo "Repository: ${{ github.repository }} / PR branch '${{ github.event.pull_request.head.ref }}'"
-          ./blundering-savant \
+          ./blundering-savant oneshot \
             --repo ${{ github.repository }} \
             --pr-branch ${{ github.event.pull_request.head.ref }} \
             --validation-workflow go.yml
