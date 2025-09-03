@@ -8,8 +8,6 @@ on:
     types: [synchronize]
   pull_request_review:
     types: [submitted]
-  pull_request_review_comment:
-    types: [created]
 
 jobs:
   run:
@@ -20,6 +18,15 @@ jobs:
       pull-requests: write  # To edit labels and comment on pull requests
 
     runs-on: ubuntu-latest
+
+    # Prevent multiple simultaneous runs per repository target (issue or PR)
+    # Different event types store the target number in different locations:
+    # - issues/issue_comment: github.event.issue.number
+    # - pull_request: github.event.pull_request.number  
+    # - pull_request_review: github.event.review.pull_request.number
+    concurrency:
+      group: bot-${{ github.repository }}-${{ github.event.issue.number || github.event.pull_request.number || github.event.review.pull_request.number || 'unknown' }}
+      cancel-in-progress: true
 
     # Run if the triggering user is the authorized user configured for the repository AND:
     # - The affected issue is assigned to the bot, OR
