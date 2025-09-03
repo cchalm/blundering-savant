@@ -23,6 +23,7 @@ and code reviews. Let's apply those same tools to collaborate with a new breed o
     - Click "Generate new token"
     - Select scopes:
       - `repo` (Full control of private repositories)
+      - `workflow` (If the bot should be allowed to modify `.github/workflows`)
 1. Add the bot to a project as a collaborator
     - Switch to your main GitHub account
     - Navigate to a GitHub repository that you are the owner of
