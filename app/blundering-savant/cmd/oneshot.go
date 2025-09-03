@@ -15,7 +15,13 @@ var oneShotCmd = &cobra.Command{
 	Short: "Process a single specified task",
 	Long: `Processes a single issue or pull request. This mode is designed to be
 triggered by GitHub Actions, webhooks, etc.`,
-	RunE: runTaskMode,
+	PreRun: loadOneShotConfig,
+	RunE:   runTaskMode,
+}
+
+func loadOneShotConfig(cmd *cobra.Command, args []string) {
+	// No additional config to load, simply call the parent
+	cmd.Parent().PreRun(cmd.Parent(), args)
 }
 
 func init() {
