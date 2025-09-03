@@ -1,0 +1,72 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to release (e.g., v1.0.0)'
+        required: true
+        type: string
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
+
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0 # For tags and commit history
+
+    - name: Set up Go
+      uses: actions/setup-go@v4
+      with:
+        go-version: '1.24.4'
+
+    - name: Determine version
+      id: version
+      run: |
+        if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+          echo "version=${{ github.event.inputs.tag }}" >> $GITHUB_OUTPUT
+        else
+          echo "version=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+        fi
+
+    - name: Build binaries
+      run: |
+        mkdir -p dist
+
+        VERSION="${{ steps.version.outputs.version }}"
+        GIT_COMMIT="${{ github.sha }}"
+        BUILD_TIME=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+        LDFLAGS="-s -w -X main.Version=$VERSION -X main.GitCommit=$GIT_COMMIT -X main.BuildTime=$BUILD_TIME"
+
+        # Build for multiple platforms
+        GOOS=linux GOARCH=amd64 go build -ldflags "$LDFLAGS" -o dist/blundering-savant-linux-amd64 ./app/blundering-savant
+        GOOS=linux GOARCH=arm64 go build -ldflags "$LDFLAGS" -o dist/blundering-savant-linux-arm64 ./app/blundering-savant
+        GOOS=darwin GOARCH=amd64 go build -ldflags "$LDFLAGS" -o dist/blundering-savant-darwin-amd64 ./app/blundering-savant
+        GOOS=darwin GOARCH=arm64 go build -ldflags "$LDFLAGS" -o dist/blundering-savant-darwin-arm64 ./app/blundering-savant
+        GOOS=windows GOARCH=amd64 go build -ldflags "$LDFLAGS" -o dist/blundering-savant-windows-amd64.exe ./app/blundering-savant
+
+        # Make binaries executable
+        chmod +x dist/blundering-savant-*
+
+    - name: Create Release
+      uses: softprops/action-gh-release@v1
+      with:
+        tag_name: ${{ steps.version.outputs.version }}
+        name: Release ${{ steps.version.outputs.version }}
+        draft: true
+        prerelease: true
+        files: |
+          dist/blundering-savant-*
+        generate_release_notes: true
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

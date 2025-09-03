@@ -4,7 +4,8 @@ services:
     container_name: blundering-savant-bot
     restart: unless-stopped
     environment:
-      - GITHUB_TOKEN=${GITHUB_TOKEN}
+      - SYSTEM_GITHUB_TOKEN=${SYSTEM_GITHUB_TOKEN}
+      - BOT_GITHUB_TOKEN=${BOT_GITHUB_TOKEN}
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
       - CHECK_INTERVAL=${CHECK_INTERVAL:-5m}
       - LOG_LEVEL=${LOG_LEVEL:-info}
