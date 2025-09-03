@@ -20,6 +20,8 @@ func Execute() error {
 }
 
 func init() {
+	config = Config{}
+
 	// Load .env file
 	err := godotenv.Load()
 	if err != nil {

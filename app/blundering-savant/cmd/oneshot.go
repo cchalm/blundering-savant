@@ -20,8 +20,8 @@ triggered by GitHub Actions, webhooks, etc.`,
 
 func init() {
 	oneShotCmd.Flags().StringVar(&config.QualifiedRepoName, "repo", "", "Repository name in the format 'owner/repo'")
-	oneShotCmd.Flags().IntVar(config.IssueNumber, "issue", 0, "Issue number to process")
-	oneShotCmd.Flags().StringVar(config.PRBranch, "pr-branch", "", "Pull request branch name")
+	oneShotCmd.Flags().IntVar(&config.IssueNumber, "issue", 0, "Issue number to process")
+	oneShotCmd.Flags().StringVar(&config.PRBranch, "pr-branch", "", "Pull request branch name")
 
 	_ = oneShotCmd.MarkFlagRequired("repo")
 	oneShotCmd.MarkFlagsOneRequired("issue", "pr-branch")
@@ -37,12 +37,12 @@ func runTaskMode(cmd *cobra.Command, args []string) error {
 
 	// Parse issue number from PR branch if needed
 	var issueNumber int
-	if config.IssueNumber != nil {
-		issueNumber = *config.IssueNumber
-	} else if config.PRBranch != nil {
-		_, err := fmt.Sscanf(*config.PRBranch, "fix/issue-%d", &issueNumber)
+	if config.IssueNumber != 0 {
+		issueNumber = config.IssueNumber
+	} else if config.PRBranch != "" {
+		_, err := fmt.Sscanf(config.PRBranch, "fix/issue-%d", &issueNumber)
 		if err != nil {
-			return fmt.Errorf("failed to parse issue number from PR branch '%s': %w", *config.PRBranch, err)
+			return fmt.Errorf("failed to parse issue number from PR branch '%s': %w", config.PRBranch, err)
 		}
 	} else {
 		return fmt.Errorf("issue number and PR branch are both nil")

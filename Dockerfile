@@ -46,4 +46,4 @@ HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
     CMD ["/bin/sh", "-c", "ps aux | grep '[b]lundering-savant' || exit 1"]
 
 # Run the application
-CMD ["./blundering-savant"]
+CMD ["./blundering-savant", "poll"]

@@ -1,14 +1,12 @@
 package cmd
 
 import (
-	"encoding/json"
 	"log"
 	"os"
-	"strings"
 	"time"
 )
 
-var config Config
+var config = Config{}
 
 type Config struct {
 	// Common config
@@ -19,20 +17,16 @@ type Config struct {
 
 	// One-shot options
 	QualifiedRepoName string
-	IssueNumber       *int
-	PRBranch          *string
+	IssueNumber       int
+	PRBranch          string
 
 	// Polling options
 	CheckInterval             time.Duration
 	ResumableConversationsDir string
 }
 
-func loadFromEnv[T any](dest *T, key string) {
-	parseFromEnv(dest, key, func(v string) (T, error) {
-		var parsed T
-		err := json.NewDecoder(strings.NewReader(v)).Decode(&parsed)
-		return parsed, err
-	})
+func loadFromEnv(dest *string, key string) {
+	parseFromEnv(dest, key, func(v string) (string, error) { return v, nil })
 }
 
 func parseFromEnv[T any](dest *T, key string, parseFn func(string) (T, error)) {
@@ -42,7 +36,7 @@ func parseFromEnv[T any](dest *T, key string, parseFn func(string) (T, error)) {
 	}
 	v, err := parseFn(str)
 	if err != nil {
-		log.Fatalf("failed to parse environment variable '%s' value '%s' as '%T': %v", key, str, dest, err)
+		log.Fatalf("failed to parse environment variable '%s' value '%s' as '%T': %v", key, str, *dest, err)
 	}
 	*dest = v
 }

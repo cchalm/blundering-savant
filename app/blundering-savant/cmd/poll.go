@@ -20,8 +20,8 @@ for issues assigned to it and processes them automatically.`,
 }
 
 func init() {
-	pollCmd.Flags().DurationVar(&config.CheckInterval, "check-interval", 5*time.Minute, "Interval between GitHub checks")
-	pollCmd.Flags().StringVar(&config.ResumableConversationsDir, "conversations-dir", "", "Directory for resumable conversations")
+	parseFromEnv(&config.CheckInterval, "CHECK_INTERVAL", time.ParseDuration)
+	loadFromEnv(&config.ResumableConversationsDir, "RESUMABLE_CONVERSATIONS_DIR")
 
 	rootCmd.AddCommand(pollCmd)
 }
