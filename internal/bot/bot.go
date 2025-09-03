@@ -96,15 +96,6 @@ func (b *Bot) Run(ctx context.Context, tasks <-chan task.TaskOrError) error {
 		err = b.DoTask(ctx, tsk)
 
 		if err != nil {
-			// Add blocked label if there is an error, to tell the bot not to pick up this item again
-			if err := b.addLabel(ctx, tsk.Issue, task.LabelBlocked); err != nil {
-				log.Printf("failed to add blocked label: %v", err)
-			}
-			// Post sanitized error comment
-			msg := "❌ I encountered an error while working on this issue."
-			if err := b.postIssueComment(ctx, tsk.Issue, msg); err != nil {
-				log.Printf("failed to post error comment: %v", err)
-			}
 			// Log the error and continue processing other tasks
 			log.Printf("failed to process task for issue %d: %v", tsk.Issue.Number, err)
 		}
@@ -120,6 +111,18 @@ func (b *Bot) DoTask(ctx context.Context, tsk task.Task) (err error) {
 	defer func() {
 		if err := b.removeLabel(ctx, tsk.Issue, task.LabelWorking); err != nil {
 			log.Printf("failed to remove in-progress label: %v", err)
+		}
+
+		if err != nil {
+			// Add blocked label if there is an error, to tell the bot not to pick up this item again
+			if err := b.addLabel(ctx, tsk.Issue, task.LabelBlocked); err != nil {
+				log.Printf("failed to add blocked label: %v", err)
+			}
+			// Post sanitized error comment
+			msg := "❌ I encountered an error while working on this issue."
+			if err := b.postIssueComment(ctx, tsk.Issue, msg); err != nil {
+				log.Printf("failed to post error comment: %v", err)
+			}
 		}
 	}()
 
