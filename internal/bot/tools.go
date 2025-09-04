@@ -771,46 +771,48 @@ func (t *PublishChangesForReviewTool) Replay(ctx context.Context, block anthropi
 	return nil
 }
 
-// SearchRepositoryTool implements the search_repository tool
-type SearchRepositoryTool struct {
+// SearchInFileTool implements the search_in_file tool
+type SearchInFileTool struct {
 	BaseTool
 }
 
-// SearchRepositoryInput represents the input for search_repository
-type SearchRepositoryInput struct {
-	Query           string   `json:"query"`
-	UseRegex        bool     `json:"use_regex,omitempty"`
-	PathFilter      string   `json:"path_filter,omitempty"`
-	FileExtensions  []string `json:"file_extensions,omitempty"`
-	MaxResults      int      `json:"max_results,omitempty"`
-	ContextLines    int      `json:"context_lines,omitempty"`
-	CaseSensitive   bool     `json:"case_sensitive,omitempty"`
-	IncludeBinaryFiles bool  `json:"include_binary_files,omitempty"`
+// SearchInFileInput represents the input for search_in_file
+type SearchInFileInput struct {
+	FilePath      string `json:"file_path"`
+	Query         string `json:"query"`
+	UseRegex      bool   `json:"use_regex,omitempty"`
+	MaxResults    int    `json:"max_results,omitempty"`
+	ContextLines  int    `json:"context_lines,omitempty"`
+	CaseSensitive bool   `json:"case_sensitive,omitempty"`
 }
 
 // SearchResult represents a single search result
 type SearchResult struct {
-	FilePath    string
-	LineNumber  int
-	Line        string
+	FilePath      string
+	LineNumber    int
+	Line          string
 	ContextBefore []string
 	ContextAfter  []string
 }
 
-// NewSearchRepositoryTool creates a new search repository tool
-func NewSearchRepositoryTool() *SearchRepositoryTool {
-	return &SearchRepositoryTool{
-		BaseTool: BaseTool{Name: "search_repository"},
+// NewSearchInFileTool creates a new search in file tool
+func NewSearchInFileTool() *SearchInFileTool {
+	return &SearchInFileTool{
+		BaseTool: BaseTool{Name: "search_in_file"},
 	}
 }
 
 // GetToolParam returns the tool parameter definition
-func (t *SearchRepositoryTool) GetToolParam() anthropic.ToolParam {
+func (t *SearchInFileTool) GetToolParam() anthropic.ToolParam {
 	return anthropic.ToolParam{
 		Name:        t.Name,
-		Description: anthropic.String("Search for text across files in the repository, similar to Ctrl+Shift+F in VS Code"),
+		Description: anthropic.String("Search for text within a specific file, with regex support and context lines"),
 		InputSchema: anthropic.ToolInputSchemaParam{
 			Properties: map[string]any{
+				"file_path": map[string]any{
+					"type":        "string",
+					"description": "Path to the file to search in",
+				},
 				"query": map[string]any{
 					"type":        "string",
 					"description": "The text or pattern to search for",
@@ -819,18 +821,9 @@ func (t *SearchRepositoryTool) GetToolParam() anthropic.ToolParam {
 					"type":        "boolean",
 					"description": "Whether to treat the query as a regular expression (default: false)",
 				},
-				"path_filter": map[string]any{
-					"type":        "string",
-					"description": "Optional glob pattern to filter file paths (e.g., 'internal/*', '*.go', 'src/**/*.js')",
-				},
-				"file_extensions": map[string]any{
-					"type":        "array",
-					"items":       map[string]any{"type": "string"},
-					"description": "Optional list of file extensions to search in (e.g., ['go', 'md', 'txt'])",
-				},
 				"max_results": map[string]any{
 					"type":        "integer",
-					"description": "Maximum number of results to return (default: 50, max: 500)",
+					"description": "Maximum number of results to return (default: 50, max: 200)",
 				},
 				"context_lines": map[string]any{
 					"type":        "integer",
@@ -840,40 +833,36 @@ func (t *SearchRepositoryTool) GetToolParam() anthropic.ToolParam {
 					"type":        "boolean",
 					"description": "Whether the search should be case sensitive (default: false)",
 				},
-				"include_binary_files": map[string]any{
-					"type":        "boolean",
-					"description": "Whether to include binary files in the search (default: false)",
-				},
 			},
-			Required: []string{"query"},
+			Required: []string{"file_path", "query"},
 		},
 	}
 }
 
 // ParseToolUse parses the tool use block
-func (t *SearchRepositoryTool) ParseToolUse(block anthropic.ToolUseBlock) (*SearchRepositoryInput, error) {
+func (t *SearchInFileTool) ParseToolUse(block anthropic.ToolUseBlock) (*SearchInFileInput, error) {
 	if block.Name != t.Name {
 		return nil, fmt.Errorf("tool use block is for %s, not %s", block.Name, t.Name)
 	}
 
-	var input SearchRepositoryInput
+	var input SearchInFileInput
 	if err := parseInputJSON(block, &input); err != nil {
 		return nil, err
 	}
 	return &input, nil
 }
 
-// Run executes the search repository command
-func (t *SearchRepositoryTool) Run(ctx context.Context, block anthropic.ToolUseBlock, toolCtx *ToolContext) (*string, error) {
+// Run executes the search in file command
+func (t *SearchInFileTool) Run(ctx context.Context, block anthropic.ToolUseBlock, toolCtx *ToolContext) (*string, error) {
 	return t.run(ctx, block, toolCtx, false)
 }
 
-func (t *SearchRepositoryTool) Replay(ctx context.Context, block anthropic.ToolUseBlock, toolCtx *ToolContext) error {
+func (t *SearchInFileTool) Replay(ctx context.Context, block anthropic.ToolUseBlock, toolCtx *ToolContext) error {
 	// Search is read-only, no side effects to replay
 	return nil
 }
 
-func (t *SearchRepositoryTool) run(ctx context.Context, block anthropic.ToolUseBlock, toolCtx *ToolContext, replay bool) (*string, error) {
+func (t *SearchInFileTool) run(ctx context.Context, block anthropic.ToolUseBlock, toolCtx *ToolContext, replay bool) (*string, error) {
 	if replay {
 		// Search is read-only, no side effects to replay
 		return nil, nil
@@ -884,35 +873,68 @@ func (t *SearchRepositoryTool) run(ctx context.Context, block anthropic.ToolUseB
 		return nil, fmt.Errorf("error parsing input: %w", err)
 	}
 
+	if input.FilePath == "" {
+		return nil, ToolInputError{fmt.Errorf("file_path is required")}
+	}
+
 	if input.Query == "" {
 		return nil, ToolInputError{fmt.Errorf("query is required")}
+	}
+
+	// Validate that the path doesn't start with a leading slash
+	if strings.HasPrefix(input.FilePath, "/") {
+		return nil, ToolInputError{fmt.Errorf("file_path must be relative (no leading slash)")}
 	}
 
 	// Set defaults
 	if input.MaxResults <= 0 {
 		input.MaxResults = 50
 	}
-	if input.MaxResults > 500 {
-		input.MaxResults = 500
+	if input.MaxResults > 200 {
+		input.MaxResults = 200
 	}
 	if input.ContextLines < 0 {
-		input.ContextLines = 0
+		input.ContextLines = 2
 	}
 	if input.ContextLines > 10 {
 		input.ContextLines = 10
 	}
 
-	results, err := t.searchRepository(ctx, input, toolCtx.Workspace)
+	// Check if file exists
+	exists, err := toolCtx.Workspace.FileExists(ctx, input.FilePath)
 	if err != nil {
-		return nil, fmt.Errorf("error searching repository: %w", err)
+		return nil, fmt.Errorf("error checking if file exists: %w", err)
+	}
+	if !exists {
+		return nil, ToolInputError{fmt.Errorf("file does not exist: %s", input.FilePath)}
+	}
+
+	// Check if it's actually a file (not a directory)
+	isDir, err := toolCtx.Workspace.IsDir(ctx, input.FilePath)
+	if err != nil {
+		return nil, fmt.Errorf("error checking if path is directory: %w", err)
+	}
+	if isDir {
+		return nil, ToolInputError{fmt.Errorf("path is a directory, not a file: %s", input.FilePath)}
+	}
+
+	// Read file content
+	content, err := toolCtx.Workspace.Read(ctx, input.FilePath)
+	if err != nil {
+		return nil, fmt.Errorf("error reading file: %w", err)
+	}
+
+	results, err := t.searchInFile(input.FilePath, content, input)
+	if err != nil {
+		return nil, fmt.Errorf("error searching file: %w", err)
 	}
 
 	output := t.formatResults(results, input)
 	return &output, nil
 }
 
-// searchRepository performs the actual search across the repository
-func (t *SearchRepositoryTool) searchRepository(ctx context.Context, input *SearchRepositoryInput, ws Workspace) ([]SearchResult, error) {
+// searchInFile searches for the query within the file content
+func (t *SearchInFileTool) searchInFile(filePath, content string, input *SearchInFileInput) ([]SearchResult, error) {
 	var results []SearchResult
 	var searchRegex *regexp.Regexp
 	var err error
@@ -929,125 +951,18 @@ func (t *SearchRepositoryTool) searchRepository(ctx context.Context, input *Sear
 		}
 	}
 
-	// Get all files in the repository
-	allFiles, err := t.getAllFiles(ctx, ws, "")
-	if err != nil {
-		return nil, fmt.Errorf("error listing repository files: %w", err)
-	}
-
+	lines := strings.Split(content, "\n")
 	resultCount := 0
-	for _, filePath := range allFiles {
+
+	for lineNum, line := range lines {
 		if resultCount >= input.MaxResults {
 			break
 		}
 
-		// Apply filters
-		if !t.shouldSearchFile(filePath, input) {
-			continue
-		}
-
-		// Read file content
-		content, err := ws.Read(ctx, filePath)
-		if err != nil {
-			// Skip files that can't be read
-			continue
-		}
-
-		// Skip binary files unless explicitly included
-		if !input.IncludeBinaryFiles && t.isBinaryFile(content) {
-			continue
-		}
-
-		// Search within the file
-		fileResults := t.searchInFile(filePath, content, input, searchRegex)
-		for _, result := range fileResults {
-			if resultCount >= input.MaxResults {
-				break
-			}
-			results = append(results, result)
-			resultCount++
-		}
-	}
-
-	return results, nil
-}
-
-// getAllFiles recursively gets all files in the repository
-func (t *SearchRepositoryTool) getAllFiles(ctx context.Context, ws Workspace, dir string) ([]string, error) {
-	var allFiles []string
-
-	files, err := ws.ListDir(ctx, dir)
-	if err != nil {
-		return nil, err
-	}
-
-	for _, file := range files {
-		filePath := file
-		if dir != "" {
-			filePath = dir + "/" + file
-		}
-
-		if strings.HasSuffix(file, "/") {
-			// It's a directory
-			dirPath := strings.TrimSuffix(filePath, "/")
-			subFiles, err := t.getAllFiles(ctx, ws, dirPath)
-			if err != nil {
-				continue // Skip directories we can't read
-			}
-			allFiles = append(allFiles, subFiles...)
-		} else {
-			// It's a file
-			allFiles = append(allFiles, filePath)
-		}
-	}
-
-	return allFiles, nil
-}
-
-// shouldSearchFile determines if a file should be searched based on filters
-func (t *SearchRepositoryTool) shouldSearchFile(filePath string, input *SearchRepositoryInput) bool {
-	// Check path filter
-	if input.PathFilter != "" {
-		matched, err := filepath.Match(input.PathFilter, filePath)
-		if err != nil || !matched {
-			return false
-		}
-	}
-
-	// Check file extensions
-	if len(input.FileExtensions) > 0 {
-		ext := strings.TrimPrefix(filepath.Ext(filePath), ".")
-		found := false
-		for _, allowedExt := range input.FileExtensions {
-			if strings.EqualFold(ext, allowedExt) {
-				found = true
-				break
-			}
-		}
-		if !found {
-			return false
-		}
-	}
-
-	return true
-}
-
-// isBinaryFile attempts to detect if a file is binary
-func (t *SearchRepositoryTool) isBinaryFile(content string) bool {
-	// Check for null bytes, which are common in binary files
-	return strings.Contains(content, "\x00")
-}
-
-// searchInFile searches for the query within a single file
-func (t *SearchRepositoryTool) searchInFile(filePath, content string, input *SearchRepositoryInput, regex *regexp.Regexp) []SearchResult {
-	var results []SearchResult
-	lines := strings.Split(content, "\n")
-
-	for lineNum, line := range lines {
 		var matches bool
-		
-		if input.UseRegex && regex != nil {
-			matches = regex.MatchString(line)
+
+		if input.UseRegex && searchRegex != nil {
+			matches = searchRegex.MatchString(line)
 		} else {
 			// Simple string matching
 			searchQuery := input.Query
@@ -1088,27 +1003,28 @@ func (t *SearchRepositoryTool) searchInFile(filePath, content string, input *Sea
 			}
 
 			results = append(results, result)
+			resultCount++
 		}
 	}
 
-	return results
+	return results, nil
 }
 
 // formatResults formats the search results into a readable string
-func (t *SearchRepositoryTool) formatResults(results []SearchResult, input *SearchRepositoryInput) string {
+func (t *SearchInFileTool) formatResults(results []SearchResult, input *SearchInFileInput) string {
 	if len(results) == 0 {
-		return fmt.Sprintf("No results found for query: %s", input.Query)
+		return fmt.Sprintf("No results found for query '%s' in file: %s", input.Query, input.FilePath)
 	}
 
 	var output strings.Builder
-	output.WriteString(fmt.Sprintf("Found %d result(s) for query: %s\n\n", len(results), input.Query))
+	output.WriteString(fmt.Sprintf("Found %d result(s) for query '%s' in file: %s\n\n", len(results), input.Query, input.FilePath))
 
 	for i, result := range results {
 		if i > 0 {
 			output.WriteString("\n")
 		}
 
-		output.WriteString(fmt.Sprintf("**%s:%d**\n", result.FilePath, result.LineNumber))
+		output.WriteString(fmt.Sprintf("**Line %d:**\n", result.LineNumber))
 
 		// Add context before
 		for _, contextLine := range result.ContextBefore {
@@ -1122,6 +1038,10 @@ func (t *SearchRepositoryTool) formatResults(results []SearchResult, input *Sear
 		for _, contextLine := range result.ContextAfter {
 			output.WriteString(fmt.Sprintf("  %s\n", contextLine))
 		}
+	}
+
+	if len(results) >= input.MaxResults {
+		output.WriteString(fmt.Sprintf("\n(Results limited to %d matches)\n", input.MaxResults))
 	}
 
 	return output.String()
@@ -1250,7 +1170,7 @@ func NewToolRegistry() *ToolRegistry {
 	registry.Register(NewAddReactionTool())
 	registry.Register(NewValidateChangesTool())
 	registry.Register(NewPublishChangesForReviewTool())
-	registry.Register(NewSearchRepositoryTool())
+	registry.Register(NewSearchInFileTool())
 	registry.Register(NewReportLimitationTool())
 
 	return registry

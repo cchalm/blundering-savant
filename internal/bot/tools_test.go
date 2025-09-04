@@ -36,11 +36,11 @@ func TestDeleteFileTool_ParseInput_InvalidJSON(t *testing.T) {
 
 
 
-func testSearchRepositoryToolParseInput(t *testing.T, inputJSON []byte, wantError bool) {
-	tool := NewSearchRepositoryTool()
+func testSearchInFileToolParseInput(t *testing.T, inputJSON []byte, wantError bool) {
+	tool := NewSearchInFileTool()
 	block := anthropic.ToolUseBlock{
 		ID:    "test",
-		Name:  "search_repository",
+		Name:  "search_in_file",
 		Input: inputJSON,
 	}
 
@@ -54,54 +54,23 @@ func testSearchRepositoryToolParseInput(t *testing.T, inputJSON []byte, wantErro
 	}
 }
 
-func TestSearchRepositoryTool_ParseInput_ValidJSON(t *testing.T) {
-	validJSON := []byte(`{"query": "func main", "use_regex": false, "max_results": 10}`)
-	testSearchRepositoryToolParseInput(t, validJSON, false)
+func TestSearchInFileTool_ParseInput_ValidJSON(t *testing.T) {
+	validJSON := []byte(`{"file_path": "test.go", "query": "func main", "use_regex": false, "max_results": 10}`)
+	testSearchInFileToolParseInput(t, validJSON, false)
 }
 
-func TestSearchRepositoryTool_ParseInput_MinimalValidJSON(t *testing.T) {
-	validJSON := []byte(`{"query": "test"}`)
-	testSearchRepositoryToolParseInput(t, validJSON, false)
+func TestSearchInFileTool_ParseInput_MinimalValidJSON(t *testing.T) {
+	validJSON := []byte(`{"file_path": "test.go", "query": "test"}`)
+	testSearchInFileToolParseInput(t, validJSON, false)
 }
 
-func TestSearchRepositoryTool_ParseInput_InvalidJSON(t *testing.T) {
-	invalidJSON := []byte(`{"query": "test"`) // Missing closing brace
-	testSearchRepositoryToolParseInput(t, invalidJSON, true)
+func TestSearchInFileTool_ParseInput_InvalidJSON(t *testing.T) {
+	invalidJSON := []byte(`{"file_path": "test.go", "query": "test"`) // Missing closing brace
+	testSearchInFileToolParseInput(t, invalidJSON, true)
 }
 
-func TestSearchRepositoryTool_shouldSearchFile(t *testing.T) {
-	tool := NewSearchRepositoryTool()
-
-	// Test with no filters
-	input := &SearchRepositoryInput{Query: "test"}
-	if !tool.shouldSearchFile("test.go", input) {
-		t.Error("Expected to search file with no filters")
-	}
-
-	// Test with file extension filter
-	input = &SearchRepositoryInput{
-		Query:          "test",
-		FileExtensions: []string{"go", "md"},
-	}
-	if !tool.shouldSearchFile("test.go", input) {
-		t.Error("Expected to search .go file with go extension filter")
-	}
-	if tool.shouldSearchFile("test.txt", input) {
-		t.Error("Expected not to search .txt file with go extension filter")
-	}
-
-	// Test with path filter
-	input = &SearchRepositoryInput{
-		Query:      "test",
-		PathFilter: "internal/*",
-	}
-	if !tool.shouldSearchFile("internal/test.go", input) {
-		t.Error("Expected to search file matching path filter")
-	}
-}
-
-func TestSearchRepositoryTool_searchInFile(t *testing.T) {
-	tool := NewSearchRepositoryTool()
+func TestSearchInFileTool_searchInFile(t *testing.T) {
+	tool := NewSearchInFileTool()
 	content := `package main
 
 import "fmt"
@@ -112,11 +81,15 @@ func main() {
 }`
 
 	// Test basic string search
-	input := &SearchRepositoryInput{
+	input := &SearchInFileInput{
+		FilePath:     "test.go",
 		Query:        "fmt.Println",
 		ContextLines: 1,
 	}
-	results := tool.searchInFile("test.go", content, input, nil)
+	results, err := tool.searchInFile("test.go", content, input)
+	if err != nil {
+		t.Errorf("Unexpected error: %v", err)
+	}
 	if len(results) != 1 {
 		t.Errorf("Expected 1 result, got %d", len(results))
 	}
@@ -131,28 +104,44 @@ func main() {
 	}
 
 	// Test case insensitive search
-	input = &SearchRepositoryInput{
+	input = &SearchInFileInput{
+		FilePath:      "test.go",
 		Query:         "FUNC MAIN",
 		CaseSensitive: false,
 	}
-	results = tool.searchInFile("test.go", content, input, nil)
+	results, err = tool.searchInFile("test.go", content, input)
+	if err != nil {
+		t.Errorf("Unexpected error: %v", err)
+	}
 	if len(results) != 1 {
 		t.Errorf("Expected 1 case insensitive result, got %d", len(results))
 	}
-}
 
-func TestSearchRepositoryTool_isBinaryFile(t *testing.T) {
-	tool := NewSearchRepositoryTool()
-
-	// Test text file
-	textContent := "This is a normal text file"
-	if tool.isBinaryFile(textContent) {
-		t.Error("Expected text content to not be detected as binary")
+	// Test regex search
+	input = &SearchInFileInput{
+		FilePath: "test.go",
+		Query:    `fmt\.\w+`,
+		UseRegex: true,
+	}
+	results, err = tool.searchInFile("test.go", content, input)
+	if err != nil {
+		t.Errorf("Unexpected error: %v", err)
+	}
+	if len(results) != 2 {
+		t.Errorf("Expected 2 regex results, got %d", len(results))
 	}
 
-	// Test binary file (with null bytes)
-	binaryContent := "This has null bytes\x00here"
-	if !tool.isBinaryFile(binaryContent) {
-		t.Error("Expected content with null bytes to be detected as binary")
+	// Test max results limit
+	input = &SearchInFileInput{
+		FilePath:   "test.go",
+		Query:      "fmt",
+		MaxResults: 1,
+	}
+	results, err = tool.searchInFile("test.go", content, input)
+	if err != nil {
+		t.Errorf("Unexpected error: %v", err)
+	}
+	if len(results) != 1 {
+		t.Errorf("Expected max 1 result, got %d", len(results))
 	}
 }
