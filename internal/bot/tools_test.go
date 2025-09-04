@@ -1,8 +1,6 @@
 package bot
 
 import (
-	"context"
-	"fmt"
 	"testing"
 
 	"github.com/anthropics/anthropic-sdk-go"
