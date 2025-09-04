@@ -36,62 +36,7 @@ func TestDeleteFileTool_ParseInput_InvalidJSON(t *testing.T) {
 	testDeleteFileToolParseInput(t, invalidJSON, true)
 }
 
-// Mock workspace for testing
-type mockWorkspace struct {
-	files map[string]string
-	dirs  map[string][]string
-}
 
-func newMockWorkspace() *mockWorkspace {
-	return &mockWorkspace{
-		files: make(map[string]string),
-		dirs:  make(map[string][]string),
-	}
-}
-
-func (mw *mockWorkspace) addFile(path, content string) {
-	mw.files[path] = content
-}
-
-func (mw *mockWorkspace) addDir(path string, files []string) {
-	mw.dirs[path] = files
-}
-
-func (mw *mockWorkspace) Read(ctx context.Context, path string) (string, error) {
-	content, exists := mw.files[path]
-	if !exists {
-		return "", fmt.Errorf("file not found")
-	}
-	return content, nil
-}
-
-func (mw *mockWorkspace) Write(ctx context.Context, path string, content string) error {
-	mw.files[path] = content
-	return nil
-}
-
-func (mw *mockWorkspace) Delete(ctx context.Context, path string) error {
-	delete(mw.files, path)
-	return nil
-}
-
-func (mw *mockWorkspace) FileExists(ctx context.Context, path string) (bool, error) {
-	_, exists := mw.files[path]
-	return exists, nil
-}
-
-func (mw *mockWorkspace) IsDir(ctx context.Context, path string) (bool, error) {
-	_, exists := mw.dirs[path]
-	return exists, nil
-}
-
-func (mw *mockWorkspace) ListDir(ctx context.Context, path string) ([]string, error) {
-	files, exists := mw.dirs[path]
-	if !exists {
-		return nil, fmt.Errorf("directory not found")
-	}
-	return files, nil
-}
 
 func testSearchRepositoryToolParseInput(t *testing.T, inputJSON []byte, wantError bool) {
 	tool := NewSearchRepositoryTool()
