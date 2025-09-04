@@ -919,11 +919,11 @@ func (t *SearchRepositoryTool) searchRepository(ctx context.Context, input *Sear
 
 	// Compile regex if needed
 	if input.UseRegex {
-		flags := 0
+		query := input.Query
 		if !input.CaseSensitive {
-			flags = regexp.IGNORECASE
+			query = "(?i)" + query
 		}
-		searchRegex, err = regexp.Compile(fmt.Sprintf("(?%s)%s", getFlagsString(flags), input.Query))
+		searchRegex, err = regexp.Compile(query)
 		if err != nil {
 			return nil, ToolInputError{fmt.Errorf("invalid regular expression: %w", err)}
 		}
@@ -1127,13 +1127,7 @@ func (t *SearchRepositoryTool) formatResults(results []SearchResult, input *Sear
 	return output.String()
 }
 
-// getFlagsString converts regex flags to string format
-func getFlagsString(flags int) string {
-	if flags&regexp.IGNORECASE != 0 {
-		return "i"
-	}
-	return ""
-}
+
 
 // ReportLimitationTool implements the report_limitation tool
 type ReportLimitationTool struct {
