@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"path/filepath"
+	"regexp"
 	"strings"
 
 	"github.com/anthropics/anthropic-sdk-go"
@@ -769,6 +771,370 @@ func (t *PublishChangesForReviewTool) Replay(ctx context.Context, block anthropi
 	return nil
 }
 
+// SearchRepositoryTool implements the search_repository tool
+type SearchRepositoryTool struct {
+	BaseTool
+}
+
+// SearchRepositoryInput represents the input for search_repository
+type SearchRepositoryInput struct {
+	Query           string   `json:"query"`
+	UseRegex        bool     `json:"use_regex,omitempty"`
+	PathFilter      string   `json:"path_filter,omitempty"`
+	FileExtensions  []string `json:"file_extensions,omitempty"`
+	MaxResults      int      `json:"max_results,omitempty"`
+	ContextLines    int      `json:"context_lines,omitempty"`
+	CaseSensitive   bool     `json:"case_sensitive,omitempty"`
+	IncludeBinaryFiles bool  `json:"include_binary_files,omitempty"`
+}
+
+// SearchResult represents a single search result
+type SearchResult struct {
+	FilePath    string
+	LineNumber  int
+	Line        string
+	ContextBefore []string
+	ContextAfter  []string
+}
+
+// NewSearchRepositoryTool creates a new search repository tool
+func NewSearchRepositoryTool() *SearchRepositoryTool {
+	return &SearchRepositoryTool{
+		BaseTool: BaseTool{Name: "search_repository"},
+	}
+}
+
+// GetToolParam returns the tool parameter definition
+func (t *SearchRepositoryTool) GetToolParam() anthropic.ToolParam {
+	return anthropic.ToolParam{
+		Name:        t.Name,
+		Description: anthropic.String("Search for text across files in the repository, similar to Ctrl+Shift+F in VS Code"),
+		InputSchema: anthropic.ToolInputSchemaParam{
+			Properties: map[string]any{
+				"query": map[string]any{
+					"type":        "string",
+					"description": "The text or pattern to search for",
+				},
+				"use_regex": map[string]any{
+					"type":        "boolean",
+					"description": "Whether to treat the query as a regular expression (default: false)",
+				},
+				"path_filter": map[string]any{
+					"type":        "string",
+					"description": "Optional glob pattern to filter file paths (e.g., 'internal/*', '*.go', 'src/**/*.js')",
+				},
+				"file_extensions": map[string]any{
+					"type":        "array",
+					"items":       map[string]any{"type": "string"},
+					"description": "Optional list of file extensions to search in (e.g., ['go', 'md', 'txt'])",
+				},
+				"max_results": map[string]any{
+					"type":        "integer",
+					"description": "Maximum number of results to return (default: 50, max: 500)",
+				},
+				"context_lines": map[string]any{
+					"type":        "integer",
+					"description": "Number of lines before and after each match to include as context (default: 2, max: 10)",
+				},
+				"case_sensitive": map[string]any{
+					"type":        "boolean",
+					"description": "Whether the search should be case sensitive (default: false)",
+				},
+				"include_binary_files": map[string]any{
+					"type":        "boolean",
+					"description": "Whether to include binary files in the search (default: false)",
+				},
+			},
+			Required: []string{"query"},
+		},
+	}
+}
+
+// ParseToolUse parses the tool use block
+func (t *SearchRepositoryTool) ParseToolUse(block anthropic.ToolUseBlock) (*SearchRepositoryInput, error) {
+	if block.Name != t.Name {
+		return nil, fmt.Errorf("tool use block is for %s, not %s", block.Name, t.Name)
+	}
+
+	var input SearchRepositoryInput
+	if err := parseInputJSON(block, &input); err != nil {
+		return nil, err
+	}
+	return &input, nil
+}
+
+// Run executes the search repository command
+func (t *SearchRepositoryTool) Run(ctx context.Context, block anthropic.ToolUseBlock, toolCtx *ToolContext) (*string, error) {
+	return t.run(ctx, block, toolCtx, false)
+}
+
+func (t *SearchRepositoryTool) Replay(ctx context.Context, block anthropic.ToolUseBlock, toolCtx *ToolContext) error {
+	// Search is read-only, no side effects to replay
+	return nil
+}
+
+func (t *SearchRepositoryTool) run(ctx context.Context, block anthropic.ToolUseBlock, toolCtx *ToolContext, replay bool) (*string, error) {
+	if replay {
+		// Search is read-only, no side effects to replay
+		return nil, nil
+	}
+
+	input, err := t.ParseToolUse(block)
+	if err != nil {
+		return nil, fmt.Errorf("error parsing input: %w", err)
+	}
+
+	if input.Query == "" {
+		return nil, ToolInputError{fmt.Errorf("query is required")}
+	}
+
+	// Set defaults
+	if input.MaxResults <= 0 {
+		input.MaxResults = 50
+	}
+	if input.MaxResults > 500 {
+		input.MaxResults = 500
+	}
+	if input.ContextLines < 0 {
+		input.ContextLines = 0
+	}
+	if input.ContextLines > 10 {
+		input.ContextLines = 10
+	}
+
+	results, err := t.searchRepository(ctx, input, toolCtx.Workspace)
+	if err != nil {
+		return nil, fmt.Errorf("error searching repository: %w", err)
+	}
+
+	output := t.formatResults(results, input)
+	return &output, nil
+}
+
+// searchRepository performs the actual search across the repository
+func (t *SearchRepositoryTool) searchRepository(ctx context.Context, input *SearchRepositoryInput, ws Workspace) ([]SearchResult, error) {
+	var results []SearchResult
+	var searchRegex *regexp.Regexp
+	var err error
+
+	// Compile regex if needed
+	if input.UseRegex {
+		flags := 0
+		if !input.CaseSensitive {
+			flags = regexp.IGNORECASE
+		}
+		searchRegex, err = regexp.Compile(fmt.Sprintf("(?%s)%s", getFlagsString(flags), input.Query))
+		if err != nil {
+			return nil, ToolInputError{fmt.Errorf("invalid regular expression: %w", err)}
+		}
+	}
+
+	// Get all files in the repository
+	allFiles, err := t.getAllFiles(ctx, ws, "")
+	if err != nil {
+		return nil, fmt.Errorf("error listing repository files: %w", err)
+	}
+
+	resultCount := 0
+	for _, filePath := range allFiles {
+		if resultCount >= input.MaxResults {
+			break
+		}
+
+		// Apply filters
+		if !t.shouldSearchFile(filePath, input) {
+			continue
+		}
+
+		// Read file content
+		content, err := ws.Read(ctx, filePath)
+		if err != nil {
+			// Skip files that can't be read
+			continue
+		}
+
+		// Skip binary files unless explicitly included
+		if !input.IncludeBinaryFiles && t.isBinaryFile(content) {
+			continue
+		}
+
+		// Search within the file
+		fileResults := t.searchInFile(filePath, content, input, searchRegex)
+		for _, result := range fileResults {
+			if resultCount >= input.MaxResults {
+				break
+			}
+			results = append(results, result)
+			resultCount++
+		}
+	}
+
+	return results, nil
+}
+
+// getAllFiles recursively gets all files in the repository
+func (t *SearchRepositoryTool) getAllFiles(ctx context.Context, ws Workspace, dir string) ([]string, error) {
+	var allFiles []string
+
+	files, err := ws.ListDir(ctx, dir)
+	if err != nil {
+		return nil, err
+	}
+
+	for _, file := range files {
+		filePath := file
+		if dir != "" {
+			filePath = dir + "/" + file
+		}
+
+		if strings.HasSuffix(file, "/") {
+			// It's a directory
+			dirPath := strings.TrimSuffix(filePath, "/")
+			subFiles, err := t.getAllFiles(ctx, ws, dirPath)
+			if err != nil {
+				continue // Skip directories we can't read
+			}
+			allFiles = append(allFiles, subFiles...)
+		} else {
+			// It's a file
+			allFiles = append(allFiles, filePath)
+		}
+	}
+
+	return allFiles, nil
+}
+
+// shouldSearchFile determines if a file should be searched based on filters
+func (t *SearchRepositoryTool) shouldSearchFile(filePath string, input *SearchRepositoryInput) bool {
+	// Check path filter
+	if input.PathFilter != "" {
+		matched, err := filepath.Match(input.PathFilter, filePath)
+		if err != nil || !matched {
+			return false
+		}
+	}
+
+	// Check file extensions
+	if len(input.FileExtensions) > 0 {
+		ext := strings.TrimPrefix(filepath.Ext(filePath), ".")
+		found := false
+		for _, allowedExt := range input.FileExtensions {
+			if strings.EqualFold(ext, allowedExt) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return false
+		}
+	}
+
+	return true
+}
+
+// isBinaryFile attempts to detect if a file is binary
+func (t *SearchRepositoryTool) isBinaryFile(content string) bool {
+	// Check for null bytes, which are common in binary files
+	return strings.Contains(content, "\x00")
+}
+
+// searchInFile searches for the query within a single file
+func (t *SearchRepositoryTool) searchInFile(filePath, content string, input *SearchRepositoryInput, regex *regexp.Regexp) []SearchResult {
+	var results []SearchResult
+	lines := strings.Split(content, "\n")
+
+	for lineNum, line := range lines {
+		var matches bool
+		
+		if input.UseRegex && regex != nil {
+			matches = regex.MatchString(line)
+		} else {
+			// Simple string matching
+			searchQuery := input.Query
+			searchLine := line
+			if !input.CaseSensitive {
+				searchQuery = strings.ToLower(searchQuery)
+				searchLine = strings.ToLower(line)
+			}
+			matches = strings.Contains(searchLine, searchQuery)
+		}
+
+		if matches {
+			result := SearchResult{
+				FilePath:   filePath,
+				LineNumber: lineNum + 1, // 1-indexed
+				Line:       line,
+			}
+
+			// Add context lines
+			if input.ContextLines > 0 {
+				// Context before
+				start := lineNum - input.ContextLines
+				if start < 0 {
+					start = 0
+				}
+				for i := start; i < lineNum; i++ {
+					result.ContextBefore = append(result.ContextBefore, lines[i])
+				}
+
+				// Context after
+				end := lineNum + input.ContextLines + 1
+				if end > len(lines) {
+					end = len(lines)
+				}
+				for i := lineNum + 1; i < end; i++ {
+					result.ContextAfter = append(result.ContextAfter, lines[i])
+				}
+			}
+
+			results = append(results, result)
+		}
+	}
+
+	return results
+}
+
+// formatResults formats the search results into a readable string
+func (t *SearchRepositoryTool) formatResults(results []SearchResult, input *SearchRepositoryInput) string {
+	if len(results) == 0 {
+		return fmt.Sprintf("No results found for query: %s", input.Query)
+	}
+
+	var output strings.Builder
+	output.WriteString(fmt.Sprintf("Found %d result(s) for query: %s\n\n", len(results), input.Query))
+
+	for i, result := range results {
+		if i > 0 {
+			output.WriteString("\n")
+		}
+
+		output.WriteString(fmt.Sprintf("**%s:%d**\n", result.FilePath, result.LineNumber))
+
+		// Add context before
+		for _, contextLine := range result.ContextBefore {
+			output.WriteString(fmt.Sprintf("  %s\n", contextLine))
+		}
+
+		// Add the matching line (highlighted)
+		output.WriteString(fmt.Sprintf("→ %s\n", result.Line))
+
+		// Add context after
+		for _, contextLine := range result.ContextAfter {
+			output.WriteString(fmt.Sprintf("  %s\n", contextLine))
+		}
+	}
+
+	return output.String()
+}
+
+// getFlagsString converts regex flags to string format
+func getFlagsString(flags int) string {
+	if flags&regexp.IGNORECASE != 0 {
+		return "i"
+	}
+	return ""
+}
+
 // ReportLimitationTool implements the report_limitation tool
 type ReportLimitationTool struct {
 	BaseTool
@@ -890,6 +1256,7 @@ func NewToolRegistry() *ToolRegistry {
 	registry.Register(NewAddReactionTool())
 	registry.Register(NewValidateChangesTool())
 	registry.Register(NewPublishChangesForReviewTool())
+	registry.Register(NewSearchRepositoryTool())
 	registry.Register(NewReportLimitationTool())
 
 	return registry
