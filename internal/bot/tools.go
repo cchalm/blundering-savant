@@ -892,7 +892,7 @@ func (t *SearchInFileTool) run(ctx context.Context, block anthropic.ToolUseBlock
 	if input.MaxResults > 200 {
 		input.MaxResults = 200
 	}
-	if input.ContextLines < 0 {
+	if input.ContextLines == 0 {
 		input.ContextLines = 2
 	}
 	if input.ContextLines > 10 {

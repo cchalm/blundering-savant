@@ -91,7 +91,7 @@ func main() {
 		t.Errorf("Unexpected error: %v", err)
 	}
 	if len(results) != 1 {
-		t.Errorf("Expected 1 result, got %d", len(results))
+		t.Errorf("Expected 1 result, got %d. Content lines: %v", len(results), strings.Split(content, "\n"))
 	}
 	if results[0].LineNumber != 6 {
 		t.Errorf("Expected line number 6, got %d", results[0].LineNumber)
