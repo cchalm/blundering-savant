@@ -1,7 +1,6 @@
 package bot
 
 import (
-	"strings"
 	"testing"
 
 	"github.com/anthropics/anthropic-sdk-go"
