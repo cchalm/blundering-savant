@@ -952,9 +952,13 @@ func (t *SearchInFileTool) searchInFile(filePath, content string, input *SearchI
 
 	lines := strings.Split(content, "\n")
 	resultCount := 0
+	maxResults := input.MaxResults
+	if maxResults <= 0 {
+		maxResults = 50 // Default if not set
+	}
 
 	for lineNum, line := range lines {
-		if resultCount >= input.MaxResults {
+		if resultCount >= maxResults {
 			break
 		}
 

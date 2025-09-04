@@ -92,12 +92,7 @@ func main() {
 		t.Errorf("Unexpected error: %v", err)
 	}
 	if len(results) != 1 {
-		lines := strings.Split(content, "\n")
 		t.Errorf("Expected 1 result, got %d", len(results))
-		for i, line := range lines {
-			contains := strings.Contains(line, "fmt.Println")
-			t.Errorf("Line %d: %q - contains 'fmt.Println': %v", i+1, line, contains)
-		}
 	}
 	if results[0].LineNumber != 6 {
 		t.Errorf("Expected line number 6, got %d", results[0].LineNumber)
