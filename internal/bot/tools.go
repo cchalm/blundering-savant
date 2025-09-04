@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"log"
-	"path/filepath"
 	"regexp"
 	"strings"
 
