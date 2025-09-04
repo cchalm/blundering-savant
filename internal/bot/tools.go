@@ -853,7 +853,7 @@ func (t *SearchInFileTool) ParseToolUse(block anthropic.ToolUseBlock) (*SearchIn
 
 // Run executes the search in file command
 func (t *SearchInFileTool) Run(ctx context.Context, block anthropic.ToolUseBlock, toolCtx *ToolContext) (*string, error) {
-	return t.run(ctx, block, toolCtx, false)
+	return t.run(ctx, block, toolCtx)
 }
 
 func (t *SearchInFileTool) Replay(ctx context.Context, block anthropic.ToolUseBlock, toolCtx *ToolContext) error {
@@ -861,12 +861,7 @@ func (t *SearchInFileTool) Replay(ctx context.Context, block anthropic.ToolUseBl
 	return nil
 }
 
-func (t *SearchInFileTool) run(ctx context.Context, block anthropic.ToolUseBlock, toolCtx *ToolContext, replay bool) (*string, error) {
-	if replay {
-		// Search is read-only, no side effects to replay
-		return nil, nil
-	}
-
+func (t *SearchInFileTool) run(ctx context.Context, block anthropic.ToolUseBlock, toolCtx *ToolContext) (*string, error) {
 	input, err := t.ParseToolUse(block)
 	if err != nil {
 		return nil, fmt.Errorf("error parsing input: %w", err)
