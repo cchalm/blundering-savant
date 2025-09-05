@@ -162,14 +162,14 @@ func TestSummarizeConversationStructure(t *testing.T) {
 func TestNewConversationDefaults(t *testing.T) {
 	client := anthropic.Client{}
 	model := anthropic.ModelClaudeSonnet4_0
-	maxTokens := int64(4000)
+	maxOutputTokens := int64(4000)
 	tools := []anthropic.ToolParam{}
 	systemPrompt := "test system prompt"
 
-	conv := NewConversation(client, model, maxTokens, tools, systemPrompt)
+	conv := NewConversation(client, model, maxOutputTokens, tools, systemPrompt)
 
 	assert.Equal(t, model, conv.model)
-	assert.Equal(t, maxTokens, conv.maxTokens)
+	assert.Equal(t, maxOutputTokens, conv.maxOutputTokens)
 	assert.Equal(t, systemPrompt, conv.systemPrompt)
 	assert.Equal(t, int64(100000), conv.tokenLimit) // Default token limit
 	assert.Equal(t, 0, len(conv.Messages))

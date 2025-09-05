@@ -18,10 +18,8 @@ type Conversation struct {
 	tools        []anthropic.ToolParam
 	Messages     []conversationTurn
 
-	maxTokens int64 // Maximum number of output tokens per response
-	
-	// Token limit for summarization
-	tokenLimit int64 // When to trigger summarization
+	maxOutputTokens int64 // Maximum number of output tokens per response
+	tokenLimit      int64 // When to trigger summarization
 }
 
 // conversationTurn is a pair of messages: a user message, and an optional assistant response
@@ -33,7 +31,7 @@ type conversationTurn struct {
 func NewConversation(
 	anthropicClient anthropic.Client,
 	model anthropic.Model,
-	maxTokens int64,
+	maxOutputTokens int64,
 	tools []anthropic.ToolParam,
 	systemPrompt string,
 ) *Conversation {
@@ -45,8 +43,8 @@ func NewConversation(
 		systemPrompt: systemPrompt,
 		tools:        tools,
 
-		maxTokens: maxTokens,
-		tokenLimit: 100000, // 100k token limit
+		maxOutputTokens: maxOutputTokens,
+		tokenLimit:      100000, // 100k token limit
 	}
 }
 
@@ -54,7 +52,7 @@ func ResumeConversation(
 	anthropicClient anthropic.Client,
 	history ConversationHistory,
 	model anthropic.Model,
-	maxTokens int64,
+	maxOutputTokens int64,
 	tools []anthropic.ToolParam,
 ) (*Conversation, error) {
 	c := &Conversation{
@@ -65,21 +63,35 @@ func ResumeConversation(
 		tools:        tools,
 		Messages:     history.Messages,
 
-		maxTokens:  maxTokens,
-		tokenLimit: 100000, // 100k token limit
+		maxOutputTokens: maxOutputTokens,
+		tokenLimit:      100000, // 100k token limit
 	}
 	return c, nil
 }
 
-// sendMessage is the internal implementation with a boolean parameter to specify caching
+// SendMessage sends a message with caching enabled
 func (cc *Conversation) SendMessage(ctx context.Context, messageContent ...anthropic.ContentBlockParamUnion) (*anthropic.Message, error) {
-	// Always set a cache point. Unsupported cache points, e.g. on content that is below the minimum length for caching,
-	// will be ignored
-	cacheControl, err := getLastCacheControl(messageContent)
-	if err != nil {
-		log.Printf("Warning: failed to set cache point: %s", err)
+	return cc.sendMessage(ctx, true, messageContent...)
+}
+
+// sendMessageWithoutCache sends a message without caching (used for summary requests)
+func (cc *Conversation) sendMessageWithoutCache(ctx context.Context, messageContent ...anthropic.ContentBlockParamUnion) (*anthropic.Message, error) {
+	return cc.sendMessage(ctx, false, messageContent...)
+}
+
+// sendMessage is the internal implementation with a boolean parameter to specify caching
+func (cc *Conversation) sendMessage(ctx context.Context, enableCache bool, messageContent ...anthropic.ContentBlockParamUnion) (*anthropic.Message, error) {
+	// Set cache point only if caching is enabled
+	if enableCache {
+		// Always set a cache point. Unsupported cache points, e.g. on content that is below the minimum length for caching,
+		// will be ignored
+		cacheControl, err := getLastCacheControl(messageContent)
+		if err != nil {
+			log.Printf("Warning: failed to set cache point: %s", err)
+		} else {
+			*cacheControl = anthropic.NewCacheControlEphemeralParam()
+		}
 	}
-	*cacheControl = anthropic.NewCacheControlEphemeralParam()
 
 	cc.Messages = append(cc.Messages, conversationTurn{
 		UserMessage: anthropic.NewUserMessage(messageContent...),
@@ -95,7 +107,7 @@ func (cc *Conversation) SendMessage(ctx context.Context, messageContent ...anthr
 
 	params := anthropic.MessageNewParams{
 		Model:     cc.model,
-		MaxTokens: cc.maxTokens,
+		MaxTokens: cc.maxOutputTokens,
 		System: []anthropic.TextBlockParam{
 			{
 				Text: cc.systemPrompt,
@@ -136,19 +148,24 @@ func (cc *Conversation) SendMessage(ctx context.Context, messageContent ...anthr
 		return nil, fmt.Errorf("malformed message: %v", string(b))
 	}
 
-	log.Printf("Token usage - Input: %d, Cache create: %d, Cache read: %d, Total (Input+CacheRead): %d",
+	log.Printf("Token usage - Input: %d, Cache create: %d, Cache read: %d, Total (Input+CacheCreate+CacheRead): %d",
 		response.Usage.InputTokens,
 		response.Usage.CacheCreationInputTokens,
 		response.Usage.CacheReadInputTokens,
-		response.Usage.InputTokens + response.Usage.CacheReadInputTokens,
+		response.Usage.InputTokens + response.Usage.CacheCreationInputTokens + response.Usage.CacheReadInputTokens,
 	)
 
 	// Record the response
 	cc.Messages[len(cc.Messages)-1].Response = &response
 
-	// Remove the cache control element from the conversation history. Anthropic's automatic prefix checking should
-	// reuse previously-cached sections without explicitly marking them as such in subsequent messages
-	*cacheControl = anthropic.CacheControlEphemeralParam{}
+	// Remove the cache control element from the conversation history if caching was enabled
+	if enableCache {
+		// Remove the cache control element from the conversation history. Anthropic's automatic prefix checking should
+		// reuse previously-cached sections without explicitly marking them as such in subsequent messages
+		if cacheControl, err := getLastCacheControl(messageContent); err == nil {
+			*cacheControl = anthropic.CacheControlEphemeralParam{}
+		}
+	}
 
 	return &response, nil
 }
@@ -177,13 +194,16 @@ func (cc *Conversation) NeedsSummarization() bool {
 	}
 	
 	// Check token usage from the most recent turn (which includes cumulative history)
-	totalTokens := lastMessage.Response.Usage.InputTokens + lastMessage.Response.Usage.CacheReadInputTokens
+	// Include cache create tokens as they contribute to context size
+	totalTokens := lastMessage.Response.Usage.InputTokens + 
+		lastMessage.Response.Usage.CacheReadInputTokens + 
+		lastMessage.Response.Usage.CacheCreationInputTokens
 	return totalTokens > cc.tokenLimit
 }
 
-// SummarizeConversation creates a condensed version of the conversation history, preserving
+// Summarize creates a condensed version of the conversation history, preserving
 // the first message (initial repository and task content) while summarizing the rest
-func (cc *Conversation) SummarizeConversation(ctx context.Context) error {
+func (cc *Conversation) Summarize(ctx context.Context) error {
 	if len(cc.Messages) <= 2 {
 		// Don't summarize if we have too few messages
 		return nil
@@ -192,7 +212,9 @@ func (cc *Conversation) SummarizeConversation(ctx context.Context) error {
 	// Get token count from most recent response for logging
 	var totalTokens int64
 	if lastMsg := cc.Messages[len(cc.Messages)-1]; lastMsg.Response != nil {
-		totalTokens = lastMsg.Response.Usage.InputTokens + lastMsg.Response.Usage.CacheReadInputTokens
+		totalTokens = lastMsg.Response.Usage.InputTokens + 
+			lastMsg.Response.Usage.CacheReadInputTokens + 
+			lastMsg.Response.Usage.CacheCreationInputTokens
 	}
 
 	log.Printf("Conversation has %d messages and %d total tokens (input+cache read), summarizing...", 
@@ -249,20 +271,11 @@ func (cc *Conversation) generateConversationSummary(ctx context.Context) (string
 	summaryPrompt.WriteString("Please provide a comprehensive but concise summary that captures all important information needed to continue working effectively. ")
 	summaryPrompt.WriteString("There's no need to include the system prompt or initial repository information in your summary - focus on the actual work and changes made during our conversation.")
 
-	// Temporarily disable token limit to avoid recursive summarization during summary generation
-	originalTokenLimit := cc.tokenLimit
-	cc.tokenLimit = 0
-
-	// Send summary request as part of the original conversation
-	response, err := cc.SendMessage(ctx, anthropic.NewTextBlock(summaryPrompt.String()))
+	// Send summary request without caching since we're throwing away conversation history
+	response, err := cc.sendMessageWithoutCache(ctx, anthropic.NewTextBlock(summaryPrompt.String()))
 	if err != nil {
-		// Restore original token limit
-		cc.tokenLimit = originalTokenLimit
 		return "", fmt.Errorf("failed to generate summary: %w", err)
 	}
-
-	// Restore original token limit
-	cc.tokenLimit = originalTokenLimit
 
 	// Extract text from response
 	var summary strings.Builder
