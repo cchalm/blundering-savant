@@ -198,7 +198,7 @@ func (cc *Conversation) SummarizeConversation(ctx context.Context) error {
 		return nil
 	}
 
-	// Extract messages to summarize (middle portion)
+	// Extract messages to summarize (middle portion, excluding the last few messages)
 	startIdx := preserveFirstMessages
 	endIdx := len(cc.Messages) - preserveLastMessages
 	messagesToSummarize := cc.Messages[startIdx:endIdx]
@@ -207,19 +207,23 @@ func (cc *Conversation) SummarizeConversation(ctx context.Context) error {
 		return nil
 	}
 
-	// Generate summary using AI
+	// Generate summary using AI (this will add a summary request/response to the conversation)
 	summary, err := cc.generateConversationSummary(ctx, messagesToSummarize)
 	if err != nil {
 		return fmt.Errorf("failed to generate conversation summary: %w", err)
 	}
 
-	// Create a summary message
+	// The summary request and response are now the last two messages in the conversation
+	// We need to account for this when reconstructing the conversation
+	summaryRequestResponseCount := 1 // The summary request/response is one conversation turn
+
+	// Create a summary message to replace the middle portion
 	summaryMessage := conversationTurn{
 		UserMessage: anthropic.NewUserMessage(anthropic.NewTextBlock(summary)),
-		// No response - this is just context
+		// No response - this is just context for future messages
 	}
 
-	// Reconstruct the conversation with preserved messages + summary + recent messages
+	// Reconstruct the conversation with preserved messages + summary + recent messages (excluding summary request/response)
 	newMessages := []conversationTurn{}
 	
 	// Add preserved first messages
@@ -228,10 +232,12 @@ func (cc *Conversation) SummarizeConversation(ctx context.Context) error {
 	// Add summary message
 	newMessages = append(newMessages, summaryMessage)
 	
-	// Add preserved last messages
-	newMessages = append(newMessages, cc.Messages[endIdx:]...)
+	// Add preserved last messages, but exclude the summary request/response we just added
+	originalLastMessages := cc.Messages[endIdx:len(cc.Messages)-summaryRequestResponseCount]
+	newMessages = append(newMessages, originalLastMessages...)
 
 	// Update the conversation
+	originalMessageCount := len(cc.Messages)
 	cc.Messages = newMessages
 	
 	// Reset token counters since we've condensed the conversation
@@ -239,88 +245,37 @@ func (cc *Conversation) SummarizeConversation(ctx context.Context) error {
 	cc.totalCacheReadTokens = 0
 
 	log.Printf("Conversation summarized: %d messages -> %d messages", 
-		len(messagesToSummarize) + preserveFirstMessages + preserveLastMessages, 
-		len(cc.Messages))
+		originalMessageCount, len(cc.Messages))
 
 	return nil
 }
 
 // generateConversationSummary creates a summary of the given conversation turns using AI
 func (cc *Conversation) generateConversationSummary(ctx context.Context, messages []conversationTurn) (string, error) {
-	// Create a separate conversation for summarization to avoid infinite recursion
-	summaryConv := &Conversation{
-		client:       cc.client,
-		model:        cc.model,
-		systemPrompt: "You are a helpful assistant that creates concise summaries of coding conversations.",
-		maxTokens:    4000, // Limit summary length
-		tokenLimit:   0, // No token limit for summary conversation
-	}
+	// Build a summary request that will be sent as part of the current conversation
+	var summaryPrompt strings.Builder
+	summaryPrompt.WriteString("Please create a concise summary of the conversation we've had so far. Focus on:\n")
+	summaryPrompt.WriteString("1. Key decisions and changes made\n")
+	summaryPrompt.WriteString("2. Current state of the codebase\n")
+	summaryPrompt.WriteString("3. Any important context for continuing the work\n")
+	summaryPrompt.WriteString("4. Tools used and their outcomes\n\n")
+	summaryPrompt.WriteString("This summary will replace the middle portion of our conversation history to save tokens while preserving context. ")
+	summaryPrompt.WriteString("Please provide a comprehensive but concise summary that captures all important information needed to continue working effectively.")
 
-	// Build a summary request
-	var conversationText strings.Builder
-	conversationText.WriteString("Please create a concise summary of this coding conversation. Focus on:\n")
-	conversationText.WriteString("1. Key decisions and changes made\n")
-	conversationText.WriteString("2. Current state of the codebase\n")
-	conversationText.WriteString("3. Any important context for continuing the work\n")
-	conversationText.WriteString("4. Tools used and their outcomes\n\n")
-	conversationText.WriteString("Conversation to summarize:\n\n")
+	// Temporarily disable token limit to avoid recursive summarization during summary generation
+	originalTokenLimit := cc.tokenLimit
+	cc.tokenLimit = 0
 
-	// Convert messages to readable format
-	for i, turn := range messages {
-		conversationText.WriteString(fmt.Sprintf("=== Turn %d ===\n", i+1))
-		
-		// User message
-		conversationText.WriteString("User: ")
-		for _, content := range turn.UserMessage.Content {
-			if textContent := content.OfText; textContent != nil {
-				conversationText.WriteString(textContent.Text)
-				conversationText.WriteString("\n")
-			} else if toolResult := content.OfToolResult; toolResult != nil {
-				conversationText.WriteString(fmt.Sprintf("[Tool result for %s: ", toolResult.ToolUseID))
-				for _, resultContent := range toolResult.Content {
-					if textContent := resultContent.OfText; textContent != nil {
-						// Truncate long tool results
-						result := textContent.Text
-						if len(result) > 500 {
-							result = result[:500] + "... (truncated)"
-						}
-						conversationText.WriteString(result)
-					}
-				}
-				conversationText.WriteString("]\n")
-			}
-		}
-		
-		// Assistant response
-		if turn.Response != nil {
-			conversationText.WriteString("Assistant: ")
-			for _, content := range turn.Response.Content {
-				switch block := content.AsAny().(type) {
-				case anthropic.TextBlock:
-					conversationText.WriteString(block.Text)
-					conversationText.WriteString("\n")
-				case anthropic.ToolUseBlock:
-					conversationText.WriteString(fmt.Sprintf("[Used tool %s with input: %s]\n", 
-						block.Name, string(block.Input)[:min(200, len(block.Input))]))
-				case anthropic.ThinkingBlock:
-					conversationText.WriteString(fmt.Sprintf("[Thinking: %s]\n", 
-						block.Thinking[:min(200, len(block.Thinking))]))
-				}
-			}
-		}
-		conversationText.WriteString("\n")
-	}
-
-	summaryTurn := conversationTurn{
-		UserMessage: anthropic.NewUserMessage(anthropic.NewTextBlock(conversationText.String())),
-	}
-	summaryConv.Messages = append(summaryConv.Messages, summaryTurn)
-
-	// Get summary from AI
-	response, err := summaryConv.SendMessage(ctx, anthropic.NewTextBlock("Generate a concise summary:"))
+	// Send summary request as part of the original conversation
+	response, err := cc.SendMessage(ctx, anthropic.NewTextBlock(summaryPrompt.String()))
 	if err != nil {
+		// Restore original token limit
+		cc.tokenLimit = originalTokenLimit
 		return "", fmt.Errorf("failed to generate summary: %w", err)
 	}
+
+	// Restore original token limit
+	cc.tokenLimit = originalTokenLimit
 
 	// Extract text from response
 	var summary strings.Builder
