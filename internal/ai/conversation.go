@@ -212,10 +212,6 @@ func (cc *Conversation) SummarizeConversation(ctx context.Context) error {
 		return fmt.Errorf("failed to generate conversation summary: %w", err)
 	}
 
-	// The summary request and response are now the last message in the conversation
-	// We need to account for this when reconstructing the conversation
-	summaryRequestResponseCount := 1 // The summary request/response is one conversation turn
-
 	// Create a summary message to replace the middle portion
 	summaryMessage := conversationTurn{
 		UserMessage: anthropic.NewUserMessage(anthropic.NewTextBlock(summary)),
