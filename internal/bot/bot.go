@@ -186,6 +186,24 @@ func (b *Bot) processWithAI(ctx context.Context, tsk task.Task, workspace Worksp
 			}
 		}
 
+		// Check if we need to summarize the conversation due to token limits
+		if conversation.NeedsSummarization() {
+			log.Printf("Summarizing conversation due to token limit")
+			err = conversation.SummarizeConversation(ctx)
+			if err != nil {
+				log.Printf("Warning: failed to summarize conversation: %v", err)
+				// Continue processing - summarization failure shouldn't stop the bot
+			} else {
+				// Update persisted conversation with the summarized version
+				if b.resumableConversations != nil {
+					err = b.resumableConversations.Set(strconv.Itoa(tsk.Issue.Number), conversation.History())
+					if err != nil {
+						log.Printf("Warning: failed to persist summarized conversation history: %v", err)
+					}
+				}
+			}
+		}
+
 		log.Printf("Processing AI response, iteration: %d", i+1)
 		for _, contentBlock := range response.Content {
 			switch block := contentBlock.AsAny().(type) {
