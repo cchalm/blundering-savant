@@ -289,13 +289,7 @@ func (cc *Conversation) generateConversationSummary(ctx context.Context, message
 	return summary.String(), nil
 }
 
-// min returns the minimum of two integers
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}
+
 
 // ConversationHistory contains a serializable and resumable snapshot of a Conversation
 type ConversationHistory struct {
