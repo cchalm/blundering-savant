@@ -99,8 +99,6 @@ func TestResumeConversationWithTokenTracking(t *testing.T) {
 
 // Test that summarization preserves expected structure
 func TestSummarizeConversationStructure(t *testing.T) {
-	ctx := context.Background()
-	
 	// Create a conversation with enough messages to test summarization
 	conv := &Conversation{
 		totalInputTokens:    120000, // Above limit
