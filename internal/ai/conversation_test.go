@@ -62,14 +62,15 @@ func TestNeedsSummarization(t *testing.T) {
 				tokenLimit: tt.tokenLimit,
 			}
 
-			if tt.name == "No messages" {
+			switch tt.name {
+			case "No messages":
 				// Empty conversation
-			} else if tt.name == "Message without response" {
+			case "Message without response":
 				// Add a message without a response
 				conv.Messages = []conversationTurn{
 					{UserMessage: anthropic.NewUserMessage(anthropic.NewTextBlock("test"))},
 				}
-			} else {
+			default:
 				// Create a mock response with the specified token usage
 				response := &anthropic.Message{
 					Usage: anthropic.Usage{
