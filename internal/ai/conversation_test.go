@@ -1,7 +1,6 @@
 package ai
 
 import (
-	"context"
 	"testing"
 
 	"github.com/anthropics/anthropic-sdk-go"
