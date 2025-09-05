@@ -20,10 +20,8 @@ type Conversation struct {
 
 	maxTokens int64 // Maximum number of output tokens per response
 	
-	// Token tracking for summarization
-	totalInputTokens    int64
-	totalCacheReadTokens int64
-	tokenLimit          int64 // When to trigger summarization
+	// Token limit for summarization
+	tokenLimit int64 // When to trigger summarization
 }
 
 // conversationTurn is a pair of messages: a user message, and an optional assistant response
@@ -67,10 +65,8 @@ func ResumeConversation(
 		tools:        tools,
 		Messages:     history.Messages,
 
-		maxTokens:            maxTokens,
-		tokenLimit:           100000, // 100k token limit
-		totalInputTokens:     history.TotalInputTokens,
-		totalCacheReadTokens: history.TotalCacheReadTokens,
+		maxTokens:  maxTokens,
+		tokenLimit: 100000, // 100k token limit
 	}
 	return c, nil
 }
@@ -140,15 +136,11 @@ func (cc *Conversation) SendMessage(ctx context.Context, messageContent ...anthr
 		return nil, fmt.Errorf("malformed message: %v", string(b))
 	}
 
-	// Update token tracking
-	cc.totalInputTokens += response.Usage.InputTokens
-	cc.totalCacheReadTokens += response.Usage.CacheReadInputTokens
-
 	log.Printf("Token usage - Input: %d, Cache create: %d, Cache read: %d, Total (Input+CacheRead): %d",
 		response.Usage.InputTokens,
 		response.Usage.CacheCreationInputTokens,
 		response.Usage.CacheReadInputTokens,
-		cc.totalInputTokens + cc.totalCacheReadTokens,
+		response.Usage.InputTokens + response.Usage.CacheReadInputTokens,
 	)
 
 	// Record the response
@@ -174,46 +166,53 @@ func getLastCacheControl(content []anthropic.ContentBlockParamUnion) (*anthropic
 
 // NeedsSummarization checks if the conversation should be summarized due to token limits
 func (cc *Conversation) NeedsSummarization() bool {
-	return cc.totalInputTokens + cc.totalCacheReadTokens > cc.tokenLimit
+	if len(cc.Messages) == 0 {
+		return false
+	}
+	
+	// Get the most recent response
+	lastMessage := cc.Messages[len(cc.Messages)-1]
+	if lastMessage.Response == nil {
+		return false
+	}
+	
+	// Check token usage from the most recent turn (which includes cumulative history)
+	totalTokens := lastMessage.Response.Usage.InputTokens + lastMessage.Response.Usage.CacheReadInputTokens
+	return totalTokens > cc.tokenLimit
 }
 
 // SummarizeConversation creates a condensed version of the conversation history, preserving
-// the system prompt and initial repository state while summarizing the middle interactions
+// the first message (initial repository and task content) while summarizing the rest
 func (cc *Conversation) SummarizeConversation(ctx context.Context) error {
 	if len(cc.Messages) <= 2 {
 		// Don't summarize if we have too few messages
 		return nil
 	}
 
-	log.Printf("Conversation has %d messages and %d total tokens (input+cache read), summarizing...", 
-		len(cc.Messages), cc.totalInputTokens + cc.totalCacheReadTokens)
-
-	// Preserve the first message (initial repository and task content) and last few messages
-	// to maintain context while summarizing the middle portion
-	preserveFirstMessages := 1
-	preserveLastMessages := 2
-	
-	// Ensure we have something to summarize
-	if len(cc.Messages) <= preserveFirstMessages + preserveLastMessages {
-		return nil
+	// Get token count from most recent response for logging
+	var totalTokens int64
+	if lastMsg := cc.Messages[len(cc.Messages)-1]; lastMsg.Response != nil {
+		totalTokens = lastMsg.Response.Usage.InputTokens + lastMsg.Response.Usage.CacheReadInputTokens
 	}
 
-	// Extract messages to summarize (middle portion, excluding the last few messages)
-	startIdx := preserveFirstMessages
-	endIdx := len(cc.Messages) - preserveLastMessages
-	messagesToSummarize := cc.Messages[startIdx:endIdx]
+	log.Printf("Conversation has %d messages and %d total tokens (input+cache read), summarizing...", 
+		len(cc.Messages), totalTokens)
+
+	// Preserve the first message (initial repository and task content)
+	numFirstMessagesToPreserve := 1
 	
-	if len(messagesToSummarize) == 0 {
+	// Ensure we have something to summarize
+	if len(cc.Messages) <= numFirstMessagesToPreserve {
 		return nil
 	}
 
 	// Generate summary using AI (this will add a summary request/response to the conversation)
-	summary, err := cc.generateConversationSummary(ctx, messagesToSummarize)
+	summary, err := cc.generateConversationSummary(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to generate conversation summary: %w", err)
 	}
 
-	// The summary request and response are now the last two messages in the conversation
+	// The summary request and response are now the last message in the conversation
 	// We need to account for this when reconstructing the conversation
 	summaryRequestResponseCount := 1 // The summary request/response is one conversation turn
 
@@ -223,26 +222,18 @@ func (cc *Conversation) SummarizeConversation(ctx context.Context) error {
 		// No response - this is just context for future messages
 	}
 
-	// Reconstruct the conversation with preserved messages + summary + recent messages (excluding summary request/response)
+	// Reconstruct the conversation: preserved first messages + summary
 	newMessages := []conversationTurn{}
 	
 	// Add preserved first messages
-	newMessages = append(newMessages, cc.Messages[:preserveFirstMessages]...)
+	newMessages = append(newMessages, cc.Messages[:numFirstMessagesToPreserve]...)
 	
 	// Add summary message
 	newMessages = append(newMessages, summaryMessage)
-	
-	// Add preserved last messages, but exclude the summary request/response we just added
-	originalLastMessages := cc.Messages[endIdx:len(cc.Messages)-summaryRequestResponseCount]
-	newMessages = append(newMessages, originalLastMessages...)
 
 	// Update the conversation
 	originalMessageCount := len(cc.Messages)
 	cc.Messages = newMessages
-	
-	// Reset token counters since we've condensed the conversation
-	cc.totalInputTokens = 0
-	cc.totalCacheReadTokens = 0
 
 	log.Printf("Conversation summarized: %d messages -> %d messages", 
 		originalMessageCount, len(cc.Messages))
@@ -250,17 +241,17 @@ func (cc *Conversation) SummarizeConversation(ctx context.Context) error {
 	return nil
 }
 
-// generateConversationSummary creates a summary of the given conversation turns using AI
-func (cc *Conversation) generateConversationSummary(ctx context.Context, messages []conversationTurn) (string, error) {
+// generateConversationSummary creates a summary of the conversation using AI
+func (cc *Conversation) generateConversationSummary(ctx context.Context) (string, error) {
 	// Build a summary request that will be sent as part of the current conversation
 	var summaryPrompt strings.Builder
-	summaryPrompt.WriteString("Please create a concise summary of the conversation we've had so far. Focus on:\n")
+	summaryPrompt.WriteString("Please summarize all of the work you have done so far. Focus on:\n")
 	summaryPrompt.WriteString("1. Key decisions and changes made\n")
 	summaryPrompt.WriteString("2. Current state of the codebase\n")
 	summaryPrompt.WriteString("3. Any important context for continuing the work\n")
 	summaryPrompt.WriteString("4. Tools used and their outcomes\n\n")
-	summaryPrompt.WriteString("This summary will replace the middle portion of our conversation history to save tokens while preserving context. ")
-	summaryPrompt.WriteString("Please provide a comprehensive but concise summary that captures all important information needed to continue working effectively.")
+	summaryPrompt.WriteString("Please provide a comprehensive but concise summary that captures all important information needed to continue working effectively. ")
+	summaryPrompt.WriteString("There's no need to include the system prompt or initial repository information in your summary - focus on the actual work and changes made during our conversation.")
 
 	// Temporarily disable token limit to avoid recursive summarization during summary generation
 	originalTokenLimit := cc.tokenLimit
@@ -293,18 +284,14 @@ func (cc *Conversation) generateConversationSummary(ctx context.Context, message
 
 // ConversationHistory contains a serializable and resumable snapshot of a Conversation
 type ConversationHistory struct {
-	SystemPrompt         string             `json:"systemPrompt"`
-	Messages             []conversationTurn `json:"messages"`
-	TotalInputTokens     int64              `json:"totalInputTokens"`
-	TotalCacheReadTokens int64              `json:"totalCacheReadTokens"`
+	SystemPrompt string             `json:"systemPrompt"`
+	Messages     []conversationTurn `json:"messages"`
 }
 
 // History returns a serializable conversation history
 func (cc *Conversation) History() ConversationHistory {
 	return ConversationHistory{
-		SystemPrompt:         cc.systemPrompt,
-		Messages:             cc.Messages,
-		TotalInputTokens:     cc.totalInputTokens,
-		TotalCacheReadTokens: cc.totalCacheReadTokens,
+		SystemPrompt: cc.systemPrompt,
+		Messages:     cc.Messages,
 	}
 }
