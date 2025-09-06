@@ -34,10 +34,9 @@ and code reviews. Let's apply those same tools to collaborate with a new breed o
     - Switch to your bot account to accept the invite
 
 [^1]: There is currently no way to generate fine-grained access tokens for collaborator access to repositories owned by
-individuals. When you give a classic Personal Access Token to the bot, you should assume from that point on that it can
-and will go rogue and attempt to abuse the broad permissions of that access token. As a repository owner, use
-collaborator permission settings and protected branches to restrict the bot's permissions to only the minimum required
-to perform its intended functions.
+individuals. When you give a classic Personal Access Token to the bot, you should assume that it will attempt to abuse
+the broad permissions of that access token. As a repository owner, use collaborator permission settings and protected
+branches to restrict the bot's permissions to only the minimum required to perform its intended functions.
 
 ### Anthropic API Setup
 
