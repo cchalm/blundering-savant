@@ -69,7 +69,7 @@ func ResumeConversation(
 	return c, nil
 }
 
-// SendMessage sends a message with caching enabled
+// SendMessage sends a message to the conversation
 func (cc *Conversation) SendMessage(ctx context.Context, messageContent ...anthropic.ContentBlockParamUnion) (*anthropic.Message, error) {
 	return cc.sendMessage(ctx, true, messageContent...)
 }
@@ -281,7 +281,7 @@ func (cc *Conversation) generateConversationSummary(ctx context.Context) (*anthr
 		return nil, fmt.Errorf("failed to generate summary: %w", err)
 	}
 
-	// Return the complete response message to preserve proper authorship
+	// Return the complete response message
 	return response, nil
 }
 
