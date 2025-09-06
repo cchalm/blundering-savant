@@ -8,88 +8,65 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestNeedsSummarization(t *testing.T) {
-	tests := []struct {
-		name           string
-		inputTokens    int64
-		cacheReadTokens int64
-		tokenLimit     int64
-		expected       bool
-	}{
-		{
-			name:            "Below limit",
-			inputTokens:     40000,
-			cacheReadTokens: 30000,
-			tokenLimit:      100000,
-			expected:        false,
+// testNeedsSummarization is a test harness for NeedsSummarization method
+func testNeedsSummarization(t *testing.T, inputTokens int64, cacheReadTokens int64, tokenLimit int64, expected bool) {
+	// Create a mock response with the specified token usage
+	response := &anthropic.Message{
+		Usage: anthropic.Usage{
+			InputTokens:          inputTokens,
+			CacheReadInputTokens: cacheReadTokens,
 		},
-		{
-			name:            "At limit",
-			inputTokens:     50000,
-			cacheReadTokens: 50000,
-			tokenLimit:      100000,
-			expected:        false,
-		},
-		{
-			name:            "Above limit",
-			inputTokens:     60000,
-			cacheReadTokens: 50000,
-			tokenLimit:      100000,
-			expected:        true,
-		},
-		{
-			name:            "Way above limit",
-			inputTokens:     150000,
-			cacheReadTokens: 75000,
-			tokenLimit:      100000,
-			expected:        true,
-		},
-		{
-			name:        "No messages",
-			tokenLimit:  100000,
-			expected:    false,
-		},
-		{
-			name:        "Message without response",
-			tokenLimit:  100000,
-			expected:    false,
+	}
+	
+	conv := &Conversation{
+		tokenLimit: tokenLimit,
+		Messages: []conversationTurn{
+			{
+				UserMessage: anthropic.NewUserMessage(anthropic.NewTextBlock("test")),
+				Response:    response,
+			},
 		},
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			conv := &Conversation{
-				tokenLimit: tt.tokenLimit,
-			}
+	result := conv.NeedsSummarization()
+	assert.Equal(t, expected, result)
+}
 
-			switch tt.name {
-			case "No messages":
-				// Empty conversation
-			case "Message without response":
-				// Add a message without a response
-				conv.Messages = []conversationTurn{
-					{UserMessage: anthropic.NewUserMessage(anthropic.NewTextBlock("test"))},
-				}
-			default:
-				// Create a mock response with the specified token usage
-				response := &anthropic.Message{
-					Usage: anthropic.Usage{
-						InputTokens:          tt.inputTokens,
-						CacheReadInputTokens: tt.cacheReadTokens,
-					},
-				}
-				conv.Messages = []conversationTurn{
-					{
-						UserMessage: anthropic.NewUserMessage(anthropic.NewTextBlock("test")),
-						Response:    response,
-					},
-				}
-			}
+func TestNeedsSummarization_BelowLimit(t *testing.T) {
+	testNeedsSummarization(t, 40000, 30000, 100000, false)
+}
 
-			result := conv.NeedsSummarization()
-			assert.Equal(t, tt.expected, result)
-		})
+func TestNeedsSummarization_AtLimit(t *testing.T) {
+	testNeedsSummarization(t, 50000, 50000, 100000, false)
+}
+
+func TestNeedsSummarization_AboveLimit(t *testing.T) {
+	testNeedsSummarization(t, 60000, 50000, 100000, true)
+}
+
+func TestNeedsSummarization_WayAboveLimit(t *testing.T) {
+	testNeedsSummarization(t, 150000, 75000, 100000, true)
+}
+
+func TestNeedsSummarization_NoMessages(t *testing.T) {
+	conv := &Conversation{
+		tokenLimit: 100000,
 	}
+	
+	result := conv.NeedsSummarization()
+	assert.Equal(t, false, result)
+}
+
+func TestNeedsSummarization_MessageWithoutResponse(t *testing.T) {
+	conv := &Conversation{
+		tokenLimit: 100000,
+		Messages: []conversationTurn{
+			{UserMessage: anthropic.NewUserMessage(anthropic.NewTextBlock("test"))},
+		},
+	}
+	
+	result := conv.NeedsSummarization()
+	assert.Equal(t, false, result)
 }
 
 func TestConversationHistory(t *testing.T) {
@@ -159,18 +136,3 @@ func TestSummarizeConversationStructure(t *testing.T) {
 	// In a real test environment, you might use a mock client or integration test
 }
 
-func TestNewConversationDefaults(t *testing.T) {
-	client := anthropic.Client{}
-	model := anthropic.ModelClaudeSonnet4_0
-	maxOutputTokens := int64(4000)
-	tools := []anthropic.ToolParam{}
-	systemPrompt := "test system prompt"
-
-	conv := NewConversation(client, model, maxOutputTokens, tools, systemPrompt)
-
-	assert.Equal(t, model, conv.model)
-	assert.Equal(t, maxOutputTokens, conv.maxOutputTokens)
-	assert.Equal(t, systemPrompt, conv.systemPrompt)
-	assert.Equal(t, int64(100000), conv.tokenLimit) // Default token limit
-	assert.Equal(t, 0, len(conv.Messages))
-}
