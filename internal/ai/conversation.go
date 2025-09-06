@@ -74,10 +74,7 @@ func (cc *Conversation) SendMessage(ctx context.Context, messageContent ...anthr
 	return cc.sendMessage(ctx, true, messageContent...)
 }
 
-// sendMessageWithoutCache sends a message without caching (used for summary requests)
-func (cc *Conversation) sendMessageWithoutCache(ctx context.Context, messageContent ...anthropic.ContentBlockParamUnion) (*anthropic.Message, error) {
-	return cc.sendMessage(ctx, false, messageContent...)
-}
+
 
 // sendMessage is the internal implementation with a boolean parameter to specify caching
 func (cc *Conversation) sendMessage(ctx context.Context, enableCache bool, messageContent ...anthropic.ContentBlockParamUnion) (*anthropic.Message, error) {
@@ -229,25 +226,32 @@ func (cc *Conversation) Summarize(ctx context.Context) error {
 	}
 
 	// Generate summary using AI (this will add a summary request/response to the conversation)
-	summary, err := cc.generateConversationSummary(ctx)
+	summaryResponse, err := cc.generateConversationSummary(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to generate conversation summary: %w", err)
 	}
 
-	// Create a summary message to replace the middle portion
-	summaryMessage := conversationTurn{
-		UserMessage: anthropic.NewUserMessage(anthropic.NewTextBlock(summary)),
-		// No response - this is just context for future messages
+	// Create conversation turns that properly represent the summary exchange
+	// First turn: User asks for summary + Assistant provides the summary
+	summaryRequestTurn := conversationTurn{
+		UserMessage: anthropic.NewUserMessage(anthropic.NewTextBlock("Please respond with the summary you generated earlier.")),
+		Response:    summaryResponse,
+	}
+	
+	// Second turn: User asks to resume work based on the summary
+	resumeRequestTurn := conversationTurn{
+		UserMessage: anthropic.NewUserMessage(anthropic.NewTextBlock("Please resume working on this task based on your summary.")),
+		// No response yet - this will be filled in by the next actual conversation turn
 	}
 
-	// Reconstruct the conversation: preserved first messages + summary
+	// Reconstruct the conversation: preserved first messages + summary exchange + resume request
 	newMessages := []conversationTurn{}
 	
 	// Add preserved first messages
 	newMessages = append(newMessages, cc.Messages[:numFirstMessagesToPreserve]...)
 	
-	// Add summary message
-	newMessages = append(newMessages, summaryMessage)
+	// Add summary conversation turns
+	newMessages = append(newMessages, summaryRequestTurn, resumeRequestTurn)
 
 	// Update the conversation
 	originalMessageCount := len(cc.Messages)
@@ -260,7 +264,7 @@ func (cc *Conversation) Summarize(ctx context.Context) error {
 }
 
 // generateConversationSummary creates a summary of the conversation using AI
-func (cc *Conversation) generateConversationSummary(ctx context.Context) (string, error) {
+func (cc *Conversation) generateConversationSummary(ctx context.Context) (*anthropic.Message, error) {
 	// Build a summary request that will be sent as part of the current conversation
 	var summaryPrompt strings.Builder
 	summaryPrompt.WriteString("Please summarize all of the work you have done so far. Focus on:\n")
@@ -272,21 +276,13 @@ func (cc *Conversation) generateConversationSummary(ctx context.Context) (string
 	summaryPrompt.WriteString("There's no need to include the system prompt or initial repository information in your summary - focus on the actual work and changes made during our conversation.")
 
 	// Send summary request without caching since we're throwing away conversation history
-	response, err := cc.sendMessageWithoutCache(ctx, anthropic.NewTextBlock(summaryPrompt.String()))
+	response, err := cc.sendMessage(ctx, false, anthropic.NewTextBlock(summaryPrompt.String()))
 	if err != nil {
-		return "", fmt.Errorf("failed to generate summary: %w", err)
+		return nil, fmt.Errorf("failed to generate summary: %w", err)
 	}
 
-	// Extract text from response
-	var summary strings.Builder
-	summary.WriteString("## Conversation Summary\n\n")
-	for _, content := range response.Content {
-		if textBlock, ok := content.AsAny().(anthropic.TextBlock); ok {
-			summary.WriteString(textBlock.Text)
-		}
-	}
-
-	return summary.String(), nil
+	// Return the complete response message to preserve proper authorship
+	return response, nil
 }
 
 
