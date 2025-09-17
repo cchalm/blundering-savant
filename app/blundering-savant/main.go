@@ -8,6 +8,13 @@ import (
 	"github.com/cchalm/blundering-savant/app/blundering-savant/cmd"
 )
 
+// Version information set by ldflags during build
+var (
+	Version   = "dev"
+	GitCommit = "unknown"
+	BuildTime = "unknown"
+)
+
 // Config holds the configuration for the bot
 type Config struct {
 	// Authentication
@@ -28,6 +35,7 @@ type Config struct {
 }
 
 func main() {
+	cmd.SetVersionInfo(Version, GitCommit, BuildTime)
 	if err := cmd.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
