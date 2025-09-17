@@ -11,13 +11,9 @@ Generative AI is fallible in ways similar to people. It makes typos, misintepret
 falls down rabbit holes. We already have tools to help fallible individuals code together: issues, pull requests,
 and code reviews. Let's apply those same tools to collaborate with a new breed of intelligence.
 
-## Installation
+## Prerequisites
 
-### Option 1: GitHub Action (Recommended)
-
-The easiest way to run the bot is as a GitHub Action that automatically responds to assigned issues and PR comments.
-
-#### Prerequisites
+Before using the bot with any deployment option, you'll need to set up the following:
 
 1. **Create a Bot GitHub Account**:
     - Create a new GitHub user account for your bot
@@ -45,6 +41,12 @@ The easiest way to run the bot is as a GitHub Action that automatically responds
 
 [^1]: There is currently no way to generate fine-grained access tokens for collaborator access to repositories owned by individuals. When you give a classic Personal Access Token to the bot, you should assume from that point on that it can and will go rogue and attempt to abuse the broad permissions of that access token. As a repository owner, use collaborator permission settings and protected branches to restrict the bot's permissions to only the minimum required to perform its intended functions.
 
+## Installation
+
+### Option 1: GitHub Action (Recommended)
+
+The easiest way to run the bot is as a GitHub Action that automatically responds to assigned issues and PR comments.
+
 #### Setup Instructions
 
 1. **Configure Repository Variables**:
@@ -60,87 +62,8 @@ The easiest way to run the bot is as a GitHub Action that automatically responds
      - `ANTHROPIC_API_KEY`: Your Anthropic API key
 
 3. **Add the GitHub Action Workflow**:
-   - Create `.github/workflows/bot.yml` in your repository with the following content:
-
-```yaml
-name: Bot Runner
-on:
-  issues:
-    types: [assigned, labeled]
-  issue_comment:
-    types: [created]
-  pull_request:
-    types: [synchronize]
-  pull_request_review:
-    types: [submitted]
-
-jobs:
-  run:
-    permissions:
-      actions: write        # To create workflow dispatch events
-      contents: write       # To make code changes
-      issues: write         # To edit labels and comment on issues
-      pull-requests: write  # To edit labels and comment on pull requests
-
-    runs-on: ubuntu-latest
-
-    # Prevent multiple simultaneous runs per repository target (issue or PR)
-    concurrency:
-      group: bot-${{ github.repository }}-${{ github.event.issue.number || github.event.pull_request.number || github.event.review.pull_request.number || 'unknown' }}
-      cancel-in-progress: true
-
-    # Run if the triggering user is the authorized user AND the issue is assigned to the bot OR the PR is owned by the bot
-    if: >
-      github.actor == vars.AUTHORIZED_USERNAME &&
-      (
-        (github.event.issue && github.event.issue.assignee.login == vars.BOT_USERNAME) ||
-        (github.event.pull_request && github.event.pull_request.user.login == vars.BOT_USERNAME)
-      )
-
-    steps:
-    - name: Set up Go
-      uses: actions/setup-go@v4
-      with:
-        go-version: '1.24.4'
-
-    - name: Install bot
-      run: go install github.com/cchalm/blundering-savant/app/blundering-savant@latest
-
-    - name: Run bot
-      timeout-minutes: 30
-      env:
-        SYSTEM_GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        BOT_GITHUB_TOKEN: ${{ secrets.BOT_GITHUB_TOKEN }}
-        ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-      run: |
-        echo "Processing ${{ github.event_name }}.${{ github.event.action }} by ${{ github.actor }}"
-
-        # Determine whether to use issue number or PR branch
-        if [ -n "${{ github.event.issue.number }}" ]; then
-          echo "Repository: ${{ github.repository }} / Issue #${{ github.event.issue.number }}"
-          blundering-savant oneshot \
-            --repo ${{ github.repository }} \
-            --issue ${{ github.event.issue.number }} \
-            --validation-workflow go.yml
-        elif [ -n "${{ github.event.pull_request.head.ref }}" ]; then
-          echo "Repository: ${{ github.repository }} / PR branch '${{ github.event.pull_request.head.ref }}'"
-          blundering-savant oneshot \
-            --repo ${{ github.repository }} \
-            --pr-branch ${{ github.event.pull_request.head.ref }} \
-            --validation-workflow go.yml
-        else
-          echo "Error: Neither issue number nor PR branch available"
-          exit 1
-        fi
-
-    - name: Upload logs on failure
-      if: failure()
-      uses: actions/upload-artifact@v4
-      with:
-        name: bot-logs-${{ github.run_id }}
-        path: logs/
-        retention-days: 7
-```
+   - Copy the [bot.yml workflow file](.github/workflows/bot.yml) from this repository to `.github/workflows/bot.yml` in your repository
+   - The workflow file contains all the necessary configuration for running the bot automatically on issue assignments and PR updates
 
 ### Option 2: Pre-built Binary
 
@@ -177,6 +100,7 @@ export ANTHROPIC_API_KEY=sk-ant-<your-anthropic-api-key>
 blundering-savant oneshot --repo owner/repository --issue 123
 
 # Run in polling mode (continuously check for new issues)
+# Use Ctrl-C to stop
 blundering-savant poll --repo owner/repository
 ```
 

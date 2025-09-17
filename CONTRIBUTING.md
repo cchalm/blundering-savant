@@ -8,7 +8,8 @@ Thank you for your interest in contributing to the Blundering Savant project! Th
 
 1. **Go**: Install Go 1.24 or later from [https://golang.org/dl/](https://golang.org/dl/)
 2. **Git**: Ensure you have Git installed
-3. **GitHub Account**: You'll need a GitHub account for testing and contributing
+3. **Docker**: Install Docker for containerized development and testing
+4. **GitHub Account**: You'll need a GitHub account for testing and contributing
 
 ### Local Development Environment
 
@@ -117,13 +118,7 @@ just lint
 
 ### Code Style
 
-This project follows the Go style guide outlined in [`STYLE_GUIDE.md`](STYLE_GUIDE.md). Key points:
-
-- Use `gofmt` and `goimports` for formatting
-- Follow Go naming conventions (camelCase for private, PascalCase for public)
-- Write comprehensive tests for new functionality
-- Document exported functions and types
-- Handle errors explicitly
+This project follows the Go style guide outlined in [`STYLE_GUIDE.md`](STYLE_GUIDE.md). Please refer to that document for detailed coding standards and best practices.
 
 ### Submitting Changes
 
@@ -139,30 +134,9 @@ This project follows the Go style guide outlined in [`STYLE_GUIDE.md`](STYLE_GUI
    - Any testing performed
    - Screenshots or examples if applicable
 
-### Available Just Commands
 
-Run `just` or `just help` to see all available commands. Common ones include:
 
-- `just build` - Build the binary
-- `just test` - Run tests
-- `just lint` - Run linting
-- `just run` - Start the bot in polling mode
-- `just stop` - Stop the running bot
-- `just logs` - View bot logs
-- `just clean` - Clean build artifacts
 
-### Project Structure
-
-- `app/blundering-savant/` - Main application entry point
-- `internal/` - Private Go packages
-  - `ai/` - AI conversation and prompt handling
-  - `bot/` - Core bot logic and tool implementations
-  - `task/` - Task generation and processing
-  - `transport/` - GitHub API interactions
-  - `validator/` - Code validation logic
-  - `workspace/` - File system and Git operations
-- `.github/workflows/` - GitHub Actions workflows
-- `STYLE_GUIDE.md` - Coding standards and best practices
 
 ### Getting Help
 
