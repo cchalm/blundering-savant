@@ -10,7 +10,7 @@ Thank you for your interest in contributing to the Blundering Savant project! Th
 2. **Git**: Ensure you have Git installed
 3. **Docker**: Install Docker for containerized development and testing
 
-### Environment Configuration
+### Setup
 
 1. **Clone the repository**:
 ```bash
@@ -48,7 +48,6 @@ ANTHROPIC_API_KEY=sk-ant-<your-anthropic-api-key>
 
 # Bot Configuration
 CHECK_INTERVAL=1m
-LOG_LEVEL=debug  # Use debug for development
 RESUMABLE_CONVERSATIONS_DIR=./conversations
 VALIDATION_WORKFLOW_NAME=go.yml
 ```

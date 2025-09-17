@@ -21,6 +21,7 @@ Before using the bot with any deployment option, you'll need to set up the follo
     - Be transparent: in the account's bio, disclose that the account is a bot
 
 2. **Generate Personal Access Token**[^1]:
+    - Switch to your **bot** GitHub account
     - Go to Settings → Developer settings → Personal access tokens → Tokens (classic)
     - Click "Generate new token"
     - Select scopes:
@@ -28,6 +29,7 @@ Before using the bot with any deployment option, you'll need to set up the follo
       - `workflow` (If the bot should be allowed to modify `.github/workflows`)
 
 3. **Add Bot as Collaborator**:
+    - Switch to your **main** GitHub account
     - Navigate to your GitHub repository
     - Go to Settings → Collaborators
     - Click "Add people"
@@ -91,10 +93,22 @@ sudo mv blundering-savant-darwin-arm64 /usr/local/bin/blundering-savant
 
 2. **Set up environment variables**:
 ```bash
-export SYSTEM_GITHUB_TOKEN=ghp_<your_github_token>
+export SYSTEM_GITHUB_TOKEN=ghp_<your_github_token> # May be your bot github token
 export BOT_GITHUB_TOKEN=ghp_<your_github_token>
 export ANTHROPIC_API_KEY=sk-ant-<your-anthropic-api-key>
+export VALIDATION_WORKFLOW_NAME=<your-workflow-name>.yml
 ```
+
+All supported configuration variables:
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `SYSTEM_GITHUB_TOKEN` | GitHub token for actions that do not require any attribution (e.g. searching for issues) | |
+| `BOT_GITHUB_TOKEN` | GitHub token for actions that should be attributed to the AI (e.g. committing, commenting) | |
+| `ANTHROPIC_API_KEY` | Anthropic API key for generative AI functionality | |
+| `VALIDATION_WORKFLOW_NAME` | The name of the GitHub Workflow that should be used by the bot to validate its changes | |
+| `CHECK_INTERVAL` | (optional) How often to check for new issues and comments on GitHub (polling mode only) | 5m |
+| `RESUMABLE_CONVERSATIONS_DIR` | (optional) Directory in which to store interrupted conversation histories for later resumption | |
 
 3. **Run the bot**:
 ```bash
@@ -123,18 +137,6 @@ Then set up environment variables and run as described in Option 2.
 1. **Review and Repeat**: Comment on the PR with any requested changes and wait for the bot to update the PR
 1. **Merge**: Once satisfied, merge the PR (the bot cannot merge PRs)
 
-## Contributing
-
-Interested in contributing to the project? See our [Contributing Guide](CONTRIBUTING.md) for development setup instructions, coding standards, and how to submit changes.
-
-## Configuration Options
-
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `CHECK_INTERVAL` | How often to check for new issues and comments on GitHub | 5m |
-| `LOG_LEVEL` | Logging verbosity | info |
-| `RESUMABLE_CONVERSATIONS_DIR` | Directory in which to store interrupted conversation histories for later resumption | &lt;none&gt; |
-
 ## Best Practices
 
 1. **Detailed Instructions**: The bot will get creative. If you want something specific, be specific
@@ -149,3 +151,7 @@ Interested in contributing to the project? See our [Contributing Guide](CONTRIBU
 - The bot's speed is constrained primarily by generative AI API rate limits
 - Issue descriptions must be detailed
   - Current AI models avoid asking clarifying questions and prefer to guess
+
+## Contributing
+
+Interested in contributing to the project? See our [Contributing Guide](CONTRIBUTING.md) for development setup instructions, coding standards, and how to submit changes.
