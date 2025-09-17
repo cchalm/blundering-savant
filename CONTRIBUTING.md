@@ -9,9 +9,8 @@ Thank you for your interest in contributing to the Blundering Savant project! Th
 1. **Go**: Install Go 1.24 or later from [https://golang.org/dl/](https://golang.org/dl/)
 2. **Git**: Ensure you have Git installed
 3. **Docker**: Install Docker for containerized development and testing
-4. **GitHub Account**: You'll need a GitHub account for testing and contributing
 
-### Local Development Environment
+### Environment Configuration
 
 1. **Clone the repository**:
 ```bash
@@ -35,29 +34,7 @@ curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/HEAD/install
 ```bash
 # Copy the environment template
 cp .env.example .env
-
-# Edit .env with your credentials
-# You'll need:
-# - A GitHub Personal Access Token with repo and workflow scopes
-# - An Anthropic API key
 ```
-
-4. **Build and test**:
-```bash
-# Build the project
-just build
-
-# Run tests
-just test
-
-# Run linting
-just lint
-
-# See all available commands
-just help
-```
-
-### Environment Configuration
 
 Edit the `.env` file with your development credentials:
 
@@ -74,6 +51,21 @@ CHECK_INTERVAL=1m
 LOG_LEVEL=debug  # Use debug for development
 RESUMABLE_CONVERSATIONS_DIR=./conversations
 VALIDATION_WORKFLOW_NAME=go.yml
+```
+
+4. **Build and test**:
+```bash
+# Build the project
+just build
+
+# Run tests
+just test
+
+# Run linting
+just lint
+
+# See all available commands
+just help
 ```
 
 ### Running the Bot Locally
@@ -120,19 +112,7 @@ just lint
 
 This project follows the Go style guide outlined in [`STYLE_GUIDE.md`](STYLE_GUIDE.md). Please refer to that document for detailed coding standards and best practices.
 
-### Submitting Changes
 
-1. **Fork the repository** on GitHub
-2. **Create a feature branch**: `git checkout -b feature/your-feature-name`
-3. **Make your changes** following the coding standards
-4. **Test thoroughly** including unit tests and manual testing
-5. **Commit with descriptive messages**
-6. **Push to your fork**: `git push origin feature/your-feature-name`
-7. **Create a Pull Request** with:
-   - Clear description of what the change does
-   - Why the change is needed
-   - Any testing performed
-   - Screenshots or examples if applicable
 
 
 

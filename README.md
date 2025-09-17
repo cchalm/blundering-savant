@@ -67,6 +67,8 @@ The easiest way to run the bot is as a GitHub Action that automatically responds
 
 ### Option 2: Pre-built Binary
 
+**Advantages**: When run directly, the bot can handle tasks in multiple repositories. It also doesn't require any setup in the repositories to which the bot is contributing.
+
 Download the latest release from the [releases page](https://github.com/cchalm/blundering-savant/releases) for your platform:
 
 1. **Download and Install**:
