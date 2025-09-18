@@ -130,8 +130,6 @@ func renderConversationMarkdown(data *conversationMarkdownData) (string, error) 
 					return fmt.Sprintf("📄 Creating '%s'", path)
 				case "insert":
 					return fmt.Sprintf("➕ Inserting into '%s'", path)
-				case "search_in_file":
-					return fmt.Sprintf("🔍 Searching in '%s'", path)
 				default:
 					if path != "" {
 						return fmt.Sprintf("🔧 %s '%s'", command, path)
@@ -189,6 +187,8 @@ func renderConversationMarkdown(data *conversationMarkdownData) (string, error) 
 					}
 				}
 				return "🗑️ Deleting file"
+			case "search_in_file":
+				return fmt.Sprintf("🔍 Searching in '%s'", path)
 			default:
 				return fmt.Sprintf("🔧 Using tool: %s", toolName)
 			}
