@@ -41,6 +41,33 @@ Before using the bot with any deployment option, you'll need to set up the follo
     - Generate an API key from the console
     - Ensure you have sufficient credits for API usage
 
+5. **Create a Validation Workflow**:
+    - Create a GitHub Actions workflow file (e.g., `.github/workflows/blundering-savant-validate.yml`) in your repository
+    - This workflow should run tests, linting, and any other validation checks you want the bot to perform on its code changes
+    - The bot will trigger this workflow to validate its changes before creating or updating pull requests
+    - Example workflow structure:
+      ```yaml
+      name: Validate Bot Changes
+      on:
+        workflow_dispatch:
+        push:
+          branches: [ main ]
+        pull_request:
+          branches: [ main ]
+      
+      jobs:
+        validate:
+          runs-on: ubuntu-latest
+          steps:
+            - uses: actions/checkout@v4
+            - name: Set up validation environment
+              # Add your language/framework setup steps here
+            - name: Run tests
+              # Add your test commands here
+            - name: Run linting
+              # Add your linting commands here
+      ```
+
 [^1]: There is currently no way to generate fine-grained access tokens for collaborator access to repositories owned by individuals. When you give a classic Personal Access Token to the bot, you should assume that it will attempt to abuse the broad permissions of that access token. As a repository owner, use collaborator permission settings and protected branches to restrict the bot's permissions to only the minimum required to perform its intended functions.
 
 ## Installation
@@ -56,6 +83,7 @@ The easiest way to run the bot is as a GitHub Action that automatically responds
    - Add the following repository variables:
      - `BOT_USERNAME`: Your bot's GitHub username
      - `AUTHORIZED_USERNAME`: Your main GitHub username (who can trigger the bot)
+     - `VALIDATION_WORKFLOW_NAME` (optional): The name of your validation workflow file (defaults to `blundering-savant-validate.yml`)
 
 2. **Configure Repository Secrets**:
    - Go to your repository → Settings → Secrets and variables → Actions → Secrets tab

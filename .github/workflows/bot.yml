@@ -62,13 +62,13 @@ jobs:
           blundering-savant oneshot \
             --repo ${{ github.repository }} \
             --issue ${{ github.event.issue.number }} \
-            --validation-workflow go.yml
+            --validation-workflow ${{ vars.VALIDATION_WORKFLOW_NAME || 'blundering-savant-validate.yml' }}
         elif [ -n "${{ github.event.pull_request.head.ref }}" ]; then
           echo "Repository: ${{ github.repository }} / PR branch '${{ github.event.pull_request.head.ref }}'"
           blundering-savant oneshot \
             --repo ${{ github.repository }} \
             --pr-branch ${{ github.event.pull_request.head.ref }} \
-            --validation-workflow go.yml
+            --validation-workflow ${{ vars.VALIDATION_WORKFLOW_NAME || 'blundering-savant-validate.yml' }}
         else
           echo "Error: Neither issue number nor PR branch available"
           exit 1

@@ -30,9 +30,9 @@ func loadRootConfig(_ *cobra.Command, _ []string) {
 	loadFromEnv(&config.SystemGithubToken, "SYSTEM_GITHUB_TOKEN")
 	loadFromEnv(&config.BotGithubToken, "BOT_GITHUB_TOKEN")
 	loadFromEnv(&config.AnthropicAPIKey, "ANTHROPIC_API_KEY")
+	loadFromEnv(&config.ValidationWorkflowName, "VALIDATION_WORKFLOW_NAME")
 }
 
 func init() {
 	rootCmd.PersistentFlags().StringVar(&config.ValidationWorkflowName, "validation-workflow", "", "GitHub Actions workflow name for validation")
-	_ = oneShotCmd.MarkFlagRequired("validation-workflow")
 }
