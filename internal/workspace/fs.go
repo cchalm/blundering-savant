@@ -255,7 +255,7 @@ func (gfs GithubFileSystem) Read(ctx context.Context, path string) (string, erro
 
 	if fileContent == nil {
 		if dirContent != nil {
-			return "", fmt.Errorf("expected file: %v", ErrIsDir)
+			return "", fmt.Errorf("expected file: %w", ErrIsDir)
 		}
 		return "", fmt.Errorf("file content nil")
 	}
@@ -308,7 +308,7 @@ func (gfs GithubFileSystem) ListDir(ctx context.Context, dir string) ([]string, 
 		return nil, fmt.Errorf("failed to list directory: %w", err)
 	}
 	if fileContent != nil {
-		return nil, fmt.Errorf("expected directory: %v", ErrIsFile)
+		return nil, fmt.Errorf("expected directory: %w", ErrIsFile)
 	}
 
 	var files []string

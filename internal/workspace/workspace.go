@@ -78,21 +78,21 @@ func NewRemoteValidationWorkspace(
 	// Create the work and review branches if they don't exist
 	err = gitRepo.CreateBranch(ctx, baseBranch, workBranch)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create work branch '%s': %v", workBranch, err)
+		return nil, fmt.Errorf("failed to create work branch '%s': %w", workBranch, err)
 	}
 	err = gitRepo.CreateBranch(ctx, baseBranch, reviewBranch)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create review branch '%s': %v", reviewBranch, err)
+		return nil, fmt.Errorf("failed to create review branch '%s': %w", reviewBranch, err)
 	}
 
 	// We rely on these branches existing after this point, and it can take a moment, so let's wait
 	err = awaitBranchCreation(ctx, githubClient, owner, repo, workBranch)
 	if err != nil {
-		return nil, fmt.Errorf("failed to await creation of work branch '%s': %v", workBranch, err)
+		return nil, fmt.Errorf("failed to await creation of work branch '%s': %w", workBranch, err)
 	}
 	err = awaitBranchCreation(ctx, githubClient, owner, repo, reviewBranch)
 	if err != nil {
-		return nil, fmt.Errorf("failed to await creation of work branch '%s': %v", reviewBranch, err)
+		return nil, fmt.Errorf("failed to await creation of work branch '%s': %w", reviewBranch, err)
 	}
 
 	prService := NewGithubPullRequestService(githubClient.PullRequests, owner, repo, reviewBranch, baseBranch)
