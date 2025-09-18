@@ -22,8 +22,7 @@ jobs:
     # Prevent multiple simultaneous runs per repository target (issue or PR)
     # Different event types store the target number in different locations:
     # - issues/issue_comment: github.event.issue.number
-    # - pull_request: github.event.pull_request.number  
-    # - pull_request_review: github.event.review.pull_request.number
+    # - pull_request/pull_request_review: github.event.pull_request.number
     concurrency:
       group: bot-${{ github.repository }}-${{ github.event.issue.number || github.event.pull_request.number || 'unknown' }}
       cancel-in-progress: true
