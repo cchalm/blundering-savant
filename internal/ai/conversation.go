@@ -74,8 +74,6 @@ func (cc *Conversation) SendMessage(ctx context.Context, messageContent ...anthr
 	return cc.sendMessage(ctx, true, messageContent...)
 }
 
-
-
 // sendMessage is the internal implementation with a boolean parameter to specify caching
 func (cc *Conversation) sendMessage(ctx context.Context, enableCache bool, messageContent ...anthropic.ContentBlockParamUnion) (*anthropic.Message, error) {
 	// Set cache point only if caching is enabled
@@ -145,11 +143,11 @@ func (cc *Conversation) sendMessage(ctx context.Context, enableCache bool, messa
 		return nil, fmt.Errorf("malformed message: %v", string(b))
 	}
 
-	log.Printf("Token usage - Input: %d, Cache create: %d, Cache read: %d, Total (Input+CacheCreate+CacheRead): %d",
+	log.Printf("Token usage - Input: %d, Cache create: %d, Cache read: %d, Total: %d",
 		response.Usage.InputTokens,
 		response.Usage.CacheCreationInputTokens,
 		response.Usage.CacheReadInputTokens,
-		response.Usage.InputTokens + response.Usage.CacheCreationInputTokens + response.Usage.CacheReadInputTokens,
+		response.Usage.InputTokens+response.Usage.CacheCreationInputTokens+response.Usage.CacheReadInputTokens,
 	)
 
 	// Record the response
@@ -183,17 +181,17 @@ func (cc *Conversation) NeedsSummarization() bool {
 	if len(cc.Messages) == 0 {
 		return false
 	}
-	
+
 	// Get the most recent response
 	lastMessage := cc.Messages[len(cc.Messages)-1]
 	if lastMessage.Response == nil {
 		return false
 	}
-	
+
 	// Check token usage from the most recent turn (which includes cumulative history)
 	// Include cache create tokens as they contribute to context size
-	totalTokens := lastMessage.Response.Usage.InputTokens + 
-		lastMessage.Response.Usage.CacheReadInputTokens + 
+	totalTokens := lastMessage.Response.Usage.InputTokens +
+		lastMessage.Response.Usage.CacheReadInputTokens +
 		lastMessage.Response.Usage.CacheCreationInputTokens
 	return totalTokens > cc.tokenLimit
 }
@@ -209,17 +207,17 @@ func (cc *Conversation) Summarize(ctx context.Context) error {
 	// Get token count from most recent response for logging
 	var totalTokens int64
 	if lastMsg := cc.Messages[len(cc.Messages)-1]; lastMsg.Response != nil {
-		totalTokens = lastMsg.Response.Usage.InputTokens + 
-			lastMsg.Response.Usage.CacheReadInputTokens + 
+		totalTokens = lastMsg.Response.Usage.InputTokens +
+			lastMsg.Response.Usage.CacheReadInputTokens +
 			lastMsg.Response.Usage.CacheCreationInputTokens
 	}
 
-	log.Printf("Conversation has %d messages and %d total tokens (input+cache read), summarizing...", 
+	log.Printf("Conversation has %d messages and %d total input tokens, summarizing...",
 		len(cc.Messages), totalTokens)
 
 	// Preserve the first message (initial repository and task content)
 	numFirstMessagesToPreserve := 1
-	
+
 	// Ensure we have something to summarize
 	if len(cc.Messages) <= numFirstMessagesToPreserve {
 		return nil
@@ -237,7 +235,7 @@ func (cc *Conversation) Summarize(ctx context.Context) error {
 		UserMessage: anthropic.NewUserMessage(anthropic.NewTextBlock("Please respond with the summary you generated earlier.")),
 		Response:    summaryResponse,
 	}
-	
+
 	// Second turn: User asks to resume work based on the summary
 	resumeRequestTurn := conversationTurn{
 		UserMessage: anthropic.NewUserMessage(anthropic.NewTextBlock("Please resume working on this task based on your summary.")),
@@ -246,10 +244,10 @@ func (cc *Conversation) Summarize(ctx context.Context) error {
 
 	// Reconstruct the conversation: preserved first messages + summary exchange + resume request
 	newMessages := []conversationTurn{}
-	
+
 	// Add preserved first messages
 	newMessages = append(newMessages, cc.Messages[:numFirstMessagesToPreserve]...)
-	
+
 	// Add summary conversation turns
 	newMessages = append(newMessages, summaryRequestTurn, resumeRequestTurn)
 
@@ -257,7 +255,7 @@ func (cc *Conversation) Summarize(ctx context.Context) error {
 	originalMessageCount := len(cc.Messages)
 	cc.Messages = newMessages
 
-	log.Printf("Conversation summarized: %d messages -> %d messages", 
+	log.Printf("Conversation summarized: %d messages -> %d messages",
 		originalMessageCount, len(cc.Messages))
 
 	return nil
@@ -284,8 +282,6 @@ func (cc *Conversation) generateConversationSummary(ctx context.Context) (*anthr
 	// Return the complete response message
 	return response, nil
 }
-
-
 
 // ConversationHistory contains a serializable and resumable snapshot of a Conversation
 type ConversationHistory struct {
