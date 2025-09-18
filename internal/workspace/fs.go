@@ -12,19 +12,23 @@ import (
 
 var (
 	ErrFileNotFound error = fmt.Errorf("file not found")
+	ErrIsFile       error = fmt.Errorf("path is a file")
+	ErrIsDir        error = fmt.Errorf("path is a directory")
 )
 
 // ReadOnlyFileSystem is a basic interface for reading files
 type ReadOnlyFileSystem interface {
-	// Read reads the content of a file at the given path
+	// Read reads the content of a file at the given path. Returns ErrIsDir if the given path is a directory
 	Read(ctx context.Context, path string) (string, error)
 
-	// FileExists returns true if the file at the given path exists, false otherwise
+	// FileExists returns true if the file at the given path exists, false otherwise. Returns false if the given path is
+	// a directory
 	FileExists(ctx context.Context, path string) (bool, error)
 
-	// IsDir returns true if the given path is a directory, false otherwise
+	// IsDir returns true if the given path is a directory, false otherwise. Returns false if the given path is a file
 	IsDir(ctx context.Context, dir string) (bool, error)
-	// List lists all files in the given directory
+	// List lists the fully-qualified paths of all files in the given directory. Returns ErrIsFile if the given path is
+	// a file
 	ListDir(ctx context.Context, dir string) ([]string, error)
 }
 
@@ -34,7 +38,8 @@ type FileSystem interface {
 
 	// Write writes the content to a file at the given path, creating the file if it doesn't exist
 	Write(ctx context.Context, path string, content string) error
-	// Delete deletes a file at the given path
+	// Delete deletes a file at the given path. Returns ErrIsDir if the path is a directory. Returns ErrFileNotFound if
+	// no such file exists
 	Delete(ctx context.Context, path string) error
 }
 
@@ -61,7 +66,7 @@ func (dfs memDiffFileSystem) Read(ctx context.Context, path string) (string, err
 		return "", fmt.Errorf("file is deleted: %w", ErrFileNotFound)
 	}
 
-	// Check working tree first
+	// Check working tree
 	if content, exists := dfs.workingTree[path]; exists {
 		return content, nil
 	}
@@ -72,6 +77,9 @@ func (dfs memDiffFileSystem) Read(ctx context.Context, path string) (string, err
 
 // Write writes a file in-memory
 func (dfs *memDiffFileSystem) Write(_ context.Context, path string, content string) error {
+	// Note some limitations of this file system: directories can be implicitly created via calls like
+	// Write("dir1/dir2/file.txt", ...), but these directories cannot be read from the in-memory diff
+
 	dfs.workingTree[path] = content
 	// Remove from deleted files if it was marked as deleted
 	delete(dfs.deletedFiles, path)
@@ -79,7 +87,13 @@ func (dfs *memDiffFileSystem) Write(_ context.Context, path string, content stri
 }
 
 // DeleteFile marks a file as deleted in-memory
-func (dfs *memDiffFileSystem) Delete(_ context.Context, path string) error {
+func (dfs *memDiffFileSystem) Delete(ctx context.Context, path string) error {
+	if exists, err := dfs.FileExists(ctx, path); err != nil {
+		return fmt.Errorf("failed to delete file: %w", err)
+	} else if !exists {
+		return ErrFileNotFound
+	}
+
 	dfs.deletedFiles[path] = struct{}{}
 	// Remove from working tree if it was modified
 	delete(dfs.workingTree, path)
@@ -88,14 +102,18 @@ func (dfs *memDiffFileSystem) Delete(_ context.Context, path string) error {
 
 // FileExists checks if a file exists in the current state
 func (dfs memDiffFileSystem) FileExists(ctx context.Context, path string) (bool, error) {
-	_, err := dfs.Read(ctx, path)
-	if err != nil {
-		if errors.Is(err, ErrFileNotFound) {
-			return false, nil
-		}
-		return false, err
+	// Check if file is deleted
+	if _, ok := dfs.deletedFiles[path]; ok {
+		return false, nil
 	}
-	return true, nil
+
+	// Check working tree
+	if _, exists := dfs.workingTree[path]; exists {
+		return true, nil
+	}
+
+	// Fall back to baseFileSystem
+	return dfs.baseFileSystem.FileExists(ctx, path)
 }
 
 // IsDir checks if a path is a directory
@@ -105,6 +123,11 @@ func (dfs memDiffFileSystem) IsDir(ctx context.Context, path string) (bool, erro
 
 // ListDir lists the contents of a directory
 func (dfs memDiffFileSystem) ListDir(ctx context.Context, dir string) ([]string, error) {
+	// Check working tree for a file with this path
+	if _, exists := dfs.workingTree[dir]; exists {
+		return nil, ErrIsFile
+	}
+
 	basePaths, err := dfs.baseFileSystem.ListDir(ctx, dir)
 	if err != nil {
 		return nil, err
@@ -220,7 +243,7 @@ func NewGithubFileSystem(repos *github.RepositoriesService, owner string, repo s
 
 // Read reads the content of a file at the given path
 func (gfs GithubFileSystem) Read(ctx context.Context, path string) (string, error) {
-	fileContent, _, resp, err := gfs.repos.GetContents(ctx, gfs.owner, gfs.repo, path, &github.RepositoryContentGetOptions{
+	fileContent, dirContent, resp, err := gfs.repos.GetContents(ctx, gfs.owner, gfs.repo, path, &github.RepositoryContentGetOptions{
 		Ref: gfs.branch,
 	})
 	if err != nil {
@@ -231,6 +254,9 @@ func (gfs GithubFileSystem) Read(ctx context.Context, path string) (string, erro
 	}
 
 	if fileContent == nil {
+		if dirContent != nil {
+			return "", fmt.Errorf("expected file: %v", ErrIsDir)
+		}
 		return "", fmt.Errorf("file content nil")
 	}
 
@@ -248,34 +274,41 @@ func (gfs GithubFileSystem) FileExists(ctx context.Context, path string) (bool, 
 	if err != nil {
 		if errors.Is(err, ErrFileNotFound) {
 			return false, nil
+		} else if errors.Is(err, ErrIsDir) {
+			return false, nil
 		}
-		return false, err
+		return false, fmt.Errorf("failed to check if file '%s' exists: %w", path, err)
 	}
 	return true, nil
 }
 
 // IsDir returns true if the given path is a directory, false otherwise
 func (gfs GithubFileSystem) IsDir(ctx context.Context, dir string) (bool, error) {
-	_, dirContents, resp, err := gfs.repos.GetContents(ctx, gfs.owner, gfs.repo, dir, &github.RepositoryContentGetOptions{
-		Ref: gfs.branch,
-	})
+	_, err := gfs.ListDir(ctx, dir)
 	if err != nil {
-		if resp.StatusCode == http.StatusNotFound {
+		if errors.Is(err, ErrFileNotFound) {
+			return false, nil
+		} else if errors.Is(err, ErrIsFile) {
 			return false, nil
 		}
 		return false, fmt.Errorf("failed to check if path '%s' is a directory: %w", dir, err)
 	}
-
-	return dirContents != nil, nil
+	return true, nil
 }
 
 // List lists all files in the given directory
 func (gfs GithubFileSystem) ListDir(ctx context.Context, dir string) ([]string, error) {
-	_, dirContents, _, err := gfs.repos.GetContents(ctx, gfs.owner, gfs.repo, dir, &github.RepositoryContentGetOptions{
+	fileContent, dirContents, resp, err := gfs.repos.GetContents(ctx, gfs.owner, gfs.repo, dir, &github.RepositoryContentGetOptions{
 		Ref: gfs.branch,
 	})
 	if err != nil {
+		if resp.StatusCode == http.StatusNotFound {
+			return nil, ErrFileNotFound
+		}
 		return nil, fmt.Errorf("failed to list directory: %w", err)
+	}
+	if fileContent != nil {
+		return nil, fmt.Errorf("expected directory: %v", ErrIsFile)
 	}
 
 	var files []string
