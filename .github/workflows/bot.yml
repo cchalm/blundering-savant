@@ -25,7 +25,7 @@ jobs:
     # - pull_request: github.event.pull_request.number  
     # - pull_request_review: github.event.review.pull_request.number
     concurrency:
-      group: bot-${{ github.repository }}-${{ github.event.issue.number || github.event.pull_request.number || github.event.review.pull_request.number || 'unknown' }}
+      group: bot-${{ github.repository }}-${{ github.event.issue.number || github.event.pull_request.number || 'unknown' }}
       cancel-in-progress: true
 
     # Run if the triggering user is the authorized user configured for the repository AND:
