@@ -894,6 +894,15 @@ func (t *SearchInFileTool) run(ctx context.Context, block anthropic.ToolUseBlock
 		input.ContextLines = 10
 	}
 
+	// Check if the path is a directory
+	isDir, err := toolCtx.Workspace.IsDir(ctx, input.FilePath)
+	if err != nil {
+		return nil, fmt.Errorf("error checking if path is directory: %w", err)
+	}
+	if isDir {
+		return nil, ToolInputError{fmt.Errorf("path is a directory, not a file: %s", input.FilePath)}
+	}
+
 	// Check if file exists
 	exists, err := toolCtx.Workspace.FileExists(ctx, input.FilePath)
 	if err != nil {
@@ -901,15 +910,6 @@ func (t *SearchInFileTool) run(ctx context.Context, block anthropic.ToolUseBlock
 	}
 	if !exists {
 		return nil, ToolInputError{fmt.Errorf("file does not exist: %s", input.FilePath)}
-	}
-
-	// Check if it's actually a file (not a directory)
-	isDir, err := toolCtx.Workspace.IsDir(ctx, input.FilePath)
-	if err != nil {
-		return nil, fmt.Errorf("error checking if path is directory: %w", err)
-	}
-	if isDir {
-		return nil, ToolInputError{fmt.Errorf("path is a directory, not a file: %s", input.FilePath)}
 	}
 
 	// Read file content
@@ -1044,8 +1044,6 @@ func (t *SearchInFileTool) formatResults(results []SearchResult, input *SearchIn
 
 	return output.String()
 }
-
-
 
 // ReportLimitationTool implements the report_limitation tool
 type ReportLimitationTool struct {
