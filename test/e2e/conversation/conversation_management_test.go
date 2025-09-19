@@ -230,19 +230,19 @@ func analyzeContextRetention(initial, followup *anthropic.Message) error {
 	// Check that the followup response references or builds upon the initial response
 	initialHasContent := false
 	followupHasContent := false
-	
+
 	for _, content := range initial.Content {
 		if _, ok := content.AsAny().(anthropic.TextBlock); ok {
 			initialHasContent = true
 			break
 		}
 	}
-	
+
 	for _, content := range followup.Content {
 		if textBlock, ok := content.AsAny().(anthropic.TextBlock); ok {
 			followupHasContent = true
 			text := strings.ToLower(textBlock.Text)
-			
+
 			// Look for context references
 			contextWords := []string{"user", "model", "authentication", "based on", "we discussed", "earlier"}
 			contextFound := false
@@ -252,21 +252,21 @@ func analyzeContextRetention(initial, followup *anthropic.Message) error {
 					break
 				}
 			}
-			
+
 			if !contextFound {
 				return fmt.Errorf("followup response doesn't appear to reference previous context")
 			}
 		}
 	}
-	
+
 	if !initialHasContent {
 		return fmt.Errorf("initial response has no text content")
 	}
-	
+
 	if !followupHasContent {
 		return fmt.Errorf("followup response has no text content")
 	}
-	
+
 	return nil
 }
 
@@ -274,30 +274,30 @@ func analyzeSummaryQuality(response *anthropic.Message, originalMessages []strin
 	for _, content := range response.Content {
 		if textBlock, ok := content.AsAny().(anthropic.TextBlock); ok {
 			text := strings.ToLower(textBlock.Text)
-			
+
 			// Check that summary mentions key concepts from original messages
 			keyTerms := []string{"authentication", "password", "session", "profile", "user"}
 			foundTerms := 0
-			
+
 			for _, term := range keyTerms {
 				if strings.Contains(text, term) {
 					foundTerms++
 				}
 			}
-			
+
 			if foundTerms < 2 {
 				return fmt.Errorf("summary doesn't contain enough context from original conversation (found %d/%d key terms)", foundTerms, len(keyTerms))
 			}
-			
+
 			// Summary should be substantive
 			if len(strings.Fields(text)) < 20 {
 				return fmt.Errorf("summary appears too brief to be comprehensive")
 			}
-			
+
 			return nil
 		}
 	}
-	
+
 	return fmt.Errorf("summary response contains no text content")
 }
 
@@ -305,7 +305,7 @@ func analyzeConversationCoherence(responses []*anthropic.Message) error {
 	if len(responses) < 2 {
 		return fmt.Errorf("need at least 2 responses to analyze coherence")
 	}
-	
+
 	// Extract text from each response
 	var texts []string
 	for _, response := range responses {
@@ -316,14 +316,14 @@ func analyzeConversationCoherence(responses []*anthropic.Message) error {
 			}
 		}
 	}
-	
+
 	if len(texts) != len(responses) {
 		return fmt.Errorf("not all responses contain text content")
 	}
-	
+
 	// Check for topic consistency - all should mention payment/credit/validation
 	paymentTerms := []string{"payment", "credit", "card", "validation", "fix", "bug"}
-	
+
 	for i, text := range texts {
 		hasPaymentContext := false
 		for _, term := range paymentTerms {
@@ -332,29 +332,29 @@ func analyzeConversationCoherence(responses []*anthropic.Message) error {
 				break
 			}
 		}
-		
+
 		if !hasPaymentContext {
 			return fmt.Errorf("response %d lacks coherence with payment processing context", i+1)
 		}
 	}
-	
+
 	// Later responses should show progression (mentioning implementation, tests, etc.)
 	if len(texts) >= 3 {
 		finalText := texts[len(texts)-1]
 		progressTerms := []string{"test", "regression", "prevent", "coverage"}
 		hasProgression := false
-		
+
 		for _, term := range progressTerms {
 			if strings.Contains(finalText, term) {
 				hasProgression = true
 				break
 			}
 		}
-		
+
 		if !hasProgression {
 			return fmt.Errorf("final response doesn't show logical progression to testing phase")
 		}
 	}
-	
+
 	return nil
 }

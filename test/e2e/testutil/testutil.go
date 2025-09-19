@@ -20,12 +20,12 @@ import (
 
 // TestConfig holds configuration for end-to-end tests
 type TestConfig struct {
-	Model         anthropic.Model
-	MaxTokens     int64
-	Iterations    int
-	Timeout       time.Duration
-	AnthropicKey  string
-	GitHubToken   string
+	Model        anthropic.Model
+	MaxTokens    int64
+	Iterations   int
+	Timeout      time.Duration
+	AnthropicKey string
+	GitHubToken  string
 }
 
 // LoadTestConfig loads test configuration from environment variables
@@ -67,11 +67,11 @@ func LoadTestConfig() TestConfig {
 
 // TestHarness provides utilities for end-to-end testing
 type TestHarness struct {
-	t              *testing.T
-	config         TestConfig
+	t               *testing.T
+	config          TestConfig
 	anthropicClient anthropic.Client
-	githubClient   *github.Client
-	toolRegistry   *bot.ToolRegistry
+	githubClient    *github.Client
+	toolRegistry    *bot.ToolRegistry
 }
 
 // NewTestHarness creates a new test harness

@@ -286,7 +286,7 @@ func processToolUseForTesting(ctx context.Context, toolBlock anthropic.ToolUseBl
 			Path     string `json:"path"`
 			FileText string `json:"file_text,omitempty"`
 		}
-		
+
 		if err := json.Unmarshal(toolBlock.Input, &input); err != nil {
 			content = fmt.Sprintf("Error parsing input: %v", err)
 		} else {
@@ -315,7 +315,7 @@ func processToolUseForTesting(ctx context.Context, toolBlock anthropic.ToolUseBl
 		var input struct {
 			Body string `json:"body"`
 		}
-		
+
 		if err := json.Unmarshal(toolBlock.Input, &input); err != nil {
 			content = fmt.Sprintf("Error parsing comment: %v", err)
 		} else {
@@ -326,7 +326,7 @@ func processToolUseForTesting(ctx context.Context, toolBlock anthropic.ToolUseBl
 		var input struct {
 			Reaction string `json:"reaction"`
 		}
-		
+
 		if err := json.Unmarshal(toolBlock.Input, &input); err != nil {
 			content = "Error parsing reaction"
 		} else {
@@ -338,7 +338,7 @@ func processToolUseForTesting(ctx context.Context, toolBlock anthropic.ToolUseBl
 			ToolNeeded string `json:"tool_needed"`
 			Reason     string `json:"reason"`
 		}
-		
+
 		if err := json.Unmarshal(toolBlock.Input, &input); err != nil {
 			content = "Error parsing limitation report"
 		} else {
@@ -378,7 +378,7 @@ func analyzeWorkflowCompletion(workspace *testutil.MockWorkspace, toolCtx *bot.T
 		if strings.Contains(path, "auth") || strings.Contains(path, "user") {
 			lowerContent := strings.ToLower(content)
 			authTerms := []string{"password", "hash", "login", "session", "authenticate"}
-			
+
 			hasAuthContent := false
 			for _, term := range authTerms {
 				if strings.Contains(lowerContent, term) {
@@ -386,7 +386,7 @@ func analyzeWorkflowCompletion(workspace *testutil.MockWorkspace, toolCtx *bot.T
 					break
 				}
 			}
-			
+
 			if !hasAuthContent {
 				return fmt.Errorf("authentication file %s lacks authentication-related content", path)
 			}

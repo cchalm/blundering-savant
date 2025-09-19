@@ -165,11 +165,11 @@ func analyzeResponseStructure(response *anthropic.Message) error {
 			textLength += len(textBlock.Text)
 
 			text := textBlock.Text
-			
+
 			// Check for basic structure indicators
 			structureIndicators := 0
 			indicators := []string{"1.", "2.", "3.", "-", "*", "##", "###", "```"}
-			
+
 			for _, indicator := range indicators {
 				if strings.Contains(text, indicator) {
 					structureIndicators++
@@ -237,7 +237,7 @@ func analyzeExplanationQuality(response *anthropic.Message) error {
 
 func analyzeCodeQuality(response *anthropic.Message) error {
 	hasCode := false
-	
+
 	for _, content := range response.Content {
 		if textBlock, ok := content.AsAny().(anthropic.TextBlock); ok {
 			text := textBlock.Text

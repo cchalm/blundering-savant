@@ -169,7 +169,7 @@ Please remove this file from the repository.`
 	})
 }
 
-// TestReportLimitationForDatabaseOperations tests limitation reporting for database operations  
+// TestReportLimitationForDatabaseOperations tests limitation reporting for database operations
 func TestReportLimitationForDatabaseOperations(t *testing.T) {
 	harness := testutil.NewTestHarness(t)
 
@@ -205,19 +205,19 @@ Then update all existing users to have email_verified=false initially. This is r
 func analyzeForLimitationReporting(response *anthropic.Message, expectedLimitations []string) error {
 	hasReportLimitation := false
 	hasWorkaround := false
-	
+
 	for _, content := range response.Content {
 		switch block := content.AsAny().(type) {
 		case anthropic.ToolUseBlock:
 			if block.Name == "report_limitation" {
 				hasReportLimitation = true
-				
+
 				// Parse the input to see what limitation is being reported
 				var input struct {
 					ToolNeeded string `json:"tool_needed"`
 					Reason     string `json:"reason"`
 				}
-				
+
 				if err := parseInputJSON(block, &input); err == nil {
 					// Check that the limitation matches what we expect
 					combinedText := strings.ToLower(input.ToolNeeded + " " + input.Reason)
