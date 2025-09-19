@@ -23,21 +23,61 @@ jobs:
       with:
         go-version: '1.24.4'
 
-    - name: Format Go files
+    - name: Format and normalize whitespace
       run: |
-        # Format all Go files
-        gofmt -w .
+        # Get list of modified files (compared to main branch)
+        # If we're on main branch, compare with HEAD~1
+        if [ "$GITHUB_REF_NAME" = "main" ]; then
+          BASE_REF="HEAD~1"
+        else
+          BASE_REF="origin/main"
+        fi
+        
+        # Get modified files, filter for existing files only
+        MODIFIED_FILES=$(git diff --name-only --diff-filter=ACMR $BASE_REF..HEAD 2>/dev/null | while read file; do [ -f "$file" ] && echo "$file"; done)
+        
+        if [ -z "$MODIFIED_FILES" ]; then
+          echo "No modified files found"
+          exit 0
+        fi
+        
+        echo "Processing modified files:"
+        echo "$MODIFIED_FILES"
+        
+        # Apply formatting and whitespace normalization to modified files only
+        FORMAT_NEEDED=false
+        
+        # Process each modified file
+        for file in $MODIFIED_FILES; do
+          if [ -f "$file" ]; then
+            # Apply gofmt to Go files
+            if [[ "$file" == *.go ]]; then
+              echo "Formatting Go file: $file"
+              gofmt -w "$file"
+            fi
+            
+            # Remove trailing whitespace from all modified files
+            echo "Removing trailing whitespace from: $file"
+            sed -i 's/[[:space:]]*$//' "$file"
+            
+            # Ensure file ends with newline
+            echo "Ensuring newline at end of: $file"
+            if [ -s "$file" ] && [ "$(tail -c1 "$file" | wc -l)" -eq 0 ]; then
+              echo "" >> "$file"
+            fi
+          fi
+        done
 
-        # Check if any files were changed by gofmt
+        # Check if any files were changed
         if [ -n "$(git status --porcelain)" ]; then
-          echo "Files were formatted, committing changes..."
+          echo "Files were normalized, committing changes..."
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Action"
           git add .
-          git commit -m "Auto-format Go files with gofmt"
+          git commit -m "Normalize whitespace and formatting in modified files"
           git push
         else
-          echo "No formatting changes needed"
+          echo "No normalization changes needed"
         fi
 
     - name: Build
