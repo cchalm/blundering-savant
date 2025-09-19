@@ -5,11 +5,16 @@ package ai
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/anthropics/anthropic-sdk-go"
+	"github.com/google/go-github/v72/github"
 	"github.com/stretchr/testify/require"
 
+	"github.com/cchalm/blundering-savant/internal/ai"
+	"github.com/cchalm/blundering-savant/internal/task"
+	"github.com/cchalm/blundering-savant/internal/validator"
 	"github.com/cchalm/blundering-savant/test/e2e/testutil"
 )
 
@@ -23,28 +28,19 @@ func TestDeleteFileTool(t *testing.T) {
 			conversation, err := harness.CreateConversationWithSystemPrompt("Blundering Savant", "blunderingsavant")
 			require.NoError(t, err)
 
-			userMessage := `Repository: test/cleanup-project
+			// Create a realistic task for file deletion
+			testTask := createTestTask(101, "Remove obsolete files", 
+				"Please completely delete the following obsolete files from the repository:\n"+
+				"- legacy/old_auth.go\n"+
+				"- temp/debug_helper.py\n"+
+				"- scripts/deprecated_build.sh\n\n"+
+				"These files are no longer needed and should be removed entirely from the codebase.")
 
-Main Language: Go
+			// Build the real prompt using BuildPrompt
+			_, taskContent, err := ai.BuildPrompt(testTask)
+			require.NoError(t, err)
 
-## Issue
-
-Issue #101: Remove obsolete files
-
-### Description
-
-> Please completely delete the following obsolete files from the repository:
-> - legacy/old_auth.go
-> - temp/debug_helper.py  
-> - scripts/deprecated_build.sh
->
-> These files are no longer needed and should be removed entirely from the codebase.
-
-## Your Task
-
-Delete the three obsolete files listed above. Make sure they are completely removed from the repository.`
-
-			response, err := conversation.SendMessage(ctx, anthropic.NewTextBlock(userMessage))
+			response, err := conversation.SendMessage(ctx, anthropic.NewTextBlock(taskContent))
 			if err != nil {
 				return fmt.Errorf("failed to send message: %w", err)
 			}
@@ -68,28 +64,79 @@ func TestValidateChangesTool(t *testing.T) {
 			conversation, err := harness.CreateConversationWithSystemPrompt("Blundering Savant", "blunderingsavant")
 			require.NoError(t, err)
 
-			userMessage := `Repository: test/web-service
+			// Create initial task
+			testTask := createTestTask(202, "Fix input validation bug", 
+				"The user registration endpoint doesn't properly validate email formats. Please fix this validation issue.")
+			testTask.HasUnpublishedChanges = true
 
-Main Language: Go
+			// Build the real initial prompt
+			_, taskContent, err := ai.BuildPrompt(testTask)
+			require.NoError(t, err)
 
-## Issue
-
-Issue #202: Fix input validation bug
-
-### Description
-
-> The user registration endpoint doesn't properly validate email formats. Please fix this validation issue.
-
-## Workspace Status
-There are local changes in the workspace
-
-## Your Task
-
-You've made changes to fix the email validation. Now validate these changes and ensure they work correctly before publishing.`
-
-			response, err := conversation.SendMessage(ctx, anthropic.NewTextBlock(userMessage))
+			// Send initial message
+			_, err = conversation.SendMessage(ctx, anthropic.NewTextBlock(taskContent))
 			if err != nil {
-				return fmt.Errorf("failed to send message: %w", err)
+				return fmt.Errorf("failed to send initial message: %w", err)
+			}
+
+			// Simulate the AI having made file changes by manually constructing conversation history
+			// This simulates the AI having already used str_replace_based_edit_tool
+			fileEditResponse := anthropic.Message{
+				Role: anthropic.MessageRoleAssistant,
+				Content: []anthropic.MessageContent{
+					{
+						Text: "I'll fix the email validation issue by updating the registration endpoint.",
+					},
+					{
+						ToolUse: &anthropic.ToolUseBlock{
+							ID:   "edit-1",
+							Name: "str_replace_based_edit_tool", 
+							Input: map[string]interface{}{
+								"command": "str_replace",
+								"path":    "api/auth.go",
+								"old_str": `if email == "" {
+	return errors.New("email required")
+}`,
+								"new_str": `if email == "" {
+	return errors.New("email required")
+}
+if !isValidEmail(email) {
+	return errors.New("invalid email format")
+}`,
+							},
+						},
+					},
+				},
+			}
+
+			// Add the simulated file edit to conversation history
+			conversation.AddMessage(fileEditResponse)
+
+			// Add tool result 
+			toolResult := anthropic.Message{
+				Role: anthropic.MessageRoleUser,
+				Content: []anthropic.MessageContent{
+					{
+						ToolResult: &anthropic.ToolResultBlock{
+							ToolUseID: "edit-1",
+							Content: []anthropic.ToolResultBlockContentUnion{
+								{
+									Type: "text",
+									Text: "Successfully updated api/auth.go",
+								},
+							},
+						},
+					},
+				},
+			}
+			conversation.AddMessage(toolResult)
+
+			// Now send a message that should trigger validation
+			followupMessage := "The email validation has been implemented. What's the next step?"
+
+			response, err := conversation.SendMessage(ctx, anthropic.NewTextBlock(followupMessage))
+			if err != nil {
+				return fmt.Errorf("failed to send followup message: %w", err)
 			}
 
 			return analyzeForValidationBehavior(t, response)
@@ -107,38 +154,38 @@ func TestCommentReactionTool(t *testing.T) {
 			conversation, err := harness.CreateConversationWithSystemPrompt("Blundering Savant", "blunderingsavant")
 			require.NoError(t, err)
 
-			userMessage := `Repository: test/community-project
+			// Create task with PR and comments requiring responses
+			testTask := createTestTask(303, "Add logging feature", 
+				"Please add comprehensive logging throughout the application.")
+			
+			testTask.PullRequest = &task.GithubPullRequest{
+				Owner:  "test",
+				Repo:   "repository", 
+				Number: 350,
+				Title:  "Add logging feature",
+			}
 
-Main Language: Python
+			// Add comments that require responses
+			testTask.PRCommentsRequiringResponses = []*github.IssueComment{
+				{
+					ID:                github.Int64(2001),
+					Body:              github.String("Excellent work on the logging implementation! The structured logging approach you've taken is exactly what we needed. I particularly like how you've handled error logging with stack traces."),
+					User:              &github.User{Login: github.String("maintainer")},
+					AuthorAssociation: github.String("OWNER"),
+				},
+				{
+					ID:                github.Int64(2002),
+					Body:              github.String("Could you also add log rotation configuration? We'll need to prevent log files from growing too large in production."),
+					User:              &github.User{Login: github.String("contributor")},
+					AuthorAssociation: github.String("CONTRIBUTOR"),
+				},
+			}
 
-## Issue
+			// Build the real prompt
+			_, taskContent, err := ai.BuildPrompt(testTask)
+			require.NoError(t, err)
 
-Issue #303: Add logging feature
-
-### Description
-
-> Please add comprehensive logging throughout the application.
-
-## Pull Request
-Pull Request #350 is open for this issue.
-
-## Conversation History
-
-### PR Comments
-
-#### Comment 2001 by @maintainer (OWNER) - 2024-01-20 14:30
-
-> Excellent work on the logging implementation! The structured logging approach you've taken is exactly what we needed. I particularly like how you've handled error logging with stack traces.
-
-#### Comment 2002 by @contributor (CONTRIBUTOR) - 2024-01-20 14:45
-
-> Could you also add log rotation configuration? We'll need to prevent log files from growing too large in production.
-
-## Your Task
-
-You need to respond appropriately to these comments. Address the feedback and acknowledge the positive comment.`
-
-			response, err := conversation.SendMessage(ctx, anthropic.NewTextBlock(userMessage))
+			response, err := conversation.SendMessage(ctx, anthropic.NewTextBlock(taskContent))
 			if err != nil {
 				return fmt.Errorf("failed to send message: %w", err)
 			}
@@ -158,27 +205,21 @@ func TestIssueCreationLimitation(t *testing.T) {
 			conversation, err := harness.CreateConversationWithSystemPrompt("Blundering Savant", "blunderingsavant")
 			require.NoError(t, err)
 
-			userMessage := `Repository: test/bug-tracker
+			// Create task requesting issue creation (which isn't supported)
+			testTask := createTestTask(404, "Documentation improvements needed",
+				"After reviewing the codebase, I think we need to track several documentation improvements. Please create separate GitHub issues for:\n"+
+				"1. API documentation updates\n"+
+				"2. Contributing guidelines revision\n"+
+				"3. Architecture documentation\n"+
+				"4. Deployment guide improvements\n\n"+
+				"Create four separate GitHub issues to track these documentation improvements. Each should have a descriptive title and detailed description.")
+			testTask.CodebaseInfo.MainLanguage = "TypeScript"
 
-Main Language: TypeScript
+			// Build the real prompt
+			_, taskContent, err := ai.BuildPrompt(testTask)
+			require.NoError(t, err)
 
-## Issue
-
-Issue #404: Documentation improvements needed
-
-### Description
-
-> After reviewing the codebase, I think we need to track several documentation improvements. Please create separate GitHub issues for:
-> 1. API documentation updates
-> 2. Contributing guidelines revision  
-> 3. Architecture documentation
-> 4. Deployment guide improvements
-
-## Your Task
-
-Create four separate GitHub issues to track these documentation improvements. Each should have a descriptive title and detailed description.`
-
-			response, err := conversation.SendMessage(ctx, anthropic.NewTextBlock(userMessage))
+			response, err := conversation.SendMessage(ctx, anthropic.NewTextBlock(taskContent))
 			if err != nil {
 				return fmt.Errorf("failed to send message: %w", err)
 			}
@@ -202,30 +243,24 @@ func TestScriptExecutionLimitation(t *testing.T) {
 			conversation, err := harness.CreateConversationWithSystemPrompt("Blundering Savant", "blunderingsavant")
 			require.NoError(t, err)
 
-			userMessage := `Repository: test/automation-suite
+			// Create task requesting script execution (which isn't supported)
+			testTask := createTestTask(505, "Run integration tests",
+				"Please run our integration test suite to make sure everything is working correctly after the recent changes.\n\n"+
+				"Execute the integration test script 'scripts/run_integration_tests.py' and report the results. If there are any failures, please analyze them and suggest fixes.")
+			testTask.CodebaseInfo.MainLanguage = "Python"
 
-Main Language: Python
+			// Build the real prompt
+			_, taskContent, err := ai.BuildPrompt(testTask)
+			require.NoError(t, err)
 
-## Issue
-
-Issue #505: Run integration tests
-
-### Description
-
-> Please run our integration test suite to make sure everything is working correctly after the recent changes.
-
-## Your Task
-
-Execute the integration test script 'scripts/run_integration_tests.py' and report the results. If there are any failures, please analyze them and suggest fixes.`
-
-			response, err := conversation.SendMessage(ctx, anthropic.NewTextBlock(userMessage))
+			response, err := conversation.SendMessage(ctx, anthropic.NewTextBlock(taskContent))
 			if err != nil {
 				return fmt.Errorf("failed to send message: %w", err)
 			}
 
 			return analyzeForLimitationReporting(t, response, []string{
 				"execute",
-				"run script",
+				"run script", 
 				"script execution",
 			})
 		})
@@ -236,24 +271,16 @@ Execute the integration test script 'scripts/run_integration_tests.py' and repor
 func analyzeForValidationBehavior(t *testing.T, response *anthropic.Message) error {
 	t.Helper()
 
-	hasValidateTool := false
+	toolUse := requireToolUse(t, response, "validate_changes")
 
-	for _, content := range response.Content {
-		if toolUse := content.ToolUse; toolUse != nil && toolUse.Name == "validate_changes" {
-			hasValidateTool = true
+	// Verify the validation call has a commit message
+	if input, ok := toolUse.Input.(map[string]interface{}); ok {
+		commitMessage, hasCommitMessage := input["commit_message"]
+		require.True(t, hasCommitMessage, "validate_changes should include commit_message")
 
-			// Verify the validation call has a commit message
-			if input, ok := toolUse.Input.(map[string]interface{}); ok {
-				commitMessage, hasCommitMessage := input["commit_message"]
-				require.True(t, hasCommitMessage, "validate_changes should include commit_message")
-
-				commitMessageStr := fmt.Sprintf("%v", commitMessage)
-				require.NotEmpty(t, commitMessageStr, "commit_message should not be empty")
-			}
-		}
+		commitMessageStr := fmt.Sprintf("%v", commitMessage)
+		require.NotEmpty(t, commitMessageStr, "commit_message should not be empty")
 	}
-
-	require.True(t, hasValidateTool, "AI should use validate_changes tool when there are local changes to validate")
 
 	return nil
 }
@@ -262,50 +289,141 @@ func analyzeForValidationBehavior(t *testing.T, response *anthropic.Message) err
 func analyzeForCommentInteractionBehavior(t *testing.T, response *anthropic.Message) error {
 	t.Helper()
 
-	hasCommentReply := false
-	hasReaction := false
+	// Expect multiple comments and reactions for multiple PR comments
+	commentTool := "post_comment"
+	reactTool := "add_reaction"
+	
+	toolUses := requireToolUses(t, response, map[string]int{
+		commentTool: -1, // Allow any positive number
+		reactTool:   -1, // Allow any positive number  
+	})
 
-	for _, content := range response.Content {
-		if toolUse := content.ToolUse; toolUse != nil {
-			switch toolUse.Name {
-			case "post_comment":
-				hasCommentReply = true
+	// We should have at least one comment or reaction
+	totalTools := len(toolUses[commentTool]) + len(toolUses[reactTool])
+	require.Greater(t, totalTools, 0, "AI should interact with comments through replies or reactions")
 
-				// Verify comment has required fields
-				if input, ok := toolUse.Input.(map[string]interface{}); ok {
-					body, hasBody := input["body"]
-					commentType, hasType := input["comment_type"]
+	// Verify comment tool uses
+	for _, commentToolUse := range toolUses[commentTool] {
+		if input, ok := commentToolUse.Input.(map[string]interface{}); ok {
+			body, hasBody := input["body"]
+			commentType, hasType := input["comment_type"]
 
-					require.True(t, hasBody, "post_comment should include body")
-					require.True(t, hasType, "post_comment should include comment_type")
+			require.True(t, hasBody, "post_comment should include body")
+			require.True(t, hasType, "post_comment should include comment_type")
 
-					bodyStr := fmt.Sprintf("%v", body)
-					typeStr := fmt.Sprintf("%v", commentType)
+			bodyStr := fmt.Sprintf("%v", body)
+			typeStr := fmt.Sprintf("%v", commentType)
 
-					require.NotEmpty(t, bodyStr, "comment body should not be empty")
-					require.Contains(t, []string{"issue", "pr", "review"}, typeStr, "comment_type should be valid")
-				}
-
-			case "add_reaction":
-				hasReaction = true
-
-				// Verify reaction has required fields
-				if input, ok := toolUse.Input.(map[string]interface{}); ok {
-					reaction, hasReaction := input["reaction"]
-					commentID, hasCommentID := input["comment_id"]
-
-					require.True(t, hasReaction, "add_reaction should include reaction")
-					require.True(t, hasCommentID, "add_reaction should include comment_id")
-
-					reactionStr := fmt.Sprintf("%v", reaction)
-					require.Contains(t, []string{"+1", "-1", "laugh", "confused", "heart", "hooray", "rocket", "eyes"},
-						reactionStr, "reaction should be valid emoji")
-				}
-			}
+			require.NotEmpty(t, bodyStr, "comment body should not be empty")
+			require.Contains(t, []string{"issue", "pr", "review"}, typeStr, "comment_type should be valid")
 		}
 	}
 
-	require.True(t, hasCommentReply || hasReaction, "AI should interact with comments through replies or reactions")
+	// Verify reaction tool uses
+	for _, reactToolUse := range toolUses[reactTool] {
+		if input, ok := reactToolUse.Input.(map[string]interface{}); ok {
+			reaction, hasReaction := input["reaction"]
+			commentID, hasCommentID := input["comment_id"]
+
+			require.True(t, hasReaction, "add_reaction should include reaction")
+			require.True(t, hasCommentID, "add_reaction should include comment_id")
+
+			reactionStr := fmt.Sprintf("%v", reaction)
+			require.Contains(t, []string{"+1", "-1", "laugh", "confused", "heart", "hooray", "rocket", "eyes"},
+				reactionStr, "reaction should be valid emoji")
+		}
+	}
 
 	return nil
+}
+
+// Helper functions for tool analysis
+
+// requireToolUse requires that exactly one tool use of the given name exists and returns it
+func requireToolUse(t *testing.T, response *anthropic.Message, toolName string) *anthropic.ToolUseBlock {
+	t.Helper()
+
+	var toolUse *anthropic.ToolUseBlock
+	count := 0
+
+	for _, content := range response.Content {
+		if tu := content.ToolUse; tu != nil && tu.Name == toolName {
+			toolUse = tu
+			count++
+		}
+	}
+
+	require.Equal(t, 1, count, "Expected exactly 1 use of tool %s, found %d", toolName, count)
+	require.NotNil(t, toolUse, "Tool use should not be nil")
+
+	return toolUse
+}
+
+// requireToolUses requires specific counts of different tools and returns them organized by tool name
+func requireToolUses(t *testing.T, response *anthropic.Message, expectedCounts map[string]int) map[string][]*anthropic.ToolUseBlock {
+	t.Helper()
+
+	actualCounts := make(map[string]int)
+	toolUses := make(map[string][]*anthropic.ToolUseBlock)
+
+	// Count and collect all tool uses
+	for _, content := range response.Content {
+		if tu := content.ToolUse; tu != nil {
+			actualCounts[tu.Name]++
+			toolUses[tu.Name] = append(toolUses[tu.Name], tu)
+		}
+	}
+
+	// Verify counts match expectations
+	for toolName, expectedCount := range expectedCounts {
+		actualCount := actualCounts[toolName]
+		if expectedCount == -1 {
+			// Allow any positive number
+			require.Greater(t, actualCount, 0, 
+				"Expected at least 1 use of tool %s, found %d", toolName, actualCount)
+		} else {
+			require.Equal(t, expectedCount, actualCount, 
+				"Expected %d uses of tool %s, found %d", expectedCount, toolName, actualCount)
+		}
+	}
+
+	// Verify no unexpected tools were used
+	for toolName, actualCount := range actualCounts {
+		if expectedCount, exists := expectedCounts[toolName]; !exists {
+			require.Equal(t, 0, actualCount, 
+				"Unexpected tool %s used %d times", toolName, actualCount)
+		}
+	}
+
+	return toolUses
+}
+
+// Helper to create a basic task for testing
+func createTestTask(issueNumber int, issueTitle, issueBody string) task.Task {
+	return task.Task{
+		Issue: task.GithubIssue{
+			Owner:  "test",
+			Repo:   "repository", 
+			Number: issueNumber,
+			Title:  issueTitle,
+			Body:   issueBody,
+		},
+		Repository: &github.Repository{
+			FullName: github.String("test/repository"),
+		},
+		CodebaseInfo: &task.CodebaseInfo{
+			MainLanguage: "Go",
+		},
+		StyleGuide: &task.StyleGuide{
+			Guides: map[string]string{
+				"STYLE_GUIDE.md": "Use Go style conventions",
+			},
+		},
+		TargetBranch: "main",
+		SourceBranch: "issue-" + fmt.Sprintf("%d", issueNumber),
+		ValidationResult: validator.ValidationResult{
+			Succeeded: true,
+			Details:   "",
+		},
+	}
 }
