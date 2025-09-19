@@ -3,7 +3,6 @@ package workspace
 import (
 	"context"
 	"fmt"
-	"go/format"
 	"net/http"
 	"strings"
 	"time"
@@ -245,12 +244,6 @@ func (rvw *RemoteValidationWorkspace) commitToWorkBranch(ctx context.Context, co
 		return nil, fmt.Errorf("no changes to commit")
 	}
 
-	// Format all modified Go files before committing
-	err := rvw.formatGoFiles(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("failed to format Go files: %w", err)
-	}
-
 	createdCommit, err := rvw.git.CommitChanges(ctx, rvw.workBranch, rvw.fs.GetChangelist(), commitMessage)
 	if err != nil {
 		return nil, fmt.Errorf("failed to commit changes: %w", err)
@@ -262,36 +255,7 @@ func (rvw *RemoteValidationWorkspace) commitToWorkBranch(ctx context.Context, co
 	return createdCommit, nil
 }
 
-// formatGoFiles formats all modified Go files using go/format.Source
-func (rvw *RemoteValidationWorkspace) formatGoFiles(ctx context.Context) error {
-	changelist := rvw.fs.GetChangelist()
 
-	return changelist.ForEachModified(func(path string, content string) error {
-		// Only format Go files
-		if !strings.HasSuffix(path, ".go") {
-			return nil
-		}
-
-		// Format the content using go/format
-		formatted, err := format.Source([]byte(content))
-		if err != nil {
-			// If formatting fails, leave the content as-is and let validation catch it
-			// This prevents breaking the bot on syntactically invalid Go code
-			return nil
-		}
-
-		// Update the content if it was changed by formatting
-		formattedContent := string(formatted)
-		if formattedContent != content {
-			err := rvw.fs.Write(ctx, path, formattedContent)
-			if err != nil {
-				return fmt.Errorf("failed to update formatted content for %s: %w", path, err)
-			}
-		}
-
-		return nil
-	})
-}
 
 // PublishChangesForReview merges changes in the working branch into the review branch and creates a pull request, if
 // one doesn't already exist. Returns an error if there are in-memory changes that have not been committed to the work
