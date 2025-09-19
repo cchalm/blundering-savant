@@ -271,17 +271,17 @@ func analyzeForLimitationReporting(t *testing.T, response *anthropic.Message, ex
 
 	hasReportLimitationTool := false
 	hasWorkaroundAttempt := false
-	
+
 	for _, content := range response.Content {
 		if toolUse := content.ToolUse; toolUse != nil {
 			if toolUse.Name == "report_limitation" {
 				hasReportLimitationTool = true
-				
+
 				// Verify the limitation is about the expected functionality
 				if input, ok := toolUse.Input.(map[string]interface{}); ok {
 					reason := fmt.Sprintf("%v", input["reason"])
 					toolNeeded := fmt.Sprintf("%v", input["tool_needed"])
-					
+
 					foundKeyword := false
 					for _, keyword := range expectedLimitationKeywords {
 						if strings.Contains(strings.ToLower(reason), strings.ToLower(keyword)) ||
@@ -290,7 +290,7 @@ func analyzeForLimitationReporting(t *testing.T, response *anthropic.Message, ex
 							break
 						}
 					}
-					
+
 					require.True(t, foundKeyword, "limitation report should mention expected functionality, got reason: %s, tool_needed: %s", reason, toolNeeded)
 				}
 			} else if toolUse.Name == "str_replace_based_edit_tool" {
@@ -320,15 +320,15 @@ func analyzeForParallelToolCalls(t *testing.T, response *anthropic.Message, expe
 	t.Helper()
 
 	toolCallCount := 0
-	
+
 	for _, content := range response.Content {
 		if content.ToolUse != nil {
 			toolCallCount++
 		}
 	}
 
-	require.GreaterOrEqual(t, toolCallCount, expectedMinimumCalls, 
-		"AI should make multiple tool calls in parallel when appropriate, expected at least %d, got %d", 
+	require.GreaterOrEqual(t, toolCallCount, expectedMinimumCalls,
+		"AI should make multiple tool calls in parallel when appropriate, expected at least %d, got %d",
 		expectedMinimumCalls, toolCallCount)
 
 	return nil
@@ -340,7 +340,7 @@ func analyzeForParallelFileOperations(t *testing.T, response *anthropic.Message,
 
 	createCount := 0
 	toolNames := []string{}
-	
+
 	for _, content := range response.Content {
 		if toolUse := content.ToolUse; toolUse != nil {
 			toolNames = append(toolNames, toolUse.Name)
@@ -354,8 +354,8 @@ func analyzeForParallelFileOperations(t *testing.T, response *anthropic.Message,
 		}
 	}
 
-	require.GreaterOrEqual(t, createCount, expectedMinimumFiles, 
-		"AI should create multiple files in parallel, expected at least %d create commands, got %d. Tool calls: %v", 
+	require.GreaterOrEqual(t, createCount, expectedMinimumFiles,
+		"AI should create multiple files in parallel, expected at least %d create commands, got %d. Tool calls: %v",
 		expectedMinimumFiles, createCount, toolNames)
 
 	return nil
@@ -367,7 +367,7 @@ func analyzeForFileEditingBehavior(t *testing.T, response *anthropic.Message) er
 
 	hasViewCommand := false
 	hasEditCommand := false
-	
+
 	for _, content := range response.Content {
 		if toolUse := content.ToolUse; toolUse != nil && toolUse.Name == "str_replace_based_edit_tool" {
 			if input, ok := toolUse.Input.(map[string]interface{}); ok {
@@ -394,22 +394,22 @@ func analyzeForPublishChangesBehavior(t *testing.T, response *anthropic.Message)
 	t.Helper()
 
 	hasPublishTool := false
-	
+
 	for _, content := range response.Content {
 		if toolUse := content.ToolUse; toolUse != nil && toolUse.Name == "publish_changes_for_review" {
 			hasPublishTool = true
-			
+
 			// Verify the publish call has required parameters
 			if input, ok := toolUse.Input.(map[string]interface{}); ok {
 				title, hasTitle := input["pull_request_title"]
 				body, hasBody := input["pull_request_body"]
-				
+
 				require.True(t, hasTitle, "publish_changes_for_review should include pull_request_title")
 				require.True(t, hasBody, "publish_changes_for_review should include pull_request_body")
-				
+
 				titleStr := fmt.Sprintf("%v", title)
 				bodyStr := fmt.Sprintf("%v", body)
-				
+
 				require.NotEmpty(t, strings.TrimSpace(titleStr), "pull_request_title should not be empty")
 				require.NotEmpty(t, strings.TrimSpace(bodyStr), "pull_request_body should not be empty")
 			}

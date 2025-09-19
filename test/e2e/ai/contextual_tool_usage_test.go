@@ -192,7 +192,7 @@ Create four separate GitHub issues to track these documentation improvements. Ea
 	})
 }
 
-// TestScriptExecutionLimitation tests limitation reporting for script execution  
+// TestScriptExecutionLimitation tests limitation reporting for script execution
 func TestScriptExecutionLimitation(t *testing.T) {
 	harness := testutil.NewTestHarness(t)
 
@@ -237,16 +237,16 @@ func analyzeForValidationBehavior(t *testing.T, response *anthropic.Message) err
 	t.Helper()
 
 	hasValidateTool := false
-	
+
 	for _, content := range response.Content {
 		if toolUse := content.ToolUse; toolUse != nil && toolUse.Name == "validate_changes" {
 			hasValidateTool = true
-			
+
 			// Verify the validation call has a commit message
 			if input, ok := toolUse.Input.(map[string]interface{}); ok {
 				commitMessage, hasCommitMessage := input["commit_message"]
 				require.True(t, hasCommitMessage, "validate_changes should include commit_message")
-				
+
 				commitMessageStr := fmt.Sprintf("%v", commitMessage)
 				require.NotEmpty(t, commitMessageStr, "commit_message should not be empty")
 			}
@@ -264,41 +264,41 @@ func analyzeForCommentInteractionBehavior(t *testing.T, response *anthropic.Mess
 
 	hasCommentReply := false
 	hasReaction := false
-	
+
 	for _, content := range response.Content {
 		if toolUse := content.ToolUse; toolUse != nil {
 			switch toolUse.Name {
 			case "post_comment":
 				hasCommentReply = true
-				
+
 				// Verify comment has required fields
 				if input, ok := toolUse.Input.(map[string]interface{}); ok {
 					body, hasBody := input["body"]
 					commentType, hasType := input["comment_type"]
-					
+
 					require.True(t, hasBody, "post_comment should include body")
 					require.True(t, hasType, "post_comment should include comment_type")
-					
+
 					bodyStr := fmt.Sprintf("%v", body)
 					typeStr := fmt.Sprintf("%v", commentType)
-					
+
 					require.NotEmpty(t, bodyStr, "comment body should not be empty")
 					require.Contains(t, []string{"issue", "pr", "review"}, typeStr, "comment_type should be valid")
 				}
-				
+
 			case "add_reaction":
 				hasReaction = true
-				
+
 				// Verify reaction has required fields
 				if input, ok := toolUse.Input.(map[string]interface{}); ok {
 					reaction, hasReaction := input["reaction"]
 					commentID, hasCommentID := input["comment_id"]
-					
+
 					require.True(t, hasReaction, "add_reaction should include reaction")
 					require.True(t, hasCommentID, "add_reaction should include comment_id")
-					
+
 					reactionStr := fmt.Sprintf("%v", reaction)
-					require.Contains(t, []string{"+1", "-1", "laugh", "confused", "heart", "hooray", "rocket", "eyes"}, 
+					require.Contains(t, []string{"+1", "-1", "laugh", "confused", "heart", "hooray", "rocket", "eyes"},
 						reactionStr, "reaction should be valid emoji")
 				}
 			}

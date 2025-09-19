@@ -68,7 +68,7 @@ Please analyze the requirements and create a plan for implementing the authentic
 			if err != nil {
 				return fmt.Errorf("failed to summarize conversation: %w", err)
 			}
-			
+
 			// Get the summarized history
 			summarizedHistory := conversation.History()
 
@@ -149,7 +149,7 @@ Please start with the database schema changes.`
 			if err != nil {
 				return fmt.Errorf("failed to summarize conversation: %w", err)
 			}
-			
+
 			// Get the summarized history
 			summarizedHistory := conversation.History()
 
@@ -181,7 +181,7 @@ func analyzeContextualUnderstanding(t *testing.T, response *anthropic.Message, e
 	}
 
 	responseText = strings.ToLower(responseText)
-	
+
 	foundKeywords := 0
 	for _, keyword := range expectedContextKeywords {
 		if strings.Contains(responseText, strings.ToLower(keyword)) {
@@ -191,8 +191,8 @@ func analyzeContextualUnderstanding(t *testing.T, response *anthropic.Message, e
 
 	// Require at least 60% of keywords to be present, indicating contextual understanding
 	minRequired := (len(expectedContextKeywords) * 3) / 5 // 60%
-	require.GreaterOrEqual(t, foundKeywords, minRequired, 
-		"AI should demonstrate understanding of previous context, found %d/%d keywords in response", 
+	require.GreaterOrEqual(t, foundKeywords, minRequired,
+		"AI should demonstrate understanding of previous context, found %d/%d keywords in response",
 		foundKeywords, len(expectedContextKeywords))
 
 	return nil
@@ -215,10 +215,10 @@ func analyzeSummaryCompleteness(t *testing.T, history ai.ConversationHistory, ex
 	}
 
 	summaryText = strings.ToLower(summaryText)
-	
+
 	foundDetails := 0
 	missingDetails := []string{}
-	
+
 	for _, detail := range expectedTechnicalDetails {
 		if strings.Contains(summaryText, strings.ToLower(detail)) {
 			foundDetails++
@@ -229,8 +229,8 @@ func analyzeSummaryCompleteness(t *testing.T, history ai.ConversationHistory, ex
 
 	// Require at least 70% of technical details to be preserved
 	minRequired := (len(expectedTechnicalDetails) * 7) / 10 // 70%
-	require.GreaterOrEqual(t, foundDetails, minRequired, 
-		"Summary should preserve important technical details, found %d/%d details. Missing: %v", 
+	require.GreaterOrEqual(t, foundDetails, minRequired,
+		"Summary should preserve important technical details, found %d/%d details. Missing: %v",
 		foundDetails, len(expectedTechnicalDetails), missingDetails)
 
 	return nil
