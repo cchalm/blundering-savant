@@ -212,11 +212,7 @@ func (cc *Conversation) Summarize(ctx context.Context) error {
 			lastMsg.Response.Usage.CacheCreationInputTokens
 	}
 
-<<<<<<< HEAD
-	log.Printf("Conversation has %d messages and %d total tokens (input+cache read), summarizing...",
-=======
 	log.Printf("Conversation has %d messages and %d total input tokens, summarizing...",
->>>>>>> main
 		len(cc.Messages), totalTokens)
 
 	// Preserve the first message (initial repository and task content)
