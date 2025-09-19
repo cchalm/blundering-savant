@@ -4,8 +4,6 @@
 name: Blundering Savant Validate
 
 on:
-  push:
-    branches: [ "wip/issue-86-as-part-of-validation,-execute-gofmt-on-changed-files" ]
   workflow_dispatch:
 
 jobs:
