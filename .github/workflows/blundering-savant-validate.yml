@@ -29,7 +29,7 @@ jobs:
       run: |
         # Format all Go files
         gofmt -w .
-        
+
         # Check if any files were changed by gofmt
         if [ -n "$(git status --porcelain)" ]; then
           echo "Files were formatted, committing changes..."
