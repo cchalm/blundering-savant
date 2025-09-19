@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"regexp"
 	"strings"
 	"time"
 
@@ -318,15 +319,9 @@ func sanitizeForBranchName(s string) string {
 	s = strings.ReplaceAll(s, " ", "-")
 	s = strings.ReplaceAll(s, "_", "-")
 
-	// Keep only alphanumeric characters and hyphens using allowlist
-	var result strings.Builder
-	for _, r := range s {
-		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '-' {
-			result.WriteRune(r)
-		}
-	}
-
-	return result.String()
+	// Keep only alphanumeric characters and hyphens using regex allowlist
+	allowedCharsRegex := regexp.MustCompile(`[^a-z0-9\-]`)
+	return allowedCharsRegex.ReplaceAllString(s, "")
 }
 
 func normalizeBranchName(s string) string {
