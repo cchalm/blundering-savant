@@ -49,7 +49,7 @@ ANTHROPIC_API_KEY=sk-ant-<your-anthropic-api-key>
 # Bot Configuration
 CHECK_INTERVAL=1m
 RESUMABLE_CONVERSATIONS_DIR=./conversations
-VALIDATION_WORKFLOW_NAME=go.yml
+VALIDATION_WORKFLOW_NAME=blundering-savant-validate.yml
 ```
 
 4. **Build and test**:
