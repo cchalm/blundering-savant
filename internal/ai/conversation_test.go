@@ -17,7 +17,7 @@ func testNeedsSummarization(t *testing.T, inputTokens int64, cacheReadTokens int
 			CacheReadInputTokens: cacheReadTokens,
 		},
 	}
-	
+
 	conv := &Conversation{
 		tokenLimit: tokenLimit,
 		Messages: []conversationTurn{

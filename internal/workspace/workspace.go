@@ -265,13 +265,13 @@ func (rvw *RemoteValidationWorkspace) commitToWorkBranch(ctx context.Context, co
 // formatGoFiles formats all modified Go files using go/format.Source
 func (rvw *RemoteValidationWorkspace) formatGoFiles(ctx context.Context) error {
 	changelist := rvw.fs.GetChangelist()
-	
+
 	return changelist.ForEachModified(func(path string, content string) error {
 		// Only format Go files
 		if !strings.HasSuffix(path, ".go") {
 			return nil
 		}
-		
+
 		// Format the content using go/format
 		formatted, err := format.Source([]byte(content))
 		if err != nil {
@@ -279,7 +279,7 @@ func (rvw *RemoteValidationWorkspace) formatGoFiles(ctx context.Context) error {
 			// This prevents breaking the bot on syntactically invalid Go code
 			return nil
 		}
-		
+
 		// Update the content if it was changed by formatting
 		formattedContent := string(formatted)
 		if formattedContent != content {
@@ -288,7 +288,7 @@ func (rvw *RemoteValidationWorkspace) formatGoFiles(ctx context.Context) error {
 				return fmt.Errorf("failed to update formatted content for %s: %w", path, err)
 			}
 		}
-		
+
 		return nil
 	})
 }

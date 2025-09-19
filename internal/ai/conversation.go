@@ -192,8 +192,8 @@ func (cc *Conversation) NeedsSummarization() bool {
 	
 	// Check token usage from the most recent turn (which includes cumulative history)
 	// Include cache create tokens as they contribute to context size
-	totalTokens := lastMessage.Response.Usage.InputTokens + 
-		lastMessage.Response.Usage.CacheReadInputTokens + 
+	totalTokens := lastMessage.Response.Usage.InputTokens +
+		lastMessage.Response.Usage.CacheReadInputTokens +
 		lastMessage.Response.Usage.CacheCreationInputTokens
 	return totalTokens > cc.tokenLimit
 }
@@ -209,12 +209,12 @@ func (cc *Conversation) Summarize(ctx context.Context) error {
 	// Get token count from most recent response for logging
 	var totalTokens int64
 	if lastMsg := cc.Messages[len(cc.Messages)-1]; lastMsg.Response != nil {
-		totalTokens = lastMsg.Response.Usage.InputTokens + 
-			lastMsg.Response.Usage.CacheReadInputTokens + 
+		totalTokens = lastMsg.Response.Usage.InputTokens +
+			lastMsg.Response.Usage.CacheReadInputTokens +
 			lastMsg.Response.Usage.CacheCreationInputTokens
 	}
 
-	log.Printf("Conversation has %d messages and %d total tokens (input+cache read), summarizing...", 
+	log.Printf("Conversation has %d messages and %d total tokens (input+cache read), summarizing...",
 		len(cc.Messages), totalTokens)
 
 	// Preserve the first message (initial repository and task content)
