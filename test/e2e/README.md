@@ -31,14 +31,13 @@ go test -tags=e2e ./test/e2e/...
 ### Running Specific Test Suites
 
 ```bash
-# Test tool calling behavior
-go test -tags=e2e ./test/e2e/tools/...
+# Test all AI behavior tests
+go test -tags=e2e ./test/e2e/ai/...
 
-# Test conversation management
-go test -tags=e2e ./test/e2e/conversation/...
-
-# Test limitation reporting
-go test -tags=e2e ./test/e2e/limitations/...
+# Test specific AI behaviors
+go test -tags=e2e ./test/e2e/ai/ -run TestReportLimitationTool
+go test -tags=e2e ./test/e2e/ai/ -run TestParallelToolCalls
+go test -tags=e2e ./test/e2e/ai/ -run TestConversationSummarization
 ```
 
 ### Running with Verbose Output
@@ -58,17 +57,22 @@ Each test follows the pattern:
 
 ## Test Categories
 
-- **Tool Calling Tests**: Verify the AI uses tools correctly (parallel calls, proper parameters)
-- **Conversation Tests**: Test conversation resumption and summarization
-- **Limitation Tests**: Ensure AI reports limitations instead of attempting workarounds
-- **Response Format Tests**: Validate response structure and content
+All tests are now consolidated under the `ai` package and focus on actual AI behavior:
+
+- **Tool Usage Tests**: Verify the AI uses appropriate tools in context (file editing, validation, publishing)
+- **Limitation Reporting Tests**: Ensure AI reports limitations instead of attempting workarounds
+- **Parallel Tool Calls Tests**: Verify AI makes multiple tool calls simultaneously when appropriate
+- **Contextual Tool Usage Tests**: Test specific tool behaviors like delete file limitations, comment interactions
+- **Conversation Summarization Tests**: Validate AI can understand its own summaries and preserve context
 
 ## Adding New Tests
 
-1. Create a new test file in the appropriate subdirectory
+1. Create a new test file in the `test/e2e/ai/` directory
 2. Add the `//go:build e2e` build tag at the top
-3. Follow the existing test harness patterns
-4. Use the shared test utilities in the `testutil` package
+3. Use `harness.CreateConversationWithSystemPrompt()` to use real system prompts
+4. Structure tests as single request-response cycles testing AI behavior
+5. Use helper functions to analyze tool usage and response characteristics
+6. Follow the existing test harness patterns and use shared utilities
 
 ## Cost Considerations
 

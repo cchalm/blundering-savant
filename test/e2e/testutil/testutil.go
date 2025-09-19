@@ -4,6 +4,7 @@ package testutil
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"strconv"
 	"testing"
@@ -135,6 +136,24 @@ func (h *TestHarness) CreateConversation(systemPrompt string) *ai.Conversation {
 		tools,
 		systemPrompt,
 	)
+}
+
+// CreateConversationWithSystemPrompt creates a conversation using the real system prompt template
+func (h *TestHarness) CreateConversationWithSystemPrompt(botName, botUsername string) (*ai.Conversation, error) {
+	systemPrompt, err := ai.BuildSystemPrompt(botName, botUsername)
+	if err != nil {
+		return nil, fmt.Errorf("failed to build system prompt: %w", err)
+	}
+
+	tools := h.toolRegistry.GetAllToolParams()
+
+	return ai.NewConversation(
+		h.anthropicClient,
+		h.config.Model,
+		h.config.MaxTokens,
+		tools,
+		systemPrompt,
+	), nil
 }
 
 // ResumeConversation resumes a conversation from history
