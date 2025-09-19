@@ -60,6 +60,14 @@ test:
     @echo "Running tests..."
     go test -v ./...
 
+# Run end-to-end tests (requires API keys, costs money)
+test-e2e:
+    @echo "Running end-to-end tests..."
+    @echo "Warning: These tests use real AI APIs and cost money!"
+    @echo "Make sure ANTHROPIC_API_KEY is set."
+    @read -p "Continue? (y/N) " confirm && [ "$$confirm" = "y" ] || exit 1
+    go test -tags=e2e -v ./test/e2e/...
+
 # Run linter
 lint:
     @echo "Running linter..."
