@@ -33,7 +33,7 @@ type Config struct {
 	IssueNumber       *int
 	PRBranch          *string
 }
-
+	
 func main() {
 	cmd.SetVersionInfo(Version, GitCommit, BuildTime)
 	if err := cmd.Execute(); err != nil {
