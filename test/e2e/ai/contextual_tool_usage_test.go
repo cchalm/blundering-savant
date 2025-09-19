@@ -29,12 +29,12 @@ func TestDeleteFileTool(t *testing.T) {
 			require.NoError(t, err)
 
 			// Create a realistic task for file deletion
-			testTask := createTestTask(101, "Remove obsolete files", 
+			testTask := createTestTask(101, "Remove obsolete files",
 				"Please completely delete the following obsolete files from the repository:\n"+
-				"- legacy/old_auth.go\n"+
-				"- temp/debug_helper.py\n"+
-				"- scripts/deprecated_build.sh\n\n"+
-				"These files are no longer needed and should be removed entirely from the codebase.")
+					"- legacy/old_auth.go\n"+
+					"- temp/debug_helper.py\n"+
+					"- scripts/deprecated_build.sh\n\n"+
+					"These files are no longer needed and should be removed entirely from the codebase.")
 
 			// Build the real prompt using BuildPrompt
 			_, taskContent, err := ai.BuildPrompt(testTask)
@@ -65,7 +65,7 @@ func TestValidateChangesTool(t *testing.T) {
 			require.NoError(t, err)
 
 			// Create initial task
-			testTask := createTestTask(202, "Fix input validation bug", 
+			testTask := createTestTask(202, "Fix input validation bug",
 				"The user registration endpoint doesn't properly validate email formats. Please fix this validation issue.")
 			testTask.HasUnpublishedChanges = true
 
@@ -90,7 +90,7 @@ func TestValidateChangesTool(t *testing.T) {
 					{
 						ToolUse: &anthropic.ToolUseBlock{
 							ID:   "edit-1",
-							Name: "str_replace_based_edit_tool", 
+							Name: "str_replace_based_edit_tool",
 							Input: map[string]interface{}{
 								"command": "str_replace",
 								"path":    "api/auth.go",
@@ -112,7 +112,7 @@ if !isValidEmail(email) {
 			// Add the simulated file edit to conversation history
 			conversation.AddMessage(fileEditResponse)
 
-			// Add tool result 
+			// Add tool result
 			toolResult := anthropic.Message{
 				Role: anthropic.MessageRoleUser,
 				Content: []anthropic.MessageContent{
@@ -155,12 +155,12 @@ func TestCommentReactionTool(t *testing.T) {
 			require.NoError(t, err)
 
 			// Create task with PR and comments requiring responses
-			testTask := createTestTask(303, "Add logging feature", 
+			testTask := createTestTask(303, "Add logging feature",
 				"Please add comprehensive logging throughout the application.")
-			
+
 			testTask.PullRequest = &task.GithubPullRequest{
 				Owner:  "test",
-				Repo:   "repository", 
+				Repo:   "repository",
 				Number: 350,
 				Title:  "Add logging feature",
 			}
@@ -208,11 +208,11 @@ func TestIssueCreationLimitation(t *testing.T) {
 			// Create task requesting issue creation (which isn't supported)
 			testTask := createTestTask(404, "Documentation improvements needed",
 				"After reviewing the codebase, I think we need to track several documentation improvements. Please create separate GitHub issues for:\n"+
-				"1. API documentation updates\n"+
-				"2. Contributing guidelines revision\n"+
-				"3. Architecture documentation\n"+
-				"4. Deployment guide improvements\n\n"+
-				"Create four separate GitHub issues to track these documentation improvements. Each should have a descriptive title and detailed description.")
+					"1. API documentation updates\n"+
+					"2. Contributing guidelines revision\n"+
+					"3. Architecture documentation\n"+
+					"4. Deployment guide improvements\n\n"+
+					"Create four separate GitHub issues to track these documentation improvements. Each should have a descriptive title and detailed description.")
 			testTask.CodebaseInfo.MainLanguage = "TypeScript"
 
 			// Build the real prompt
@@ -246,7 +246,7 @@ func TestScriptExecutionLimitation(t *testing.T) {
 			// Create task requesting script execution (which isn't supported)
 			testTask := createTestTask(505, "Run integration tests",
 				"Please run our integration test suite to make sure everything is working correctly after the recent changes.\n\n"+
-				"Execute the integration test script 'scripts/run_integration_tests.py' and report the results. If there are any failures, please analyze them and suggest fixes.")
+					"Execute the integration test script 'scripts/run_integration_tests.py' and report the results. If there are any failures, please analyze them and suggest fixes.")
 			testTask.CodebaseInfo.MainLanguage = "Python"
 
 			// Build the real prompt
@@ -260,7 +260,7 @@ func TestScriptExecutionLimitation(t *testing.T) {
 
 			return analyzeForLimitationReporting(t, response, []string{
 				"execute",
-				"run script", 
+				"run script",
 				"script execution",
 			})
 		})
@@ -292,10 +292,10 @@ func analyzeForCommentInteractionBehavior(t *testing.T, response *anthropic.Mess
 	// Expect multiple comments and reactions for multiple PR comments
 	commentTool := "post_comment"
 	reactTool := "add_reaction"
-	
+
 	toolUses := requireToolUses(t, response, map[string]int{
 		commentTool: -1, // Allow any positive number
-		reactTool:   -1, // Allow any positive number  
+		reactTool:   -1, // Allow any positive number
 	})
 
 	// We should have at least one comment or reaction
@@ -379,10 +379,10 @@ func requireToolUses(t *testing.T, response *anthropic.Message, expectedCounts m
 		actualCount := actualCounts[toolName]
 		if expectedCount == -1 {
 			// Allow any positive number
-			require.Greater(t, actualCount, 0, 
+			require.Greater(t, actualCount, 0,
 				"Expected at least 1 use of tool %s, found %d", toolName, actualCount)
 		} else {
-			require.Equal(t, expectedCount, actualCount, 
+			require.Equal(t, expectedCount, actualCount,
 				"Expected %d uses of tool %s, found %d", expectedCount, toolName, actualCount)
 		}
 	}
@@ -390,7 +390,7 @@ func requireToolUses(t *testing.T, response *anthropic.Message, expectedCounts m
 	// Verify no unexpected tools were used
 	for toolName, actualCount := range actualCounts {
 		if expectedCount, exists := expectedCounts[toolName]; !exists {
-			require.Equal(t, 0, actualCount, 
+			require.Equal(t, 0, actualCount,
 				"Unexpected tool %s used %d times", toolName, actualCount)
 		}
 	}
@@ -403,7 +403,7 @@ func createTestTask(issueNumber int, issueTitle, issueBody string) task.Task {
 	return task.Task{
 		Issue: task.GithubIssue{
 			Owner:  "test",
-			Repo:   "repository", 
+			Repo:   "repository",
 			Number: issueNumber,
 			Title:  issueTitle,
 			Body:   issueBody,

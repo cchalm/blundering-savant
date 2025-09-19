@@ -39,7 +39,7 @@ func TestConversationSummarization(t *testing.T) {
 
 			// Manually construct conversation history showing development progress
 			initialMsg := anthropic.Message{
-				Role: anthropic.MessageRoleUser,
+				Role:    anthropic.MessageRoleUser,
 				Content: []anthropic.MessageContent{{Text: taskContent}},
 			}
 			conversation.AddMessage(initialMsg)
@@ -53,7 +53,7 @@ func TestConversationSummarization(t *testing.T) {
 			conversation.AddMessage(planResponse)
 
 			userFollowup1 := anthropic.Message{
-				Role: anthropic.MessageRoleUser,
+				Role:    anthropic.MessageRoleUser,
 				Content: []anthropic.MessageContent{{Text: "Great plan! Please start with the registration endpoint."}},
 			}
 			conversation.AddMessage(userFollowup1)
@@ -67,8 +67,8 @@ func TestConversationSummarization(t *testing.T) {
 							ID:   "reg-1",
 							Name: "str_replace_based_edit_tool",
 							Input: map[string]interface{}{
-								"command": "create",
-								"path":    "auth/registration.js", 
+								"command":   "create",
+								"path":      "auth/registration.js",
 								"file_text": "const bcrypt = require('bcrypt');\nconst User = require('../models/User');\n\nasync function registerUser(req, res) {\n  const { email, password } = req.body;\n  const hashedPassword = await bcrypt.hash(password, 12);\n  const user = await User.create({ email, password: hashedPassword });\n  res.json({ success: true, userId: user.id });\n}\n\nmodule.exports = { registerUser };",
 							},
 						},
@@ -78,7 +78,7 @@ func TestConversationSummarization(t *testing.T) {
 			conversation.AddMessage(registrationResponse)
 
 			userFollowup2 := anthropic.Message{
-				Role: anthropic.MessageRoleUser,
+				Role:    anthropic.MessageRoleUser,
 				Content: []anthropic.MessageContent{{Text: "Excellent! Now implement the login endpoint with JWT tokens."}},
 			}
 			conversation.AddMessage(userFollowup2)
@@ -89,11 +89,11 @@ func TestConversationSummarization(t *testing.T) {
 					{Text: "I'll create the login endpoint that generates JWT tokens for authentication."},
 					{
 						ToolUse: &anthropic.ToolUseBlock{
-							ID:   "login-1", 
+							ID:   "login-1",
 							Name: "str_replace_based_edit_tool",
 							Input: map[string]interface{}{
-								"command": "create",
-								"path":    "auth/login.js",
+								"command":   "create",
+								"path":      "auth/login.js",
 								"file_text": "const bcrypt = require('bcrypt');\nconst jwt = require('jsonwebtoken');\nconst User = require('../models/User');\n\nasync function loginUser(req, res) {\n  const { email, password } = req.body;\n  const user = await User.findOne({ email });\n  if (!user || !await bcrypt.compare(password, user.password)) {\n    return res.status(401).json({ error: 'Invalid credentials' });\n  }\n  const token = jwt.sign({ userId: user.id }, process.env.JWT_SECRET, { expiresIn: '24h' });\n  res.json({ success: true, token });\n}\n\nmodule.exports = { loginUser };",
 							},
 						},
@@ -120,7 +120,7 @@ func TestConversationSummarization(t *testing.T) {
 			return analyzeContextualUnderstanding(t, finalResponse, []string{
 				"password reset",
 				"JWT",
-				"authentication", 
+				"authentication",
 				"registration",
 				"login",
 			})
@@ -141,14 +141,14 @@ func TestSummaryAccuracy(t *testing.T) {
 			// Manually construct a conversation with specific technical decisions
 			testTask := createTestTask(789, "Optimize database queries for user search",
 				"The user search endpoint is slow. We need to optimize the database queries and implement caching.\n\n"+
-				"Analyze the performance issues and propose optimizations. Focus on database indexing and Redis caching integration.")
+					"Analyze the performance issues and propose optimizations. Focus on database indexing and Redis caching integration.")
 
 			_, taskContent, err := ai.BuildPrompt(testTask)
 			require.NoError(t, err)
 
 			// Manually build conversation history with specific technical details
 			initialMsg := anthropic.Message{
-				Role: anthropic.MessageRoleUser,
+				Role:    anthropic.MessageRoleUser,
 				Content: []anthropic.MessageContent{{Text: taskContent}},
 			}
 			conversation.AddMessage(initialMsg)
@@ -195,7 +195,7 @@ func TestSummaryAccuracy(t *testing.T) {
 			return analyzeSummaryCompleteness(t, summarizedHistory, []string{
 				"composite index",
 				"username, email, created_at",
-				"Redis", 
+				"Redis",
 				"5-minute TTL",
 				"cache invalidation",
 				"connection pooling",
@@ -279,7 +279,7 @@ func createTestTask(issueNumber int, issueTitle, issueBody string) task.Task {
 	return task.Task{
 		Issue: task.GithubIssue{
 			Owner:  "test",
-			Repo:   "repository", 
+			Repo:   "repository",
 			Number: issueNumber,
 			Title:  issueTitle,
 			Body:   issueBody,
