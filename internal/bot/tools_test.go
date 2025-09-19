@@ -34,8 +34,6 @@ func TestDeleteFileTool_ParseInput_InvalidJSON(t *testing.T) {
 	testDeleteFileToolParseInput(t, invalidJSON, true)
 }
 
-
-
 func testSearchInFileToolParseInput(t *testing.T, inputJSON []byte, wantError bool) {
 	tool := NewSearchInFileTool()
 	block := anthropic.ToolUseBlock{
@@ -82,7 +80,7 @@ func main() {
 
 	// Test basic string search
 	input := &SearchInFileInput{
-		FilePath:     "test.go",
+		Path:         "test.go",
 		Query:        "fmt.Println",
 		ContextLines: 1,
 	}
@@ -105,7 +103,7 @@ func main() {
 
 	// Test case insensitive search
 	input = &SearchInFileInput{
-		FilePath:      "test.go",
+		Path:          "test.go",
 		Query:         "FUNC MAIN",
 		CaseSensitive: false,
 	}
@@ -119,7 +117,7 @@ func main() {
 
 	// Test regex search
 	input = &SearchInFileInput{
-		FilePath: "test.go",
+		Path:     "test.go",
 		Query:    `fmt\.\w+`,
 		UseRegex: true,
 	}
@@ -133,7 +131,7 @@ func main() {
 
 	// Test max results limit
 	input = &SearchInFileInput{
-		FilePath:   "test.go",
+		Path:       "test.go",
 		Query:      "fmt",
 		MaxResults: 1,
 	}
