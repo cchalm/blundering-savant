@@ -255,8 +255,6 @@ func (rvw *RemoteValidationWorkspace) commitToWorkBranch(ctx context.Context, co
 	return createdCommit, nil
 }
 
-
-
 // PublishChangesForReview merges changes in the working branch into the review branch and creates a pull request, if
 // one doesn't already exist. Returns an error if there are in-memory changes that have not been committed to the work
 // branch via a ValidateChanges call
