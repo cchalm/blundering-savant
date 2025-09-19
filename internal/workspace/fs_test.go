@@ -25,10 +25,11 @@ func TestMemDiffFileSystem_CreateFile(t *testing.T) {
 func TestMemDiffFileSystem_OverwriteFile(t *testing.T) {
 	ctx := context.Background()
 	baseFS := newFakeFS()
-	baseFS.Write(ctx, "file1.txt", "file content 1")
+	err := baseFS.Write(ctx, "file1.txt", "file content 1")
+	require.NoError(t, err)
 	fs := NewMemDiffFileSystem(baseFS)
 
-	err := fs.Write(ctx, "file1.txt", "file content 2")
+	err = fs.Write(ctx, "file1.txt", "file content 2")
 	require.NoError(t, err)
 	content, err := fs.Read(ctx, "file1.txt")
 	require.NoError(t, err)
@@ -38,10 +39,11 @@ func TestMemDiffFileSystem_OverwriteFile(t *testing.T) {
 func TestMemDiffFileSystem_DeleteFile(t *testing.T) {
 	ctx := context.Background()
 	baseFS := newFakeFS()
-	_ = baseFS.Write(ctx, "file1.txt", "file content")
+	err := baseFS.Write(ctx, "file1.txt", "file content")
+	require.NoError(t, err)
 	fs := NewMemDiffFileSystem(baseFS)
 
-	err := fs.Delete(ctx, "file1.txt")
+	err = fs.Delete(ctx, "file1.txt")
 	require.NoError(t, err)
 	exists, err := fs.FileExists(ctx, "file1.txt")
 	require.NoError(t, err)
@@ -109,7 +111,8 @@ func TestMemDiffFileSystem_IsDir(t *testing.T) {
 	ctx := context.Background()
 	baseFS := newFakeFS()
 	baseFS.createDir("dir1", []string{"file1", "file2"})
-	_ = baseFS.Write(ctx, "dir2/file3", "file3 content")
+	err := baseFS.Write(ctx, "dir2/file3", "file3 content")
+	require.NoError(t, err)
 	fs := NewMemDiffFileSystem(baseFS)
 
 	{
