@@ -53,17 +53,17 @@ func testSearchInFileToolParseInput(t *testing.T, inputJSON []byte, wantError bo
 }
 
 func TestSearchInFileTool_ParseInput_ValidJSON(t *testing.T) {
-	validJSON := []byte(`{"file_path": "test.go", "query": "func main", "use_regex": false, "max_results": 10}`)
+	validJSON := []byte(`{"path": "test.go", "query": "func main", "use_regex": false, "max_results": 10}`)
 	testSearchInFileToolParseInput(t, validJSON, false)
 }
 
 func TestSearchInFileTool_ParseInput_MinimalValidJSON(t *testing.T) {
-	validJSON := []byte(`{"file_path": "test.go", "query": "test"}`)
+	validJSON := []byte(`{"path": "test.go", "query": "test"}`)
 	testSearchInFileToolParseInput(t, validJSON, false)
 }
 
 func TestSearchInFileTool_ParseInput_InvalidJSON(t *testing.T) {
-	invalidJSON := []byte(`{"file_path": "test.go", "query": "test"`) // Missing closing brace
+	invalidJSON := []byte(`{"path": "test.go", "query": "test"`) // Missing closing brace
 	testSearchInFileToolParseInput(t, invalidJSON, true)
 }
 
