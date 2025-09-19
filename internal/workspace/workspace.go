@@ -311,18 +311,22 @@ func getWorkBranchName(issue task.GithubIssue) string {
 }
 
 func sanitizeForBranchName(s string) string {
-	// Convert to lowercase and replace invalid characters
+	// Convert to lowercase
 	s = strings.ToLower(s)
+	
+	// Replace spaces and underscores with hyphens first
 	s = strings.ReplaceAll(s, " ", "-")
 	s = strings.ReplaceAll(s, "_", "-")
-
-	// Remove invalid characters for git branch names
-	invalidChars := []string{"~", "^", ":", "?", "*", "[", "]", "\\", "..", "@{", "/.", "//"}
-	for _, char := range invalidChars {
-		s = strings.ReplaceAll(s, char, "")
+	
+	// Keep only alphanumeric characters and hyphens using allowlist
+	var result strings.Builder
+	for _, r := range s {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '-' {
+			result.WriteRune(r)
+		}
 	}
-
-	return s
+	
+	return result.String()
 }
 
 func normalizeBranchName(s string) string {
