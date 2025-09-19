@@ -313,11 +313,11 @@ func getWorkBranchName(issue task.GithubIssue) string {
 func sanitizeForBranchName(s string) string {
 	// Convert to lowercase
 	s = strings.ToLower(s)
-	
+
 	// Replace spaces and underscores with hyphens first
 	s = strings.ReplaceAll(s, " ", "-")
 	s = strings.ReplaceAll(s, "_", "-")
-	
+
 	// Keep only alphanumeric characters and hyphens using allowlist
 	var result strings.Builder
 	for _, r := range s {
@@ -325,7 +325,7 @@ func sanitizeForBranchName(s string) string {
 			result.WriteRune(r)
 		}
 	}
-	
+
 	return result.String()
 }
 
