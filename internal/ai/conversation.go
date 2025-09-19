@@ -183,13 +183,13 @@ func (cc *Conversation) NeedsSummarization() bool {
 	if len(cc.Messages) == 0 {
 		return false
 	}
-	
+
 	// Get the most recent response
 	lastMessage := cc.Messages[len(cc.Messages)-1]
 	if lastMessage.Response == nil {
 		return false
 	}
-	
+
 	// Check token usage from the most recent turn (which includes cumulative history)
 	// Include cache create tokens as they contribute to context size
 	totalTokens := lastMessage.Response.Usage.InputTokens +
@@ -219,7 +219,7 @@ func (cc *Conversation) Summarize(ctx context.Context) error {
 
 	// Preserve the first message (initial repository and task content)
 	numFirstMessagesToPreserve := 1
-	
+
 	// Ensure we have something to summarize
 	if len(cc.Messages) <= numFirstMessagesToPreserve {
 		return nil
@@ -237,7 +237,7 @@ func (cc *Conversation) Summarize(ctx context.Context) error {
 		UserMessage: anthropic.NewUserMessage(anthropic.NewTextBlock("Please respond with the summary you generated earlier.")),
 		Response:    summaryResponse,
 	}
-	
+
 	// Second turn: User asks to resume work based on the summary
 	resumeRequestTurn := conversationTurn{
 		UserMessage: anthropic.NewUserMessage(anthropic.NewTextBlock("Please resume working on this task based on your summary.")),
@@ -246,10 +246,10 @@ func (cc *Conversation) Summarize(ctx context.Context) error {
 
 	// Reconstruct the conversation: preserved first messages + summary exchange + resume request
 	newMessages := []conversationTurn{}
-	
+
 	// Add preserved first messages
 	newMessages = append(newMessages, cc.Messages[:numFirstMessagesToPreserve]...)
-	
+
 	// Add summary conversation turns
 	newMessages = append(newMessages, summaryRequestTurn, resumeRequestTurn)
 

@@ -52,7 +52,7 @@ func TestNeedsSummarization_NoMessages(t *testing.T) {
 	conv := &Conversation{
 		tokenLimit: 100000,
 	}
-	
+
 	result := conv.NeedsSummarization()
 	assert.Equal(t, false, result)
 }
@@ -64,7 +64,7 @@ func TestNeedsSummarization_MessageWithoutResponse(t *testing.T) {
 			{UserMessage: anthropic.NewUserMessage(anthropic.NewTextBlock("test"))},
 		},
 	}
-	
+
 	result := conv.NeedsSummarization()
 	assert.Equal(t, false, result)
 }
@@ -84,14 +84,14 @@ func TestConversationHistory(t *testing.T) {
 func TestResumeConversation(t *testing.T) {
 	// Create a mock anthropic client
 	client := anthropic.Client{}
-	
+
 	history := ConversationHistory{
 		SystemPrompt: "test system prompt",
 		Messages:     []conversationTurn{},
 	}
 
 	conv, err := ResumeConversation(client, history, anthropic.ModelClaudeSonnet4_0, 4000, []anthropic.ToolParam{})
-	
+
 	require.NoError(t, err)
 	assert.Equal(t, "test system prompt", conv.systemPrompt)
 	assert.Equal(t, int64(100000), conv.tokenLimit)
@@ -108,7 +108,7 @@ func TestSummarizeConversationStructure(t *testing.T) {
 			CacheReadInputTokens: 10000,
 		},
 	}
-	
+
 	conv := &Conversation{
 		tokenLimit: 100000,
 		Messages: []conversationTurn{
