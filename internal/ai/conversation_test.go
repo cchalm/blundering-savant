@@ -135,4 +135,3 @@ func TestSummarizeConversationStructure(t *testing.T) {
 	// For now, we'll skip the actual AI summarization test since it requires a real API client
 	// In a real test environment, you might use a mock client or integration test
 }
-

@@ -777,7 +777,7 @@ type SearchInFileTool struct {
 
 // SearchInFileInput represents the input for search_in_file
 type SearchInFileInput struct {
-	FilePath      string `json:"file_path"`
+	Path          string `json:"path"`
 	Query         string `json:"query"`
 	UseRegex      bool   `json:"use_regex,omitempty"`
 	MaxResults    int    `json:"max_results,omitempty"`
@@ -787,7 +787,7 @@ type SearchInFileInput struct {
 
 // SearchResult represents a single search result
 type SearchResult struct {
-	FilePath      string
+	Path          string
 	LineNumber    int
 	Line          string
 	ContextBefore []string
@@ -808,9 +808,9 @@ func (t *SearchInFileTool) GetToolParam() anthropic.ToolParam {
 		Description: anthropic.String("Search for text within a specific file, with regex support and context lines"),
 		InputSchema: anthropic.ToolInputSchemaParam{
 			Properties: map[string]any{
-				"file_path": map[string]any{
+				"path": map[string]any{
 					"type":        "string",
-					"description": "Path to the file to search in",
+					"description": "Path to the file to search in. Must be a file, not a directory",
 				},
 				"query": map[string]any{
 					"type":        "string",
@@ -833,7 +833,7 @@ func (t *SearchInFileTool) GetToolParam() anthropic.ToolParam {
 					"description": "Whether the search should be case sensitive (default: false)",
 				},
 			},
-			Required: []string{"file_path", "query"},
+			Required: []string{"path", "query"},
 		},
 	}
 }
@@ -867,8 +867,8 @@ func (t *SearchInFileTool) run(ctx context.Context, block anthropic.ToolUseBlock
 		return nil, fmt.Errorf("error parsing input: %w", err)
 	}
 
-	if input.FilePath == "" {
-		return nil, ToolInputError{fmt.Errorf("file_path is required")}
+	if input.Path == "" {
+		return nil, ToolInputError{fmt.Errorf("path is required")}
 	}
 
 	if input.Query == "" {
@@ -876,8 +876,8 @@ func (t *SearchInFileTool) run(ctx context.Context, block anthropic.ToolUseBlock
 	}
 
 	// Validate that the path doesn't start with a leading slash
-	if strings.HasPrefix(input.FilePath, "/") {
-		return nil, ToolInputError{fmt.Errorf("file_path must be relative (no leading slash)")}
+	if strings.HasPrefix(input.Path, "/") {
+		return nil, ToolInputError{fmt.Errorf("path must be relative (no leading slash)")}
 	}
 
 	// Set defaults
@@ -894,31 +894,31 @@ func (t *SearchInFileTool) run(ctx context.Context, block anthropic.ToolUseBlock
 		input.ContextLines = 10
 	}
 
-	// Check if file exists
-	exists, err := toolCtx.Workspace.FileExists(ctx, input.FilePath)
-	if err != nil {
-		return nil, fmt.Errorf("error checking if file exists: %w", err)
-	}
-	if !exists {
-		return nil, ToolInputError{fmt.Errorf("file does not exist: %s", input.FilePath)}
-	}
-
-	// Check if it's actually a file (not a directory)
-	isDir, err := toolCtx.Workspace.IsDir(ctx, input.FilePath)
+	// Check if the path is a directory
+	isDir, err := toolCtx.Workspace.IsDir(ctx, input.Path)
 	if err != nil {
 		return nil, fmt.Errorf("error checking if path is directory: %w", err)
 	}
 	if isDir {
-		return nil, ToolInputError{fmt.Errorf("path is a directory, not a file: %s", input.FilePath)}
+		return nil, ToolInputError{fmt.Errorf("path is a directory, not a file: %s", input.Path)}
+	}
+
+	// Check if file exists
+	exists, err := toolCtx.Workspace.FileExists(ctx, input.Path)
+	if err != nil {
+		return nil, fmt.Errorf("error checking if file exists: %w", err)
+	}
+	if !exists {
+		return nil, ToolInputError{fmt.Errorf("file does not exist: %s", input.Path)}
 	}
 
 	// Read file content
-	content, err := toolCtx.Workspace.Read(ctx, input.FilePath)
+	content, err := toolCtx.Workspace.Read(ctx, input.Path)
 	if err != nil {
 		return nil, fmt.Errorf("error reading file: %w", err)
 	}
 
-	results, err := t.searchInFile(input.FilePath, content, input)
+	results, err := t.searchInFile(input.Path, content, input)
 	if err != nil {
 		return nil, fmt.Errorf("error searching file: %w", err)
 	}
@@ -974,7 +974,7 @@ func (t *SearchInFileTool) searchInFile(filePath, content string, input *SearchI
 
 		if matches {
 			result := SearchResult{
-				FilePath:   filePath,
+				Path:       filePath,
 				LineNumber: lineNum + 1, // 1-indexed
 				Line:       line,
 			}
@@ -1011,11 +1011,11 @@ func (t *SearchInFileTool) searchInFile(filePath, content string, input *SearchI
 // formatResults formats the search results into a readable string
 func (t *SearchInFileTool) formatResults(results []SearchResult, input *SearchInFileInput) string {
 	if len(results) == 0 {
-		return fmt.Sprintf("No results found for query '%s' in file: %s", input.Query, input.FilePath)
+		return fmt.Sprintf("No results found for query '%s' in file: %s", input.Query, input.Path)
 	}
 
 	var output strings.Builder
-	output.WriteString(fmt.Sprintf("Found %d result(s) for query '%s' in file: %s\n\n", len(results), input.Query, input.FilePath))
+	output.WriteString(fmt.Sprintf("Found %d result(s) for query '%s' in file: %s\n\n", len(results), input.Query, input.Path))
 
 	for i, result := range results {
 		if i > 0 {
@@ -1045,8 +1045,6 @@ func (t *SearchInFileTool) formatResults(results []SearchResult, input *SearchIn
 	return output.String()
 }
 
-
-
 // ReportLimitationTool implements the report_limitation tool
 type ReportLimitationTool struct {
 	BaseTool
@@ -1054,9 +1052,8 @@ type ReportLimitationTool struct {
 
 // ReportLimitationInput represents the input for report_limitation
 type ReportLimitationInput struct {
-	Action      string `json:"action"`
-	Reason      string `json:"reason"`
-	Suggestions string `json:"suggestions,omitempty"`
+	ToolNeeded string `json:"tool_needed"`
+	Reason     string `json:"reason"`
 }
 
 // NewReportLimitationTool creates a new report limitation tool
@@ -1070,23 +1067,19 @@ func NewReportLimitationTool() *ReportLimitationTool {
 func (t *ReportLimitationTool) GetToolParam() anthropic.ToolParam {
 	return anthropic.ToolParam{
 		Name:        t.Name,
-		Description: anthropic.String("Report when you need to perform an action that you don't have a tool for. Use this instead of trying workarounds with available tools."),
+		Description: anthropic.String("Report when you cannot complete a task because you do not have a tool that you need. After calling this tool you should end the conversation"),
 		InputSchema: anthropic.ToolInputSchemaParam{
 			Properties: map[string]any{
-				"action": map[string]any{
+				"tool_needed": map[string]any{
 					"type":        "string",
-					"description": "The action you want to perform but don't have a tool for",
+					"description": "A description of the tool you need to complete the task",
 				},
 				"reason": map[string]any{
 					"type":        "string",
-					"description": "Why this action is needed to complete the task",
-				},
-				"suggestions": map[string]any{
-					"type":        "string",
-					"description": "Optional suggestions for how this limitation could be addressed or alternative approaches",
+					"description": "Why this tool is needed to complete the task",
 				},
 			},
-			Required: []string{"action", "reason"},
+			Required: []string{"tool_needed", "reason"},
 		},
 	}
 }
@@ -1111,8 +1104,8 @@ func (t *ReportLimitationTool) Run(ctx context.Context, block anthropic.ToolUseB
 		return nil, fmt.Errorf("error parsing input: %w", err)
 	}
 
-	if input.Action == "" {
-		return nil, ToolInputError{fmt.Errorf("action is required")}
+	if input.ToolNeeded == "" {
+		return nil, ToolInputError{fmt.Errorf("tool_needed is required")}
 	}
 
 	if input.Reason == "" {
@@ -1121,16 +1114,12 @@ func (t *ReportLimitationTool) Run(ctx context.Context, block anthropic.ToolUseB
 
 	// Create a formatted limitation report
 	var report strings.Builder
-	report.WriteString("## Tool Limitation Report\n\n")
-	report.WriteString(fmt.Sprintf("**Action needed:** %s\n\n", input.Action))
+	report.WriteString("## ⚠️ Tool Limitation Report\n\n")
+	report.WriteString("I cannot complete this task with my current tools. ")
+	report.WriteString("Human intervention or additional tool support may be required.\n\n")
+
+	report.WriteString(fmt.Sprintf("**Tool needed:** %s\n\n", input.ToolNeeded))
 	report.WriteString(fmt.Sprintf("**Reason:** %s\n\n", input.Reason))
-
-	if input.Suggestions != "" {
-		report.WriteString(fmt.Sprintf("**Suggestions:** %s\n\n", input.Suggestions))
-	}
-
-	report.WriteString("This action cannot be performed with the currently available tools. ")
-	report.WriteString("Human intervention or additional tool support may be required.")
 
 	// Post the limitation report as a comment on the issue
 	comment := &github.IssueComment{
@@ -1141,7 +1130,12 @@ func (t *ReportLimitationTool) Run(ctx context.Context, block anthropic.ToolUseB
 		return nil, fmt.Errorf("failed to post limitation report: %w", err)
 	}
 
-	result := fmt.Sprintf("Posted limitation report for action: %s", input.Action)
+	err = addLabel(ctx, toolCtx.GithubClient.Issues, toolCtx.Task.Issue, task.LabelBlocked)
+	if err != nil {
+		return nil, fmt.Errorf("failed to add blocked label: %w", err)
+	}
+
+	result := "Posted limitation report"
 	return &result, nil
 }
 

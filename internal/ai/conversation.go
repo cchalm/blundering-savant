@@ -74,8 +74,6 @@ func (cc *Conversation) SendMessage(ctx context.Context, messageContent ...anthr
 	return cc.sendMessage(ctx, true, messageContent...)
 }
 
-
-
 // sendMessage is the internal implementation with a boolean parameter to specify caching
 func (cc *Conversation) sendMessage(ctx context.Context, enableCache bool, messageContent ...anthropic.ContentBlockParamUnion) (*anthropic.Message, error) {
 	// Set cache point only if caching is enabled
@@ -145,11 +143,11 @@ func (cc *Conversation) sendMessage(ctx context.Context, enableCache bool, messa
 		return nil, fmt.Errorf("malformed message: %v", string(b))
 	}
 
-	log.Printf("Token usage - Input: %d, Cache create: %d, Cache read: %d, Total (Input+CacheCreate+CacheRead): %d",
+	log.Printf("Token usage - Input: %d, Cache create: %d, Cache read: %d, Total: %d",
 		response.Usage.InputTokens,
 		response.Usage.CacheCreationInputTokens,
 		response.Usage.CacheReadInputTokens,
-		response.Usage.InputTokens + response.Usage.CacheCreationInputTokens + response.Usage.CacheReadInputTokens,
+		response.Usage.InputTokens+response.Usage.CacheCreationInputTokens+response.Usage.CacheReadInputTokens,
 	)
 
 	// Record the response
@@ -214,7 +212,11 @@ func (cc *Conversation) Summarize(ctx context.Context) error {
 			lastMsg.Response.Usage.CacheCreationInputTokens
 	}
 
+<<<<<<< HEAD
 	log.Printf("Conversation has %d messages and %d total tokens (input+cache read), summarizing...",
+=======
+	log.Printf("Conversation has %d messages and %d total input tokens, summarizing...",
+>>>>>>> main
 		len(cc.Messages), totalTokens)
 
 	// Preserve the first message (initial repository and task content)
@@ -257,7 +259,7 @@ func (cc *Conversation) Summarize(ctx context.Context) error {
 	originalMessageCount := len(cc.Messages)
 	cc.Messages = newMessages
 
-	log.Printf("Conversation summarized: %d messages -> %d messages", 
+	log.Printf("Conversation summarized: %d messages -> %d messages",
 		originalMessageCount, len(cc.Messages))
 
 	return nil
@@ -284,8 +286,6 @@ func (cc *Conversation) generateConversationSummary(ctx context.Context) (*anthr
 	// Return the complete response message
 	return response, nil
 }
-
-
 
 // ConversationHistory contains a serializable and resumable snapshot of a Conversation
 type ConversationHistory struct {
