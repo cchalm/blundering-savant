@@ -105,17 +105,17 @@ func (b *Bot) Run(ctx context.Context, tasks <-chan task.TaskOrError) error {
 }
 
 func (b *Bot) DoTask(ctx context.Context, tsk task.Task) (err error) {
-	if err := b.addLabel(ctx, tsk.Issue, task.LabelWorking); err != nil {
+	if err := addLabel(ctx, b.githubClient.Issues, tsk.Issue, task.LabelWorking); err != nil {
 		log.Printf("failed to add in-progress label: %v", err)
 	}
 	defer func() {
-		if err := b.removeLabel(ctx, tsk.Issue, task.LabelWorking); err != nil {
+		if err := removeLabel(ctx, b.githubClient.Issues, tsk.Issue, task.LabelWorking); err != nil {
 			log.Printf("failed to remove in-progress label: %v", err)
 		}
 
 		if err != nil {
 			// Add blocked label if there is an error, to tell the bot not to pick up this item again
-			if err := b.addLabel(ctx, tsk.Issue, task.LabelBlocked); err != nil {
+			if err := addLabel(ctx, b.githubClient.Issues, tsk.Issue, task.LabelBlocked); err != nil {
 				log.Printf("failed to add blocked label: %v", err)
 			}
 			// Post sanitized error comment
@@ -282,7 +282,7 @@ func (b *Bot) processWithAI(ctx context.Context, tsk task.Task, workspace Worksp
 		}
 	}
 
-	err = b.removeLabel(ctx, tsk.Issue, task.LabelBotTurn)
+	err = removeLabel(ctx, b.githubClient.Issues, tsk.Issue, task.LabelBotTurn)
 	if err != nil {
 		return fmt.Errorf("failed to remove bot turn label: %w", err)
 	}
@@ -304,25 +304,25 @@ func (b *Bot) postIssueComment(ctx context.Context, issue task.GithubIssue, body
 // Label management functions
 
 // addLabel adds a label to an issue
-func (b *Bot) addLabel(ctx context.Context, issue task.GithubIssue, label github.Label) error {
+func addLabel(ctx context.Context, issuesService *github.IssuesService, issue task.GithubIssue, label github.Label) error {
 	if label.Name == nil {
 		return fmt.Errorf("cannot add label with nil name")
 	}
-	if err := b.ensureLabelExists(ctx, issue.Owner, issue.Repo, label); err != nil {
+	if err := ensureLabelExists(ctx, issuesService, issue.Owner, issue.Repo, label); err != nil {
 		log.Printf("Warning: Could not ensure label exists: %v", err)
 	}
 
 	labels := []string{*label.Name}
-	_, _, err := b.githubClient.Issues.AddLabelsToIssue(ctx, issue.Owner, issue.Repo, issue.Number, labels)
+	_, _, err := issuesService.AddLabelsToIssue(ctx, issue.Owner, issue.Repo, issue.Number, labels)
 	return err
 }
 
 // removeLabel removes a label from an issue, if present
-func (b *Bot) removeLabel(ctx context.Context, issue task.GithubIssue, label github.Label) error {
+func removeLabel(ctx context.Context, issuesService *github.IssuesService, issue task.GithubIssue, label github.Label) error {
 	if label.Name == nil {
 		return fmt.Errorf("cannot remove label with nil name")
 	}
-	resp, err := b.githubClient.Issues.RemoveLabelForIssue(ctx, issue.Owner, issue.Repo, issue.Number, *label.Name)
+	resp, err := issuesService.RemoveLabelForIssue(ctx, issue.Owner, issue.Repo, issue.Number, *label.Name)
 	if err != nil && resp.StatusCode == http.StatusNotFound {
 		// If the label isn't present, ignore the error
 		return nil
@@ -331,16 +331,16 @@ func (b *Bot) removeLabel(ctx context.Context, issue task.GithubIssue, label git
 }
 
 // ensureLabelExists creates a label if it doesn't exist
-func (b *Bot) ensureLabelExists(ctx context.Context, owner, repo string, label github.Label) error {
+func ensureLabelExists(ctx context.Context, issuesService *github.IssuesService, owner, repo string, label github.Label) error {
 	if label.Name == nil {
 		return fmt.Errorf("nil label name")
 	}
-	_, _, err := b.githubClient.Issues.GetLabel(ctx, owner, repo, *label.Name)
+	_, _, err := issuesService.GetLabel(ctx, owner, repo, *label.Name)
 	if err == nil {
 		return nil
 	}
 
-	_, _, err = b.githubClient.Issues.CreateLabel(ctx, owner, repo, &label)
+	_, _, err = issuesService.CreateLabel(ctx, owner, repo, &label)
 	return err
 }
 

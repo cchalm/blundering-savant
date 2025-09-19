@@ -123,25 +123,13 @@ func renderConversationMarkdown(data *conversationMarkdownData) (string, error) 
 			case "str_replace_based_edit_tool":
 				switch command {
 				case "view":
-					if path != "" {
-						return fmt.Sprintf("👀 Reading '%s'", path)
-					}
-					return "👀 Reading file"
+					return fmt.Sprintf("👀 Reading '%s'", path)
 				case "str_replace":
-					if path != "" {
-						return fmt.Sprintf("✏️ Editing '%s'", path)
-					}
-					return "✏️ Editing file"
+					return fmt.Sprintf("✏️ Editing '%s'", path)
 				case "create":
-					if path != "" {
-						return fmt.Sprintf("📄 Creating '%s'", path)
-					}
-					return "📄 Creating file"
+					return fmt.Sprintf("📄 Creating '%s'", path)
 				case "insert":
-					if path != "" {
-						return fmt.Sprintf("➕ Inserting into '%s'", path)
-					}
-					return "➕ Inserting into file"
+					return fmt.Sprintf("➕ Inserting into '%s'", path)
 				default:
 					if path != "" {
 						return fmt.Sprintf("🔧 %s '%s'", command, path)
@@ -187,7 +175,7 @@ func renderConversationMarkdown(data *conversationMarkdownData) (string, error) 
 				}
 				return "👍 Adding reaction"
 			case "validate_changes":
-				return "🔍 Validating changes"
+				return "✅ Validating changes"
 			case "publish_changes_for_review":
 				return "📤 Publishing changes for review"
 			case "delete_file":
@@ -199,6 +187,10 @@ func renderConversationMarkdown(data *conversationMarkdownData) (string, error) 
 					}
 				}
 				return "🗑️ Deleting file"
+			case "search_in_file":
+				return fmt.Sprintf("🔍 Searching in '%s'", path)
+			case "report_limitation":
+				return "🆘 Reporting limitation"
 			default:
 				return fmt.Sprintf("🔧 Using tool: %s", toolName)
 			}

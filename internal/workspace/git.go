@@ -146,8 +146,11 @@ func (ggr *githubGitRepo) CommitChanges(ctx context.Context, branch string, chan
 		return nil, fmt.Errorf("failed to mark deleted files in new tree: %w", err)
 	}
 
-	newTree, _, err := ggr.git.CreateTree(ctx, ggr.owner, ggr.repo, *baseTree.SHA, treeChangeEntries)
+	newTree, resp, err := ggr.git.CreateTree(ctx, ggr.owner, ggr.repo, *baseTree.SHA, treeChangeEntries)
 	if err != nil {
+		if resp.StatusCode == http.StatusNotFound {
+			return nil, fmt.Errorf("failed to create tree (is the bot trying to modify a GitHub workflow with a token that does not include the 'workflow' scope?): %w", err)
+		}
 		return nil, fmt.Errorf("failed to create tree: %w", err)
 	}
 
