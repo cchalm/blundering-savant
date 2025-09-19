@@ -189,6 +189,8 @@ func renderConversationMarkdown(data *conversationMarkdownData) (string, error) 
 				return "🗑️ Deleting file"
 			case "search_in_file":
 				return fmt.Sprintf("🔍 Searching in '%s'", path)
+			case "report_limitation":
+				return "🆘 Reporting limitation"
 			default:
 				return fmt.Sprintf("🔧 Using tool: %s", toolName)
 			}

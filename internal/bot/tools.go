@@ -1052,9 +1052,8 @@ type ReportLimitationTool struct {
 
 // ReportLimitationInput represents the input for report_limitation
 type ReportLimitationInput struct {
-	Action      string `json:"action"`
-	Reason      string `json:"reason"`
-	Suggestions string `json:"suggestions,omitempty"`
+	ToolNeeded string `json:"tool_needed"`
+	Reason     string `json:"reason"`
 }
 
 // NewReportLimitationTool creates a new report limitation tool
@@ -1068,23 +1067,19 @@ func NewReportLimitationTool() *ReportLimitationTool {
 func (t *ReportLimitationTool) GetToolParam() anthropic.ToolParam {
 	return anthropic.ToolParam{
 		Name:        t.Name,
-		Description: anthropic.String("Report when you need to perform an action that you don't have a tool for. Use this instead of trying workarounds with available tools."),
+		Description: anthropic.String("Report when you cannot complete a task because you do not have a tool that you need. After calling this tool you should end the conversation"),
 		InputSchema: anthropic.ToolInputSchemaParam{
 			Properties: map[string]any{
-				"action": map[string]any{
+				"tool_needed": map[string]any{
 					"type":        "string",
-					"description": "The action you want to perform but don't have a tool for",
+					"description": "A description of the tool you need to complete the task",
 				},
 				"reason": map[string]any{
 					"type":        "string",
-					"description": "Why this action is needed to complete the task",
-				},
-				"suggestions": map[string]any{
-					"type":        "string",
-					"description": "Optional suggestions for how this limitation could be addressed or alternative approaches",
+					"description": "Why this tool is needed to complete the task",
 				},
 			},
-			Required: []string{"action", "reason"},
+			Required: []string{"tool_needed", "reason"},
 		},
 	}
 }
@@ -1109,8 +1104,8 @@ func (t *ReportLimitationTool) Run(ctx context.Context, block anthropic.ToolUseB
 		return nil, fmt.Errorf("error parsing input: %w", err)
 	}
 
-	if input.Action == "" {
-		return nil, ToolInputError{fmt.Errorf("action is required")}
+	if input.ToolNeeded == "" {
+		return nil, ToolInputError{fmt.Errorf("tool_needed is required")}
 	}
 
 	if input.Reason == "" {
@@ -1119,16 +1114,12 @@ func (t *ReportLimitationTool) Run(ctx context.Context, block anthropic.ToolUseB
 
 	// Create a formatted limitation report
 	var report strings.Builder
-	report.WriteString("## Tool Limitation Report\n\n")
-	report.WriteString(fmt.Sprintf("**Action needed:** %s\n\n", input.Action))
+	report.WriteString("## ⚠️ Tool Limitation Report\n\n")
+	report.WriteString("I cannot complete this task with my current tools. ")
+	report.WriteString("Human intervention or additional tool support may be required.\n\n")
+
+	report.WriteString(fmt.Sprintf("**Tool needed:** %s\n\n", input.ToolNeeded))
 	report.WriteString(fmt.Sprintf("**Reason:** %s\n\n", input.Reason))
-
-	if input.Suggestions != "" {
-		report.WriteString(fmt.Sprintf("**Suggestions:** %s\n\n", input.Suggestions))
-	}
-
-	report.WriteString("This action cannot be performed with the currently available tools. ")
-	report.WriteString("Human intervention or additional tool support may be required.")
 
 	// Post the limitation report as a comment on the issue
 	comment := &github.IssueComment{
@@ -1139,7 +1130,12 @@ func (t *ReportLimitationTool) Run(ctx context.Context, block anthropic.ToolUseB
 		return nil, fmt.Errorf("failed to post limitation report: %w", err)
 	}
 
-	result := fmt.Sprintf("Posted limitation report for action: %s", input.Action)
+	err = addLabel(ctx, toolCtx.GithubClient.Issues, toolCtx.Task.Issue, task.LabelBlocked)
+	if err != nil {
+		return nil, fmt.Errorf("failed to add blocked label: %w", err)
+	}
+
+	result := "Posted limitation report"
 	return &result, nil
 }
 
