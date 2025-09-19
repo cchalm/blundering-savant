@@ -11,6 +11,9 @@ on:
 jobs:
 
   build-lint-test:
+    permissions:
+      contents: write # To commit gofmt changes
+
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v4
