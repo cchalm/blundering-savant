@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/anthropics/anthropic-sdk-go"
+	"github.com/anthropics/anthropic-sdk-go/option"
 	"github.com/google/go-github/v72/github"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/oauth2"
@@ -82,7 +83,7 @@ func NewTestHarness(t *testing.T) *TestHarness {
 	require.NotEmpty(t, config.AnthropicKey, "ANTHROPIC_API_KEY environment variable is required for e2e tests")
 
 	anthropicClient := anthropic.NewClient(
-		anthropic.WithAPIKey(config.AnthropicKey),
+		option.WithAPIKey(config.AnthropicKey),
 	)
 
 	var githubClient *github.Client

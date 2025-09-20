@@ -5,7 +5,6 @@ package ai
 import (
 	"context"
 	"fmt"
-	"strings"
 	"testing"
 
 	"github.com/anthropics/anthropic-sdk-go"

@@ -4,11 +4,11 @@ This directory contains end-to-end tests for validating AI prompt behavior. Thes
 
 ## Purpose
 
-The end-to-end tests help validate prompt changes by:
+The end-to-end tests help validate AI prompt changes by:
 
 1. Constructing simulated conversation histories
 2. Sending them to the actual AI
-3. Making assertions on response features 
+3. Making assertions on features of the AI's response
 4. Running multiple iterations for consistency
 
 ## Running Tests
