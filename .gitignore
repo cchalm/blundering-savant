@@ -27,3 +27,6 @@ go.work.sum
 # Artifact directories
 logs/
 conversations/
+
+# IDE settings
+.vscode

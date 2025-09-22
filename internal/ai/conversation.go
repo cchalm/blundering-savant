@@ -16,14 +16,14 @@ type Conversation struct {
 	model        anthropic.Model
 	systemPrompt string
 	tools        []anthropic.ToolParam
-	Messages     []conversationTurn
+	Messages     []ConversationTurn
 
 	maxOutputTokens int64 // Maximum number of output tokens per response
 	tokenLimit      int64 // When to trigger summarization
 }
 
-// conversationTurn is a pair of messages: a user message, and an optional assistant response
-type conversationTurn struct {
+// ConversationTurn is a pair of messages: a user message, and an optional assistant response
+type ConversationTurn struct {
 	UserMessage anthropic.MessageParam
 	Response    *anthropic.Message // May be nil
 }
@@ -69,9 +69,27 @@ func ResumeConversation(
 	return c, nil
 }
 
-// SendMessage sends a message to the conversation
+// SendMessage sends a message to the AI, awaits its response, and adds both to the conversation
 func (cc *Conversation) SendMessage(ctx context.Context, messageContent ...anthropic.ContentBlockParamUnion) (*anthropic.Message, error) {
 	return cc.sendMessage(ctx, true, messageContent...)
+}
+
+// SeedTurn adds a message to the conversation with a hard-coded (i.e. fake) response
+func (cc *Conversation) SeedTurn(ctx context.Context, turn ConversationTurn) {
+	cc.Messages = append(cc.Messages, turn)
+}
+
+// ResendLastMessage erases the last message in the conversation history and resends it
+func (cc *Conversation) ResendLastMessage(ctx context.Context) (*anthropic.Message, error) {
+	if len(cc.Messages) == 0 {
+		return nil, fmt.Errorf("cannot resend last message: no messages")
+	}
+
+	var lastTurn ConversationTurn
+	// Pop the last message off of the conversation history
+	lastTurn, cc.Messages = cc.Messages[len(cc.Messages)-1], cc.Messages[:len(cc.Messages)-1]
+
+	return cc.SendMessage(ctx, lastTurn.UserMessage.Content...)
 }
 
 // sendMessage is the internal implementation with a boolean parameter to specify caching
@@ -88,7 +106,7 @@ func (cc *Conversation) sendMessage(ctx context.Context, enableCache bool, messa
 		}
 	}
 
-	cc.Messages = append(cc.Messages, conversationTurn{
+	cc.Messages = append(cc.Messages, ConversationTurn{
 		UserMessage: anthropic.NewUserMessage(messageContent...),
 	})
 
@@ -231,19 +249,19 @@ func (cc *Conversation) Summarize(ctx context.Context) error {
 
 	// Create conversation turns that properly represent the summary exchange
 	// First turn: User asks for summary + Assistant provides the summary
-	summaryRequestTurn := conversationTurn{
+	summaryRequestTurn := ConversationTurn{
 		UserMessage: anthropic.NewUserMessage(anthropic.NewTextBlock("Please respond with the summary you generated earlier.")),
 		Response:    summaryResponse,
 	}
 
 	// Second turn: User asks to resume work based on the summary
-	resumeRequestTurn := conversationTurn{
+	resumeRequestTurn := ConversationTurn{
 		UserMessage: anthropic.NewUserMessage(anthropic.NewTextBlock("Please resume working on this task based on your summary.")),
 		// No response yet - this will be filled in by the next actual conversation turn
 	}
 
 	// Reconstruct the conversation: preserved first messages + summary exchange + resume request
-	newMessages := []conversationTurn{}
+	newMessages := []ConversationTurn{}
 
 	// Add preserved first messages
 	newMessages = append(newMessages, cc.Messages[:numFirstMessagesToPreserve]...)
@@ -286,7 +304,7 @@ func (cc *Conversation) generateConversationSummary(ctx context.Context) (*anthr
 // ConversationHistory contains a serializable and resumable snapshot of a Conversation
 type ConversationHistory struct {
 	SystemPrompt string             `json:"systemPrompt"`
-	Messages     []conversationTurn `json:"messages"`
+	Messages     []ConversationTurn `json:"messages"`
 }
 
 // History returns a serializable conversation history
