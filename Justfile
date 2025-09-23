@@ -100,3 +100,41 @@ connect-shell:
 # View Docker daemon logs
 docker-logs:
     docker logs $(docker ps -q -f name={{app_name}})
+
+# Run integration tests
+test-integ PACKAGE:
+    #!/usr/bin/env bash
+
+    echo "🚨 Running integration tests for '{{PACKAGE}}' - this will incur API costs!"
+
+    read -p "Continue? (y/N) " -n 1 -r
+    echo
+    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+        echo "Aborted."
+        exit 0
+    fi
+
+    # Create timestamped artifact directory
+    ARTIFACT_DIR="test-artifacts/integ-$(date +%Y-%m-%d-%H%M%S)"
+    echo "📁 Artifacts will be saved to: $ARTIFACT_DIR"
+    mkdir -p "$ARTIFACT_DIR"
+
+    set -a
+    source .env.test || { echo "❌ Failed to load .env.test"; exit 1; }
+    set +a
+    if [ -z "$ANTHROPIC_API_KEY" ]; then
+        echo "❌ ANTHROPIC_API_KEY not found in .env.test"
+        exit 1
+    fi
+
+    echo "🧪 Running integration tests for '{{PACKAGE}}' ..."
+
+    TEST_ARTIFACTS_DIR="$PWD/$ARTIFACT_DIR" go test -tags=integ {{PACKAGE}}
+
+# Clean old test artifacts (keeps last N runs)
+clean-artifacts KEEP="5":
+    #!/usr/bin/env bash
+    echo "🧹 Cleaning test artifacts (keeping {{KEEP}} most recent runs)..."
+    cd test-artifacts
+    ls -1dt integ-* 2>/dev/null | tail -n +$(({{KEEP}} + 1)) | xargs -r rm -rf
+    echo "✅ Cleanup complete"
