@@ -102,7 +102,7 @@ docker-logs:
     docker logs $(docker ps -q -f name={{app_name}})
 
 # Run integration tests
-test-integ PACKAGE:
+test-integ PACKAGE *ARGS:
     #!/usr/bin/env bash
 
     echo "🚨 Running integration tests for '{{PACKAGE}}' - this will incur API costs!"
@@ -129,7 +129,7 @@ test-integ PACKAGE:
 
     echo "🧪 Running integration tests for '{{PACKAGE}}' ..."
 
-    TEST_ARTIFACTS_DIR="$PWD/$ARTIFACT_DIR" go test -tags=integ {{PACKAGE}}
+    TEST_ARTIFACTS_DIR="$PWD/$ARTIFACT_DIR" go test -tags=integ {{PACKAGE}} {{ARGS}}
 
 # Clean old test artifacts (keeps last N runs)
 clean-artifacts KEEP="5":
