@@ -1,4 +1,4 @@
-package ai
+package bot
 
 import (
 	"bytes"
@@ -23,7 +23,7 @@ var repositoryPromptTemplate string
 //go:embed task_prompt.tmpl
 var taskPromptTemplate string
 
-func BuildSystemPrompt(botName string, botUsername string) (string, error) {
+func buildSystemPrompt(botName string, botUsername string) (string, error) {
 	tmpl, err := template.New("system prompt").Parse(systemPromptTemplate)
 	if err != nil {
 		return "", fmt.Errorf("failed to parse system prompt template: %w", err)
@@ -44,8 +44,8 @@ func BuildSystemPrompt(botName string, botUsername string) (string, error) {
 	return buf.String(), nil
 }
 
-// BuildPrompt generates repository-specific and task-specific content blocks for Claude
-func BuildPrompt(tsk task.Task) (repositoryContent, taskContent string, err error) {
+// buildPrompt generates repository-specific and task-specific content blocks for Claude
+func buildPrompt(tsk task.Task) (repositoryContent, taskContent string, err error) {
 	data := buildTemplateData(tsk)
 
 	// Create template with helper functions
@@ -230,7 +230,13 @@ func buildTemplateData(tsk task.Task) promptTemplateData {
 
 	// Pull request information
 	if tsk.PullRequest != nil {
-		data.PullRequestNumber = &tsk.PullRequest.Number
+		data.PullRequest = &pullRequestData{
+			Number: tsk.PullRequest.Number,
+			Title:  tsk.PullRequest.Title,
+			Owner: userData{
+				Login: tsk.PullRequest.Owner,
+			},
+		}
 	}
 
 	// Style guides
@@ -318,6 +324,14 @@ type userData struct {
 	Login string
 }
 
+// pullRequestData represents a pull request in template data
+type pullRequestData struct {
+	Number int
+	Title  string
+	Body   string
+	Owner  userData
+}
+
 // commentData represents a comment in template data
 type commentData struct {
 	ID                int64
@@ -363,7 +377,7 @@ type promptTemplateData struct {
 	IssueNumber            int
 	IssueTitle             string
 	IssueBody              string
-	PullRequestNumber      *int
+	PullRequest            *pullRequestData
 	StyleGuides            map[string]string // path -> content
 	ReadmeContent          string
 	FileTree               []string

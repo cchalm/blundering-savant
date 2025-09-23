@@ -20,7 +20,7 @@ func testNeedsSummarization(t *testing.T, inputTokens int64, cacheReadTokens int
 
 	conv := &Conversation{
 		tokenLimit: tokenLimit,
-		Messages: []conversationTurn{
+		Messages: []ConversationTurn{
 			{
 				UserMessage: anthropic.NewUserMessage(anthropic.NewTextBlock("test")),
 				Response:    response,
@@ -60,7 +60,7 @@ func TestNeedsSummarization_NoMessages(t *testing.T) {
 func TestNeedsSummarization_MessageWithoutResponse(t *testing.T) {
 	conv := &Conversation{
 		tokenLimit: 100000,
-		Messages: []conversationTurn{
+		Messages: []ConversationTurn{
 			{UserMessage: anthropic.NewUserMessage(anthropic.NewTextBlock("test"))},
 		},
 	}
@@ -72,7 +72,7 @@ func TestNeedsSummarization_MessageWithoutResponse(t *testing.T) {
 func TestConversationHistory(t *testing.T) {
 	conv := &Conversation{
 		systemPrompt: "test prompt",
-		Messages:     []conversationTurn{},
+		Messages:     []ConversationTurn{},
 	}
 
 	history := conv.History()
@@ -87,7 +87,7 @@ func TestResumeConversation(t *testing.T) {
 
 	history := ConversationHistory{
 		SystemPrompt: "test system prompt",
-		Messages:     []conversationTurn{},
+		Messages:     []ConversationTurn{},
 	}
 
 	conv, err := ResumeConversation(client, history, anthropic.ModelClaudeSonnet4_0, 4000, []anthropic.ToolParam{})
@@ -111,7 +111,7 @@ func TestSummarizeConversationStructure(t *testing.T) {
 
 	conv := &Conversation{
 		tokenLimit: 100000,
-		Messages: []conversationTurn{
+		Messages: []ConversationTurn{
 			// First message (should be preserved)
 			{UserMessage: anthropic.NewUserMessage(anthropic.NewTextBlock("Initial message"))},
 			// Middle messages (would be summarized in actual implementation)

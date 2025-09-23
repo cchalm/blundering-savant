@@ -73,7 +73,7 @@ func (cc *Conversation) buildMarkdownData() (*conversationMarkdownData, error) {
 	}
 
 	// Track pending tool uses to combine with results (using pointers)
-	pendingToolUses := make(map[string]conversationMessage) // toolID -> pointer to message
+	pendingToolUses := make(map[string]conversationMessage) // toolID -> incomplete message
 
 	// Process each turn
 	for _, turn := range cc.Messages {
@@ -92,6 +92,12 @@ func (cc *Conversation) buildMarkdownData() (*conversationMarkdownData, error) {
 			data.TokenUsage.TotalCacheCreationTokens += turn.Response.Usage.CacheCreationInputTokens
 			data.TokenUsage.TotalCacheReadTokens += turn.Response.Usage.CacheReadInputTokens
 		}
+	}
+
+	// Add any pending tool uses without results
+	for _, message := range pendingToolUses {
+		data.Messages = append(data.Messages, message)
+
 	}
 
 	return data, nil

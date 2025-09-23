@@ -1,4 +1,4 @@
-package ai
+package bot
 
 import (
 	"fmt"
@@ -26,7 +26,7 @@ func TestBuildPrompt_BasicTemplate(t *testing.T) {
 		},
 	}
 
-	repositoryContent, taskContent, err := BuildPrompt(tsk)
+	repositoryContent, taskContent, err := buildPrompt(tsk)
 	require.NoError(t, err)
 
 	// Verify repository content contains repository-specific information
@@ -58,6 +58,8 @@ func TestBuildPrompt_WithPullRequest(t *testing.T) {
 			Body:   "This is a test issue description",
 		},
 		PullRequest: &task.GithubPullRequest{
+			Owner:  "cchalm",
+			Repo:   "blundering-savant",
 			Number: 456,
 		},
 		CodebaseInfo: &task.CodebaseInfo{
@@ -65,12 +67,12 @@ func TestBuildPrompt_WithPullRequest(t *testing.T) {
 		},
 	}
 
-	repositoryContent, taskContent, err := BuildPrompt(tsk)
+	repositoryContent, taskContent, err := buildPrompt(tsk)
 	require.NoError(t, err)
 
 	// PR information should be in task content, not repository content
-	require.Contains(t, taskContent, "Pull Request #456 is open for this issue")
-	require.NotContains(t, repositoryContent, "Pull Request #456 is open for this issue")
+	require.Contains(t, taskContent, "User cchalm has opened pull request #456 for this issue.")
+	require.NotContains(t, repositoryContent, "pull request #456")
 }
 
 func TestBuildPrompt_WithStyleGuide(t *testing.T) {
@@ -93,7 +95,7 @@ func TestBuildPrompt_WithStyleGuide(t *testing.T) {
 		},
 	}
 
-	repositoryContent, taskContent, err := BuildPrompt(tsk)
+	repositoryContent, taskContent, err := buildPrompt(tsk)
 	require.NoError(t, err)
 
 	// Style guides should be in repository content, not task content
@@ -122,7 +124,7 @@ func TestBuildPrompt_WithFileTree(t *testing.T) {
 		},
 	}
 
-	repositoryContent, taskContent, err := BuildPrompt(tsk)
+	repositoryContent, taskContent, err := buildPrompt(tsk)
 	require.NoError(t, err)
 
 	// File tree should be in repository content, not task content
@@ -158,7 +160,7 @@ func TestBuildPrompt_WithCommentsRequiringResponses(t *testing.T) {
 		},
 	}
 
-	repositoryContent, taskContent, err := BuildPrompt(tsk)
+	repositoryContent, taskContent, err := buildPrompt(tsk)
 	require.NoError(t, err)
 
 	// Comments requiring responses should be in task content, not repository content
@@ -205,7 +207,7 @@ func TestBuildTemplateData_DoesNotTruncateShortFileTree(t *testing.T) {
 }
 
 func TestBuildSystemTemplate(t *testing.T) {
-	s, err := BuildSystemPrompt("Steve", "steve-the-dude")
+	s, err := buildSystemPrompt("Steve", "steve-the-dude")
 	require.NoError(t, err)
 	require.Contains(t, s, "Steve")
 	require.Contains(t, s, "steve-the-dude")

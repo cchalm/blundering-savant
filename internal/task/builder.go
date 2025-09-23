@@ -253,6 +253,10 @@ func (tb builder) getFileTree(ctx context.Context, owner, repo string) ([]string
 
 		path := *entry.Path
 
+		if entry.Type != nil && *entry.Type == "tree" {
+			path += "/"
+		}
+
 		// Check path length limit
 		if len(path) > maxPathLength {
 			continue
