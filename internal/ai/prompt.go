@@ -230,7 +230,13 @@ func buildTemplateData(tsk task.Task) promptTemplateData {
 
 	// Pull request information
 	if tsk.PullRequest != nil {
-		data.PullRequestNumber = &tsk.PullRequest.Number
+		data.PullRequest = &pullRequestData{
+			Number: tsk.PullRequest.Number,
+			Title:  tsk.PullRequest.Title,
+			Owner: userData{
+				Login: tsk.PullRequest.Owner,
+			},
+		}
 	}
 
 	// Style guides
@@ -318,6 +324,14 @@ type userData struct {
 	Login string
 }
 
+// pullRequestData represents a pull request in template data
+type pullRequestData struct {
+	Number int
+	Title  string
+	Body   string
+	Owner  userData
+}
+
 // commentData represents a comment in template data
 type commentData struct {
 	ID                int64
@@ -363,7 +377,7 @@ type promptTemplateData struct {
 	IssueNumber            int
 	IssueTitle             string
 	IssueBody              string
-	PullRequestNumber      *int
+	PullRequest            *pullRequestData
 	StyleGuides            map[string]string // path -> content
 	ReadmeContent          string
 	FileTree               []string
