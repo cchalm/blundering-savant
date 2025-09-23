@@ -1,4 +1,4 @@
-package ai
+package bot
 
 import (
 	"bytes"
@@ -23,7 +23,7 @@ var repositoryPromptTemplate string
 //go:embed task_prompt.tmpl
 var taskPromptTemplate string
 
-func BuildSystemPrompt(botName string, botUsername string) (string, error) {
+func buildSystemPrompt(botName string, botUsername string) (string, error) {
 	tmpl, err := template.New("system prompt").Parse(systemPromptTemplate)
 	if err != nil {
 		return "", fmt.Errorf("failed to parse system prompt template: %w", err)
@@ -44,8 +44,8 @@ func BuildSystemPrompt(botName string, botUsername string) (string, error) {
 	return buf.String(), nil
 }
 
-// BuildPrompt generates repository-specific and task-specific content blocks for Claude
-func BuildPrompt(tsk task.Task) (repositoryContent, taskContent string, err error) {
+// buildPrompt generates repository-specific and task-specific content blocks for Claude
+func buildPrompt(tsk task.Task) (repositoryContent, taskContent string, err error) {
 	data := buildTemplateData(tsk)
 
 	// Create template with helper functions

@@ -400,7 +400,7 @@ func (b *Bot) initConversation(ctx context.Context, tsk task.Task, toolCtx *Tool
 	} else {
 		// Start a new conversation
 
-		systemPrompt, err := ai.BuildSystemPrompt("Blundering Savant", *b.user.Login)
+		systemPrompt, err := buildSystemPrompt("Blundering Savant", *b.user.Login)
 		if err != nil {
 			return nil, nil, fmt.Errorf("failed to build system prompt: %w", err)
 		}
@@ -408,7 +408,7 @@ func (b *Bot) initConversation(ctx context.Context, tsk task.Task, toolCtx *Tool
 		c := ai.NewConversation(b.anthropicClient, model, maxTokens, tools, systemPrompt)
 
 		log.Printf("Sending initial message to AI")
-		repositoryContent, taskContent, err := ai.BuildPrompt(tsk)
+		repositoryContent, taskContent, err := buildPrompt(tsk)
 		if err != nil {
 			return nil, nil, fmt.Errorf("failed to build prompt: %w", err)
 		}
