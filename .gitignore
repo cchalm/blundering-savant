@@ -21,12 +21,15 @@ profile.cov
 go.work
 go.work.sum
 
-# env file
-.env
+# env files
+.env*
+# Except for the example
+!.env.example
 
 # Artifact directories
 logs/
 conversations/
+test-artifacts/
 
 # IDE settings
 .vscode

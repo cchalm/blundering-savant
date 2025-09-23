@@ -111,12 +111,6 @@ just lint
 
 This project follows the Go style guide outlined in [`STYLE_GUIDE.md`](STYLE_GUIDE.md). Please refer to that document for detailed coding standards and best practices.
 
-
-
-
-
-
-
 ### Getting Help
 
 - Check the [Issues](https://github.com/cchalm/blundering-savant/issues) page for existing questions
