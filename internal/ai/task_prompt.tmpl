@@ -6,11 +6,17 @@ Issue #{{.IssueNumber}}: {{.IssueTitle}}
 
 {{.IssueBody | indent "> "}}
 
-{{- if .PullRequestNumber}}
+{{- with .PullRequest}}
 
 ## Pull Request
-Pull Request #{{.PullRequestNumber}} is open for this issue.
+User {{.Owner}} has opened pull request request #{{.Number}} for this issue.
+
+{{- if ne .Title ""}}
+
+Title: {{.Title}}
 {{- end}}
+{{- end}}
+
 {{- if .HasConversationHistory}}
 
 ## Conversation History
