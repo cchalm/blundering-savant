@@ -58,6 +58,8 @@ func TestBuildPrompt_WithPullRequest(t *testing.T) {
 			Body:   "This is a test issue description",
 		},
 		PullRequest: &task.GithubPullRequest{
+			Owner:  "cchalm",
+			Repo:   "blundering-savant",
 			Number: 456,
 		},
 		CodebaseInfo: &task.CodebaseInfo{
@@ -69,8 +71,8 @@ func TestBuildPrompt_WithPullRequest(t *testing.T) {
 	require.NoError(t, err)
 
 	// PR information should be in task content, not repository content
-	require.Contains(t, taskContent, "Pull Request #456 is open for this issue")
-	require.NotContains(t, repositoryContent, "Pull Request #456 is open for this issue")
+	require.Contains(t, taskContent, "User cchalm has opened pull request #456 for this issue.")
+	require.NotContains(t, repositoryContent, "pull request #456")
 }
 
 func TestBuildPrompt_WithStyleGuide(t *testing.T) {

@@ -9,7 +9,7 @@ Issue #{{.IssueNumber}}: {{.IssueTitle}}
 {{- with .PullRequest}}
 
 ## Pull Request
-User {{.Owner}} has opened pull request request #{{.Number}} for this issue.
+User {{.Owner.Login}} has opened pull request #{{.Number}} for this issue.
 
 {{- if ne .Title ""}}
 
