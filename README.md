@@ -69,7 +69,7 @@ Before using the bot with any deployment option, you'll need to set up the follo
 
 [^1]: There is currently no way to generate fine-grained access tokens for collaborator access to repositories owned by individuals. When you give a classic Personal Access Token to the bot, you should assume that it will attempt to abuse the broad permissions of that access token. As a repository owner, use collaborator permission settings and protected branches to restrict the bot's permissions to only the minimum required to perform its intended functions.
 
-[^2]: Some token scopes pose higher security risks than others. For example, the `workflow` scope allows modification of GitHub Actions workflows, potentially enabling arbitrary code execution with access to repository secrets.
+[^2]: Some token scopes pose higher security risks than others. For example, the `workflow` scope allows modification of GitHub Actions workflows, potentially enabling the AI to author and execute arbitrary code before a pull request is created and therefore without any oversight. While the bot being able to modify workflows is useful, we recommend leaving this scope disabled and using other tools to get AI input on workflows without the execution risk.
 
 ## Installation
 

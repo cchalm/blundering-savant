@@ -17,7 +17,7 @@ type InsufficientPermissionsError struct {
 }
 
 func (ipe InsufficientPermissionsError) Error() string {
-	return fmt.Sprintf("insufficient permissions for %s: %s", ipe.Operation, ipe.Reason)
+	return fmt.Sprintf("insufficient permissions to %s: %s", ipe.Operation, ipe.Reason)
 }
 
 type Changelist interface {
