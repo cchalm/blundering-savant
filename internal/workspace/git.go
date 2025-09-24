@@ -159,15 +159,11 @@ func (ggr *githubGitRepo) CommitChanges(ctx context.Context, branch string, chan
 
 	newTree, resp, err := ggr.git.CreateTree(ctx, ggr.owner, ggr.repo, *baseTree.SHA, treeChangeEntries)
 	if err != nil {
-		if resp.StatusCode == http.StatusNotFound {
-			// Check if this might be a workflow permissions issue
-			if ggr.isLikelyWorkflowPermissionError(treeChangeEntries) {
-				return nil, InsufficientPermissionsError{
-					Operation: "modify GitHub workflow files",
-					Reason:    "the GitHub token does not include the 'workflow' scope",
-				}
+		if resp.StatusCode == http.StatusNotFound && ggr.isLikelyWorkflowPermissionError(treeChangeEntries) {
+			return nil, InsufficientPermissionsError{
+				Operation: "modify GitHub workflow files",
+				Reason:    "the GitHub token does not include the 'workflow' scope",
 			}
-			return nil, fmt.Errorf("failed to create tree (404 error): %w", err)
 		}
 		return nil, fmt.Errorf("failed to create tree: %w", err)
 	}
