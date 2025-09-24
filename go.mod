@@ -5,9 +5,15 @@ go 1.24.3
 require (
 	github.com/anthropics/anthropic-sdk-go v1.9.1
 	github.com/google/go-github/v72 v72.0.0
+	github.com/google/uuid v1.6.0
 	github.com/joho/godotenv v1.5.1
 	github.com/spf13/cobra v1.10.1
 	github.com/stretchr/testify v1.10.0
+	go.opentelemetry.io/otel v1.32.0
+	go.opentelemetry.io/otel/exporters/otlp/otlptrace v1.32.0
+	go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp v1.32.0
+	go.opentelemetry.io/otel/sdk v1.32.0
+	go.opentelemetry.io/otel/trace v1.32.0
 	golang.org/x/oauth2 v0.30.0
 )
 

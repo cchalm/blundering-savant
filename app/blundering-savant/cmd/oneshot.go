@@ -74,6 +74,17 @@ func runTaskMode(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to get github user: %w", err)
 	}
 
+	// Create telemetry provider
+	telemetryProvider, err := createTelemetryProvider(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to create telemetry provider: %w", err)
+	}
+	defer func() {
+		if err := telemetryProvider.Shutdown(ctx); err != nil {
+			log.Printf("Warning: failed to shutdown telemetry provider: %v", err)
+		}
+	}()
+
 	// Create workspace factory
 	workspaceFactory := &remoteValidationWorkspaceFactory{
 		githubClient:           botGithubClient,
@@ -81,7 +92,7 @@ func runTaskMode(cmd *cobra.Command, args []string) error {
 	}
 
 	// Create bot (no conversation history in task mode)
-	b := bot.New(botGithubClient, botUser, anthropicClient, nil, workspaceFactory)
+	b := bot.New(botGithubClient, botUser, anthropicClient, nil, workspaceFactory, telemetryProvider)
 
 	// Build task
 	taskBuilder := task.NewBuilder(systemGithubClient, botUser)

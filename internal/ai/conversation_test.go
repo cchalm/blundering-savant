@@ -71,14 +71,18 @@ func TestNeedsSummarization_MessageWithoutResponse(t *testing.T) {
 
 func TestConversationHistory(t *testing.T) {
 	conv := &Conversation{
-		systemPrompt: "test prompt",
-		Messages:     []ConversationTurn{},
+		systemPrompt:   "test prompt",
+		Messages:       []ConversationTurn{},
+		conversationID: "test-conv-id",
+		turnCounter:    3,
 	}
 
 	history := conv.History()
 
 	assert.Equal(t, "test prompt", history.SystemPrompt)
 	assert.Equal(t, 0, len(history.Messages))
+	assert.Equal(t, "test-conv-id", history.ConversationID)
+	assert.Equal(t, 3, history.TurnCounter)
 }
 
 func TestResumeConversation(t *testing.T) {
@@ -86,16 +90,20 @@ func TestResumeConversation(t *testing.T) {
 	client := anthropic.Client{}
 
 	history := ConversationHistory{
-		SystemPrompt: "test system prompt",
-		Messages:     []ConversationTurn{},
+		SystemPrompt:   "test system prompt",
+		Messages:       []ConversationTurn{},
+		ConversationID: "test-conv-id",
+		TurnCounter:    5,
 	}
 
-	conv, err := ResumeConversation(client, history, anthropic.ModelClaudeSonnet4_0, 4000, []anthropic.ToolParam{})
+	conv, err := ResumeConversation(client, history, anthropic.ModelClaudeSonnet4_0, 4000, []anthropic.ToolParam{}, nil)
 
 	require.NoError(t, err)
 	assert.Equal(t, "test system prompt", conv.systemPrompt)
 	assert.Equal(t, int64(100000), conv.tokenLimit)
 	assert.Equal(t, 0, len(conv.Messages))
+	assert.Equal(t, "test-conv-id", conv.conversationID)
+	assert.Equal(t, 5, conv.turnCounter)
 }
 
 // Test that summarization preserves expected structure

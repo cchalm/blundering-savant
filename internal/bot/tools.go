@@ -10,6 +10,7 @@ import (
 
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/cchalm/blundering-savant/internal/task"
+	"github.com/cchalm/blundering-savant/internal/telemetry"
 	"github.com/cchalm/blundering-savant/internal/workspace"
 	"github.com/google/go-github/v72/github"
 )
@@ -38,6 +39,14 @@ type ToolContext struct {
 	Workspace    Workspace
 	Task         task.Task
 	GithubClient *github.Client
+}
+
+// TelemetryContext provides telemetry data for tool recording
+type TelemetryContext struct {
+	Provider       *telemetry.Provider
+	ConversationID string
+	TurnID         string
+	TurnIndex      int
 }
 
 // ToolInputError represents an error that could be recovered by correcting inputs to the tool. This error will be
@@ -918,7 +927,7 @@ func (r *ToolRegistry) GetAllToolParams() []anthropic.ToolParam {
 }
 
 // ProcessToolUse processes a tool use block with the appropriate tool
-func (r *ToolRegistry) ProcessToolUse(ctx context.Context, block anthropic.ToolUseBlock, toolCtx *ToolContext) (*anthropic.ToolResultBlockParam, error) {
+func (r *ToolRegistry) ProcessToolUse(ctx context.Context, block anthropic.ToolUseBlock, toolCtx *ToolContext, telemetryData *TelemetryContext) (*anthropic.ToolResultBlockParam, error) {
 	tool, ok := r.GetTool(block.Name)
 	if !ok {
 		return nil, fmt.Errorf("unknown tool: %s", block.Name)
@@ -939,6 +948,12 @@ func (r *ToolRegistry) ProcessToolUse(ctx context.Context, block anthropic.ToolU
 	} else {
 		resultBlock = newToolResultBlockParam(block.ID, "", false)
 	}
+
+	// Record telemetry if available
+	if telemetryData != nil && telemetryData.Provider != nil {
+		r.recordToolUseTelemetry(ctx, block, resultBlock, telemetryData)
+	}
+
 	return &resultBlock, nil
 }
 
@@ -963,6 +978,47 @@ func (r *ToolRegistry) ReplayToolUse(ctx context.Context, toolUseBlock anthropic
 		return fmt.Errorf("error while replaying tool: %w", err)
 	}
 	return nil
+}
+
+// recordToolUseTelemetry records telemetry data for a tool use
+func (r *ToolRegistry) recordToolUseTelemetry(ctx context.Context, toolUse anthropic.ToolUseBlock, toolResult anthropic.ToolResultBlockParam, telemetryCtx *TelemetryContext) {
+	// Calculate tool use size (input JSON)
+	toolUseSize := len(toolUse.Input)
+
+	// Calculate tool result size
+	var toolResultSize int
+	if len(toolResult.Content) > 0 {
+		if textBlock := toolResult.Content[0].GetText(); textBlock != nil {
+			toolResultSize = len(textBlock.Text)
+		}
+	}
+
+	// Transform tool name if needed
+	var toolInput map[string]interface{}
+	if err := json.Unmarshal(toolUse.Input, &toolInput); err != nil {
+		log.Printf("Warning: failed to unmarshal tool input for telemetry: %v", err)
+		toolInput = make(map[string]interface{})
+	}
+
+	transformedToolName := telemetry.TransformToolName(toolUse.Name, toolInput)
+
+	// Check for error
+	hasError := false
+	if toolResult.IsError != nil {
+		hasError = *toolResult.IsError
+	}
+
+	// Record the tool use telemetry
+	telemetryCtx.Provider.RecordToolUse(ctx, telemetry.ToolUseTelemetry{
+		ToolName:       transformedToolName,
+		ToolUseSize:    toolUseSize,
+		ToolResultSize: toolResultSize,
+		HasError:       hasError,
+		ConversationID: telemetryCtx.ConversationID,
+		TurnID:         telemetryCtx.TurnID,
+		TurnIndex:      telemetryCtx.TurnIndex,
+		BotVersion:     telemetry.BotVersion,
+	})
 }
 
 // Helper function to create a ToolResultBlockParam, in contrast to anthropic.NewToolResultBlockParam which creates a

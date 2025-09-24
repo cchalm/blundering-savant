@@ -14,6 +14,7 @@ import (
 
 	"github.com/cchalm/blundering-savant/internal/ai"
 	"github.com/cchalm/blundering-savant/internal/task"
+	"github.com/cchalm/blundering-savant/internal/telemetry"
 	"github.com/cchalm/blundering-savant/internal/validator"
 	"github.com/cchalm/blundering-savant/internal/workspace"
 )
@@ -26,6 +27,7 @@ type Bot struct {
 	toolRegistry           *ToolRegistry
 	workspaceFactory       WorkspaceFactory
 	resumableConversations ConversationHistoryStore // May be nil
+	telemetryProvider      *telemetry.Provider      // May be nil
 
 	user *github.User
 }
@@ -74,6 +76,7 @@ func New(
 	anthropicClient anthropic.Client,
 	historyStore ConversationHistoryStore,
 	workspaceFactory WorkspaceFactory,
+	telemetryProvider *telemetry.Provider,
 ) *Bot {
 	return &Bot{
 		githubClient:           githubClient,
@@ -81,6 +84,7 @@ func New(
 		toolRegistry:           NewToolRegistry(),
 		workspaceFactory:       workspaceFactory,
 		resumableConversations: historyStore,
+		telemetryProvider:      telemetryProvider,
 		user:                   githubUser,
 	}
 }
@@ -242,12 +246,25 @@ func (b *Bot) processWithAI(ctx context.Context, tsk task.Task, workspace Worksp
 					return fmt.Errorf("failed to send tool results to AI: %w", err)
 				}
 			} else {
+				// Create telemetry context for this turn
+				var telemetryCtx *TelemetryContext
+				if b.telemetryProvider != nil {
+					convTelemetry := conversation.GetConversationTelemetry()
+					turnTelemetry := conversation.GetCurrentTurnTelemetry()
+					telemetryCtx = &TelemetryContext{
+						Provider:       b.telemetryProvider,
+						ConversationID: convTelemetry.ConversationID,
+						TurnID:         turnTelemetry.TurnID,
+						TurnIndex:      convTelemetry.TurnIndex,
+					}
+				}
+
 				toolResults := []anthropic.ContentBlockParamUnion{}
 				for _, toolUse := range toolUses {
 					log.Printf("    Executing tool: %s", toolUse.Name)
 
 					// Process the tool use with the registry
-					toolResult, err := b.toolRegistry.ProcessToolUse(ctx, toolUse, toolCtx)
+					toolResult, err := b.toolRegistry.ProcessToolUse(ctx, toolUse, toolCtx, telemetryCtx)
 					if err != nil {
 						return fmt.Errorf("failed to process tool use: %w", err)
 					}
@@ -373,7 +390,7 @@ func (b *Bot) initConversation(ctx context.Context, tsk task.Task, toolCtx *Tool
 	}
 
 	if history != nil {
-		conv, err := ai.ResumeConversation(b.anthropicClient, *history, model, maxTokens, tools)
+		conv, err := ai.ResumeConversation(b.anthropicClient, *history, model, maxTokens, tools, b.telemetryProvider)
 		if err != nil {
 			return nil, nil, fmt.Errorf("failed to resume conversation: %w", err)
 		}
@@ -414,7 +431,7 @@ func (b *Bot) initConversation(ctx context.Context, tsk task.Task, toolCtx *Tool
 			return nil, nil, fmt.Errorf("failed to build system prompt: %w", err)
 		}
 
-		c := ai.NewConversation(b.anthropicClient, model, maxTokens, tools, systemPrompt)
+		c := ai.NewConversation(b.anthropicClient, model, maxTokens, tools, systemPrompt, b.telemetryProvider)
 
 		log.Printf("Sending initial message to AI")
 		repositoryContent, taskContent, err := buildPrompt(tsk)

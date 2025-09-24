@@ -57,6 +57,17 @@ func runPollMode(cmd *cobra.Command, args []string) error {
 		historyStore = ai.NewFileSystemConversationHistoryStore(config.ResumableConversationsDir)
 	}
 
+	// Create telemetry provider
+	telemetryProvider, err := createTelemetryProvider(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to create telemetry provider: %w", err)
+	}
+	defer func() {
+		if err := telemetryProvider.Shutdown(ctx); err != nil {
+			log.Printf("Warning: failed to shutdown telemetry provider: %v", err)
+		}
+	}()
+
 	// Create workspace factory
 	workspaceFactory := &remoteValidationWorkspaceFactory{
 		githubClient:           botGithubClient,
@@ -65,7 +76,7 @@ func runPollMode(cmd *cobra.Command, args []string) error {
 
 	// Create task generator and bot
 	taskGen := task.NewGenerator(systemGithubClient, githubUser, config.CheckInterval)
-	b := bot.New(botGithubClient, githubUser, anthropicClient, historyStore, workspaceFactory)
+	b := bot.New(botGithubClient, githubUser, anthropicClient, historyStore, workspaceFactory, telemetryProvider)
 
 	log.Printf("Bot started. Monitoring issues for @%s every %s", *githubUser.Login, config.CheckInterval)
 

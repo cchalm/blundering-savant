@@ -11,6 +11,7 @@ import (
 	"github.com/anthropics/anthropic-sdk-go/option"
 	"github.com/cchalm/blundering-savant/internal/bot"
 	"github.com/cchalm/blundering-savant/internal/task"
+	"github.com/cchalm/blundering-savant/internal/telemetry"
 	"github.com/cchalm/blundering-savant/internal/transport"
 	"github.com/cchalm/blundering-savant/internal/workspace"
 	"github.com/google/go-github/v72/github"
@@ -51,6 +52,14 @@ func createAnthropicClient(apiKey string) anthropic.Client {
 		option.WithAPIKey(apiKey),
 		option.WithMaxRetries(5),
 	)
+}
+
+func createTelemetryProvider(ctx context.Context) (*telemetry.Provider, error) {
+	telemetryConfig := telemetry.TelemetryConfig{
+		Enabled:        config.TelemetryEnabled,
+		JaegerEndpoint: config.JaegerEndpoint,
+	}
+	return telemetry.NewProvider(ctx, telemetryConfig)
 }
 
 // remoteValidationWorkspaceFactory creates instances of RemoteValidationWorkspace

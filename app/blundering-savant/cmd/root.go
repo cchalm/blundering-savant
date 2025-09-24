@@ -31,6 +31,12 @@ func loadRootConfig(_ *cobra.Command, _ []string) {
 	loadFromEnv(&config.BotGithubToken, "BOT_GITHUB_TOKEN")
 	loadFromEnv(&config.AnthropicAPIKey, "ANTHROPIC_API_KEY")
 	loadFromEnv(&config.ValidationWorkflowName, "VALIDATION_WORKFLOW_NAME")
+
+	// Load optional telemetry configuration
+	loadOptionalFromEnv(&config.JaegerEndpoint, "JAEGER_ENDPOINT")
+	if config.JaegerEndpoint != "" {
+		config.TelemetryEnabled = true
+	}
 }
 
 func init() {

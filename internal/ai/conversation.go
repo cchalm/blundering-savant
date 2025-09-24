@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/anthropics/anthropic-sdk-go"
+	"github.com/cchalm/blundering-savant/internal/telemetry"
 )
 
 type Conversation struct {
@@ -20,6 +21,11 @@ type Conversation struct {
 
 	maxOutputTokens int64 // Maximum number of output tokens per response
 	tokenLimit      int64 // When to trigger summarization
+
+	// Telemetry
+	telemetryProvider *telemetry.Provider
+	conversationID    string
+	turnCounter       int
 }
 
 // ConversationTurn is a pair of messages: a user message, and an optional assistant response
@@ -34,6 +40,7 @@ func NewConversation(
 	maxOutputTokens int64,
 	tools []anthropic.ToolParam,
 	systemPrompt string,
+	telemetryProvider *telemetry.Provider,
 ) *Conversation {
 
 	return &Conversation{
@@ -45,6 +52,11 @@ func NewConversation(
 
 		maxOutputTokens: maxOutputTokens,
 		tokenLimit:      100000, // 100k token limit
+
+		// Telemetry
+		telemetryProvider: telemetryProvider,
+		conversationID:    telemetry.NewConversationID(),
+		turnCounter:       0,
 	}
 }
 
@@ -54,6 +66,7 @@ func ResumeConversation(
 	model anthropic.Model,
 	maxOutputTokens int64,
 	tools []anthropic.ToolParam,
+	telemetryProvider *telemetry.Provider,
 ) (*Conversation, error) {
 	c := &Conversation{
 		client: anthropicClient,
@@ -65,6 +78,11 @@ func ResumeConversation(
 
 		maxOutputTokens: maxOutputTokens,
 		tokenLimit:      100000, // 100k token limit
+
+		// Telemetry - restored conversations get new conversation ID but preserve turn count
+		telemetryProvider: telemetryProvider,
+		conversationID:    history.ConversationID,
+		turnCounter:       history.TurnCounter,
 	}
 	return c, nil
 }
@@ -170,6 +188,9 @@ func (cc *Conversation) sendMessage(ctx context.Context, enableCache bool, messa
 
 	// Record the response
 	cc.Messages[len(cc.Messages)-1].Response = &response
+
+	// Increment turn counter for telemetry
+	cc.turnCounter++
 
 	// Remove the cache control element from the conversation history if caching was enabled
 	if enableCache {
@@ -303,14 +324,35 @@ func (cc *Conversation) generateConversationSummary(ctx context.Context) (*anthr
 
 // ConversationHistory contains a serializable and resumable snapshot of a Conversation
 type ConversationHistory struct {
-	SystemPrompt string             `json:"systemPrompt"`
-	Messages     []ConversationTurn `json:"messages"`
+	SystemPrompt   string             `json:"systemPrompt"`
+	Messages       []ConversationTurn `json:"messages"`
+	ConversationID string             `json:"conversationId"`
+	TurnCounter    int                `json:"turnCounter"`
 }
 
 // History returns a serializable conversation history
 func (cc *Conversation) History() ConversationHistory {
 	return ConversationHistory{
-		SystemPrompt: cc.systemPrompt,
-		Messages:     cc.Messages,
+		SystemPrompt:   cc.systemPrompt,
+		Messages:       cc.Messages,
+		ConversationID: cc.conversationID,
+		TurnCounter:    cc.turnCounter,
+	}
+}
+
+// GetConversationTelemetry returns telemetry data for the current conversation
+func (cc *Conversation) GetConversationTelemetry() telemetry.ConversationTelemetry {
+	return telemetry.ConversationTelemetry{
+		ConversationID: cc.conversationID,
+		BotVersion:     telemetry.BotVersion,
+		TurnIndex:      cc.turnCounter,
+	}
+}
+
+// GetCurrentTurnTelemetry returns telemetry data for the current turn
+func (cc *Conversation) GetCurrentTurnTelemetry() telemetry.TurnTelemetry {
+	return telemetry.TurnTelemetry{
+		TurnID:    telemetry.NewTurnID(),
+		TurnIndex: cc.turnCounter,
 	}
 }

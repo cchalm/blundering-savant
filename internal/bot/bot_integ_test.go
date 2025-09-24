@@ -496,8 +496,10 @@ func newTestConversation(t *testing.T, toolRegistry ToolRegistry, previousMessag
 	require.NoError(t, err)
 
 	history := ai.ConversationHistory{
-		SystemPrompt: systemPrompt,
-		Messages:     previousMessages,
+		SystemPrompt:   systemPrompt,
+		Messages:       previousMessages,
+		ConversationID: "test-conv-id",
+		TurnCounter:    0,
 	}
 
 	model := anthropic.ModelClaudeSonnet4_0
@@ -509,6 +511,7 @@ func newTestConversation(t *testing.T, toolRegistry ToolRegistry, previousMessag
 		model,
 		maxTokens,
 		toolRegistry.GetAllToolParams(),
+		nil, // No telemetry provider for tests
 	)
 	require.NoError(t, err)
 
