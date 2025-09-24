@@ -10,7 +10,6 @@ import (
 )
 
 // InsufficientPermissionsError indicates that an operation failed due to insufficient GitHub token permissions.
-// This error is intended to be converted to a ToolInputError by the bot layer, prompting the bot to report a limitation.
 type InsufficientPermissionsError struct {
 	Operation string
 	Reason    string
