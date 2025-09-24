@@ -16,8 +16,8 @@ type Config struct {
 	ValidationWorkflowName string
 
 	// Telemetry config
-	TelemetryEnabled   bool
-	JaegerEndpoint     string
+	TelemetryEnabled bool
+	JaegerEndpoint   string
 
 	// One-shot options
 	QualifiedRepoName string

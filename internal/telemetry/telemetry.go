@@ -24,15 +24,15 @@ const (
 
 // TelemetryConfig holds the configuration for telemetry
 type TelemetryConfig struct {
-	Enabled       bool
+	Enabled        bool
 	JaegerEndpoint string
 }
 
 // Provider manages the OpenTelemetry trace provider
 type Provider struct {
-	provider   *trace.TracerProvider
-	tracer     otelTrace.Tracer
-	enabled    bool
+	provider *trace.TracerProvider
+	tracer   otelTrace.Tracer
+	enabled  bool
 }
 
 // NewProvider creates a new telemetry provider
@@ -94,29 +94,29 @@ type ConversationTelemetry struct {
 
 // TurnTelemetry holds telemetry data for a conversation turn
 type TurnTelemetry struct {
-	TurnID    string
-	TurnIndex int
+	TurnID     string
+	TurnIndex  int
 	TokenUsage TokenUsage
 }
 
 // TokenUsage represents token usage metrics
 type TokenUsage struct {
-	InputTokens            int64
-	OutputTokens           int64
-	CacheReadTokens        int64
-	CacheCreationTokens    int64
+	InputTokens         int64
+	OutputTokens        int64
+	CacheReadTokens     int64
+	CacheCreationTokens int64
 }
 
 // ToolUseTelemetry holds telemetry data for a tool use
 type ToolUseTelemetry struct {
-	ToolName        string
-	ToolUseSize     int
-	ToolResultSize  int
-	HasError        bool
-	ConversationID  string
-	TurnID          string
-	TurnIndex       int
-	BotVersion      string
+	ToolName       string
+	ToolUseSize    int
+	ToolResultSize int
+	HasError       bool
+	ConversationID string
+	TurnID         string
+	TurnIndex      int
+	BotVersion     string
 }
 
 // RecordToolUse records a tool use event
