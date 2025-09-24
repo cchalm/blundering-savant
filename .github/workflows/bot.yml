@@ -54,6 +54,7 @@ jobs:
         SYSTEM_GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         BOT_GITHUB_TOKEN: ${{ secrets.BOT_GITHUB_TOKEN }}
         ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        VALIDATION_WORKFLOW_NAME: ${{ vars.VALIDATION_WORKFLOW_NAME }}
       run: |
         echo "Processing ${{ github.event_name }}.${{ github.event.action }} by ${{ github.actor }}"
 
