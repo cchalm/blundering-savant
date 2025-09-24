@@ -235,21 +235,30 @@ func (b *Bot) processWithAI(ctx context.Context, tsk task.Task, workspace Worksp
 				}
 			}
 
-			toolResults := []anthropic.ContentBlockParamUnion{}
-			for _, toolUse := range toolUses {
-				log.Printf("    Executing tool: %s", toolUse.Name)
-
-				// Process the tool use with the registry
-				toolResult, err := b.toolRegistry.ProcessToolUse(ctx, toolUse, toolCtx)
+			if len(toolUses) == 0 {
+				log.Printf("    WARNING: Stop reason was 'tool_use', but no tool use blocks found in message. Reporting to AI for self-resolution")
+				response, err = conversation.SendMessage(ctx, anthropic.NewTextBlock("Error: No tool uses found in message. Was there a formatting issue?"))
 				if err != nil {
-					return fmt.Errorf("failed to process tool use: %w", err)
+					return fmt.Errorf("failed to send tool results to AI: %w", err)
 				}
-				toolResults = append(toolResults, anthropic.ContentBlockParamUnion{OfToolResult: toolResult})
-			}
-			log.Printf("    Sending tool results to AI and streaming response")
-			response, err = conversation.SendMessage(ctx, toolResults...)
-			if err != nil {
-				return fmt.Errorf("failed to send tool results to AI: %w", err)
+			} else {
+				toolResults := []anthropic.ContentBlockParamUnion{}
+				for _, toolUse := range toolUses {
+					log.Printf("    Executing tool: %s", toolUse.Name)
+
+					// Process the tool use with the registry
+					toolResult, err := b.toolRegistry.ProcessToolUse(ctx, toolUse, toolCtx)
+					if err != nil {
+						return fmt.Errorf("failed to process tool use: %w", err)
+					}
+					toolResults = append(toolResults, anthropic.ContentBlockParamUnion{OfToolResult: toolResult})
+				}
+
+				log.Printf("    Sending tool results to AI and streaming response")
+				response, err = conversation.SendMessage(ctx, toolResults...)
+				if err != nil {
+					return fmt.Errorf("failed to send tool results to AI: %w", err)
+				}
 			}
 		case anthropic.StopReasonMaxTokens:
 			return fmt.Errorf("exceeded max tokens")
