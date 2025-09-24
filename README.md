@@ -26,7 +26,7 @@ Before using the bot with any deployment option, you'll need to set up the follo
     - Click "Generate new token"
     - Select scopes:
       - `repo` (Full control of private repositories)
-      - `workflow` (If the bot should be allowed to modify `.github/workflows`)
+      - ⚠️ **DO NOT** select `workflow` scope - this would allow the bot to modify GitHub Actions workflows, potentially enabling arbitrary code execution with access to repository secrets
 
 3. **Add Bot as Collaborator**:
     - Switch to your **main** GitHub account
