@@ -7,13 +7,14 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"go.opentelemetry.io/otel"
-	"go.opentelemetry.io/otel/attribute"
-	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp"
-	"go.opentelemetry.io/otel/sdk/resource"
-	"go.opentelemetry.io/otel/sdk/trace"
-	semconv "go.opentelemetry.io/otel/semconv/v1.20.0"
-	otelTrace "go.opentelemetry.io/otel/trace"
+	// TODO: Add OpenTelemetry dependencies properly
+	// "go.opentelemetry.io/otel"
+	// "go.opentelemetry.io/otel/attribute"
+	// "go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp"
+	// "go.opentelemetry.io/otel/sdk/resource"
+	// "go.opentelemetry.io/otel/sdk/trace"
+	// semconv "go.opentelemetry.io/otel/semconv/v1.20.0"
+	// otelTrace "go.opentelemetry.io/otel/trace"
 )
 
 const (
@@ -28,11 +29,9 @@ type TelemetryConfig struct {
 	JaegerEndpoint string
 }
 
-// Provider manages the OpenTelemetry trace provider
+// Provider manages the telemetry system (simplified implementation for now)
 type Provider struct {
-	provider *trace.TracerProvider
-	tracer   otelTrace.Tracer
-	enabled  bool
+	enabled bool
 }
 
 // NewProvider creates a new telemetry provider
@@ -42,47 +41,20 @@ func NewProvider(ctx context.Context, config TelemetryConfig) (*Provider, error)
 		return &Provider{enabled: false}, nil
 	}
 
-	log.Printf("Initializing telemetry with Jaeger endpoint: %s", config.JaegerEndpoint)
-
-	// Create OTLP HTTP exporter
-	exporter, err := otlptracehttp.New(ctx, otlptracehttp.WithEndpoint(config.JaegerEndpoint))
-	if err != nil {
-		return nil, fmt.Errorf("failed to create OTLP exporter: %w", err)
-	}
-
-	// Create resource
-	res, err := resource.New(ctx,
-		resource.WithAttributes(
-			semconv.ServiceName(serviceName),
-			semconv.ServiceVersion(serviceVersion),
-		),
-	)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create resource: %w", err)
-	}
-
-	// Create trace provider
-	provider := trace.NewTracerProvider(
-		trace.WithBatcher(exporter),
-		trace.WithResource(res),
-	)
-
-	// Set as global provider
-	otel.SetTracerProvider(provider)
+	log.Printf("Telemetry enabled - using simple logging implementation (OpenTelemetry integration to be implemented)")
 
 	return &Provider{
-		provider: provider,
-		tracer:   provider.Tracer(serviceName),
-		enabled:  true,
+		enabled: true,
 	}, nil
 }
 
 // Shutdown shuts down the telemetry provider
 func (p *Provider) Shutdown(ctx context.Context) error {
-	if !p.enabled || p.provider == nil {
+	if !p.enabled {
 		return nil
 	}
-	return p.provider.Shutdown(ctx)
+	log.Printf("Shutting down telemetry provider")
+	return nil
 }
 
 // ConversationTelemetry holds telemetry data for a conversation
@@ -125,18 +97,16 @@ func (p *Provider) RecordToolUse(ctx context.Context, toolUse ToolUseTelemetry) 
 		return
 	}
 
-	_, span := p.tracer.Start(ctx, "tool_use")
-	defer span.End()
-
-	span.SetAttributes(
-		attribute.String("tool.name", toolUse.ToolName),
-		attribute.Int("tool.use_size", toolUse.ToolUseSize),
-		attribute.Int("tool.result_size", toolUse.ToolResultSize),
-		attribute.Bool("tool.has_error", toolUse.HasError),
-		attribute.String("conversation.id", toolUse.ConversationID),
-		attribute.String("turn.id", toolUse.TurnID),
-		attribute.Int("turn.index", toolUse.TurnIndex),
-		attribute.String("bot.version", toolUse.BotVersion),
+	// For now, just log the telemetry data
+	log.Printf("TELEMETRY: Tool use - name=%s, use_size=%d, result_size=%d, has_error=%t, conversation_id=%s, turn_id=%s, turn_index=%d, bot_version=%s",
+		toolUse.ToolName,
+		toolUse.ToolUseSize,
+		toolUse.ToolResultSize,
+		toolUse.HasError,
+		toolUse.ConversationID,
+		toolUse.TurnID,
+		toolUse.TurnIndex,
+		toolUse.BotVersion,
 	)
 }
 
