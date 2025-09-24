@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net/http"
 	"strings"
 
 	"github.com/anthropics/anthropic-sdk-go"
@@ -571,14 +572,28 @@ func (t *AddReactionTool) Run(ctx context.Context, block anthropic.ToolUseBlock,
 
 	switch input.CommentType {
 	case "issue", "PR":
-		_, _, err = toolCtx.GithubClient.Reactions.CreateIssueCommentReaction(ctx, toolCtx.Task.Issue.Owner, toolCtx.Task.Issue.Repo, input.CommentID, input.Reaction)
+		_, resp, err := toolCtx.GithubClient.Reactions.CreateIssueCommentReaction(ctx, toolCtx.Task.Issue.Owner, toolCtx.Task.Issue.Repo, input.CommentID, input.Reaction)
 		if err != nil {
-			return nil, err
+			switch resp.StatusCode {
+			case http.StatusNotFound:
+				return nil, ToolInputError{fmt.Errorf("failed to create reaction (%s); check that you are providing a valid comment ID", resp.Status)}
+			case http.StatusUnprocessableEntity:
+				return nil, ToolInputError{fmt.Errorf("failed to create reaction (%s); check that you are providing a valid reaction", resp.Status)}
+			default:
+				return nil, err
+			}
 		}
 	case "PR review":
-		_, _, err = toolCtx.GithubClient.Reactions.CreatePullRequestCommentReaction(ctx, toolCtx.Task.Issue.Owner, toolCtx.Task.Issue.Repo, input.CommentID, input.Reaction)
+		_, resp, err := toolCtx.GithubClient.Reactions.CreatePullRequestCommentReaction(ctx, toolCtx.Task.Issue.Owner, toolCtx.Task.Issue.Repo, input.CommentID, input.Reaction)
 		if err != nil {
-			return nil, err
+			switch resp.StatusCode {
+			case http.StatusNotFound:
+				return nil, ToolInputError{fmt.Errorf("failed to create reaction (%s); check that you are providing a valid comment ID", resp.Status)}
+			case http.StatusUnprocessableEntity:
+				return nil, ToolInputError{fmt.Errorf("failed to create reaction (%s); check that you are providing a valid reaction", resp.Status)}
+			default:
+				return nil, err
+			}
 		}
 	}
 
