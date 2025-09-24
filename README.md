@@ -24,9 +24,8 @@ Before using the bot with any deployment option, you'll need to set up the follo
     - Switch to your **bot** GitHub account
     - Go to Settings → Developer settings → Personal access tokens → Tokens (classic)
     - Click "Generate new token"
-    - Select scopes:
+    - Select scopes[^2]:
       - `repo` (Full control of private repositories)
-      - ⚠️ **DO NOT** select `workflow` scope - this would allow the bot to modify GitHub Actions workflows, potentially enabling arbitrary code execution with access to repository secrets
 
 3. **Add Bot as Collaborator**:
     - Switch to your **main** GitHub account
@@ -69,6 +68,8 @@ Before using the bot with any deployment option, you'll need to set up the follo
       ```
 
 [^1]: There is currently no way to generate fine-grained access tokens for collaborator access to repositories owned by individuals. When you give a classic Personal Access Token to the bot, you should assume that it will attempt to abuse the broad permissions of that access token. As a repository owner, use collaborator permission settings and protected branches to restrict the bot's permissions to only the minimum required to perform its intended functions.
+
+[^2]: Some token scopes pose higher security risks than others. For example, the `workflow` scope allows modification of GitHub Actions workflows, potentially enabling arbitrary code execution with access to repository secrets.
 
 ## Installation
 

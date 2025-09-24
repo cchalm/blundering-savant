@@ -12,13 +12,12 @@ import (
 // InsufficientPermissionsError indicates that an operation failed due to insufficient GitHub token permissions.
 // This error is intended to be converted to a ToolInputError by the bot layer, prompting the bot to report a limitation.
 type InsufficientPermissionsError struct {
-	Operation   string
-	Reason      string
-	Suggestions string
+	Operation string
+	Reason    string
 }
 
 func (ipe InsufficientPermissionsError) Error() string {
-	return fmt.Sprintf("insufficient permissions for %s: %s. %s", ipe.Operation, ipe.Reason, ipe.Suggestions)
+	return fmt.Sprintf("insufficient permissions for %s: %s", ipe.Operation, ipe.Reason)
 }
 
 type Changelist interface {
@@ -165,9 +164,8 @@ func (ggr *githubGitRepo) CommitChanges(ctx context.Context, branch string, chan
 			// Check if this might be a workflow permissions issue
 			if ggr.isLikelyWorkflowPermissionError(treeChangeEntries) {
 				return nil, InsufficientPermissionsError{
-					Operation:   "modifying GitHub workflow files",
-					Reason:      "the GitHub token does not include the 'workflow' scope",
-					Suggestions: "To modify workflow files, the bot's GitHub token must include the 'workflow' scope. However, this scope enables arbitrary code execution and access to repository secrets, which poses significant security risks.",
+					Operation: "modify GitHub workflow files",
+					Reason:    "the GitHub token does not include the 'workflow' scope",
 				}
 			}
 			return nil, fmt.Errorf("failed to create tree (404 error): %w", err)
