@@ -4,9 +4,20 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/google/go-github/v72/github"
 )
+
+// InsufficientPermissionsError indicates that an operation failed due to insufficient GitHub token permissions.
+type InsufficientPermissionsError struct {
+	Operation string
+	Reason    string
+}
+
+func (ipe InsufficientPermissionsError) Error() string {
+	return fmt.Sprintf("insufficient permissions to %s: %s", ipe.Operation, ipe.Reason)
+}
 
 type Changelist interface {
 	ForEachModified(fn func(path string, content string) error) error
@@ -148,8 +159,11 @@ func (ggr *githubGitRepo) CommitChanges(ctx context.Context, branch string, chan
 
 	newTree, resp, err := ggr.git.CreateTree(ctx, ggr.owner, ggr.repo, *baseTree.SHA, treeChangeEntries)
 	if err != nil {
-		if resp.StatusCode == http.StatusNotFound {
-			return nil, fmt.Errorf("failed to create tree (is the bot trying to modify a GitHub workflow with a token that does not include the 'workflow' scope?): %w", err)
+		if resp.StatusCode == http.StatusNotFound && ggr.isLikelyWorkflowPermissionError(treeChangeEntries) {
+			return nil, InsufficientPermissionsError{
+				Operation: "modify GitHub workflow files",
+				Reason:    "the GitHub token does not include the 'workflow' scope",
+			}
 		}
 		return nil, fmt.Errorf("failed to create tree: %w", err)
 	}
@@ -238,4 +252,18 @@ func (ggr *githubGitRepo) CompareCommits(ctx context.Context, base string, head 
 	}
 
 	return comparison, nil
+}
+
+// isLikelyWorkflowPermissionError checks if the tree entries suggest a workflow permission issue
+func (ggr *githubGitRepo) isLikelyWorkflowPermissionError(entries []*github.TreeEntry) bool {
+	for _, entry := range entries {
+		if entry.Path != nil {
+			path := *entry.Path
+			// Check for GitHub workflows directory
+			if strings.HasPrefix(path, ".github/workflows/") {
+				return true
+			}
+		}
+	}
+	return false
 }

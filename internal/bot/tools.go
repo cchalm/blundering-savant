@@ -357,6 +357,11 @@ func (t *ValidateChangesTool) Run(ctx context.Context, block anthropic.ToolUseBl
 	// Validate changes, if any
 	result, err := toolCtx.Workspace.ValidateChanges(ctx, &input.CommitMessage)
 	if err != nil {
+		// Check if this is an insufficient permissions error that should be recoverable
+		var permErr workspace.InsufficientPermissionsError
+		if errors.As(err, &permErr) {
+			return nil, ToolInputError{cause: fmt.Errorf("unable to %s: %s", permErr.Operation, permErr.Reason)}
+		}
 		return nil, fmt.Errorf("failed to commit changes: %w", err)
 	}
 
