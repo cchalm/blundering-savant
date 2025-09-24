@@ -23,21 +23,24 @@ jobs:
       with:
         go-version: '1.24.4'
 
-    - name: Format Go files
+    - name: Tidy changes
       run: |
         # Format all Go files
         gofmt -w .
 
-        # Check if any files were changed by gofmt
+        # Clean up dependencies
+        go mod tidy
+
+        # Check if any files were changed
         if [ -n "$(git status --porcelain)" ]; then
-          echo "Files were formatted, committing changes..."
+          echo "Files were updated, committing changes..."
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Action"
           git add .
-          git commit -m "Auto-format Go files with gofmt"
+          git commit -m "Auto-format Go files and tidy dependencies"
           git push
         else
-          echo "No formatting changes needed"
+          echo "No changes needed"
         fi
 
     - name: Build
