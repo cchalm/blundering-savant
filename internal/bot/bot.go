@@ -275,8 +275,7 @@ func (b *Bot) processWithAI(ctx context.Context, tsk task.Task, workspace Worksp
 		case anthropic.StopReasonRefusal:
 			return fmt.Errorf("the AI refused to generate a response due to safety concerns")
 		case anthropic.StopReasonEndTurn:
-			// AI finished the turn - we're done
-			break
+			// AI finished the turn - the loop condition will handle exiting
 		default:
 			return fmt.Errorf("unexpected stop reason: %v", response.StopReason)
 		}
