@@ -174,7 +174,6 @@ func (b *Bot) processWithAI(ctx context.Context, tsk task.Task, workspace Worksp
 	}
 
 	i := 0
-	var pendingSummaryRequest *string // Track deferred summary request
 conversationLoop:
 	for response.StopReason != anthropic.StopReasonEndTurn {
 		if i > maxIterations {
@@ -191,11 +190,6 @@ conversationLoop:
 
 		// Check if we need to summarize the conversation due to token limits
 		shouldSummarize := conversation.NeedsSummarization()
-		if shouldSummarize && pendingSummaryRequest == nil {
-			log.Printf("Conversation needs summarization due to token limit - will defer until appropriate moment")
-			summaryPrompt := buildSummaryRequest()
-			pendingSummaryRequest = &summaryPrompt
-		}
 
 		log.Printf("Processing AI response, iteration: %d", i+1)
 		for _, contentBlock := range response.Content {
@@ -231,7 +225,6 @@ conversationLoop:
 			if len(toolUses) == 0 {
 				log.Printf("    WARNING: Stop reason was 'tool_use', but no tool use blocks found in message. Reporting to AI for self-resolution")
 				messageContent := []anthropic.ContentBlockParamUnion{anthropic.NewTextBlock("Error: No tool uses found in message. Was there a formatting issue?")}
-				// Don't include summary request here - we'll handle it in the next natural opportunity
 				response, err = conversation.SendMessage(ctx, messageContent...)
 				if err != nil {
 					return fmt.Errorf("failed to send tool results to AI: %w", err)
@@ -249,13 +242,34 @@ conversationLoop:
 					messageContent = append(messageContent, anthropic.ContentBlockParamUnion{OfToolResult: toolResult})
 				}
 
-				// Don't include summary request with tool results as this violates the API requirement
-				// that tool uses must be immediately followed by tool results only
+				// If summarization is needed, append the summary request after the tool results
+				if shouldSummarize {
+					log.Printf("Appending summarization request after tool results")
+					summaryPrompt := buildSummaryRequest()
+					messageContent = append(messageContent, anthropic.NewTextBlock(summaryPrompt))
+				}
 
 				log.Printf("    Sending tool results to AI and streaming response")
 				response, err = conversation.SendMessage(ctx, messageContent...)
 				if err != nil {
 					return fmt.Errorf("failed to send tool results to AI: %w", err)
+				}
+
+				// If we requested summarization, process it
+				if shouldSummarize {
+					err = b.performSummarization(ctx, conversation)
+					if err != nil {
+						log.Printf("Warning: failed to perform summarization: %v", err)
+						// Continue processing - summarization failure shouldn't stop the bot
+					} else {
+						// Update persisted conversation with the summarized version
+						if b.resumableConversations != nil {
+							err = b.resumableConversations.Set(strconv.Itoa(tsk.Issue.Number), conversation.History())
+							if err != nil {
+								log.Printf("Warning: failed to persist summarized conversation history: %v", err)
+							}
+						}
+					}
 				}
 			}
 		case anthropic.StopReasonMaxTokens:
@@ -263,18 +277,8 @@ conversationLoop:
 		case anthropic.StopReasonRefusal:
 			return fmt.Errorf("the AI refused to generate a response due to safety concerns")
 		case anthropic.StopReasonEndTurn:
-			// If we have a pending summary request, send it now
-			if pendingSummaryRequest != nil {
-				log.Printf("AI finished turn and we have pending summarization request - sending now")
-				response, err = conversation.SendMessage(ctx, anthropic.NewTextBlock(*pendingSummaryRequest))
-				if err != nil {
-					return fmt.Errorf("failed to send summary request to AI: %w", err)
-				}
-				// Don't clear pendingSummaryRequest yet - we'll clear it after we get the summary response
-			} else {
-				// AI finished the turn and no summarization is needed - we're done
-				break conversationLoop
-			}
+			// AI finished the turn - we're done
+			break conversationLoop
 		default:
 			return fmt.Errorf("unexpected stop reason: %v", response.StopReason)
 		}
@@ -285,40 +289,6 @@ conversationLoop:
 			log.Printf("Warning: failed to create logs directory: %v", err)
 		} else if err := os.WriteFile(fmt.Sprintf("logs/conversation_issue_%d.md", tsk.Issue.Number), []byte(s), 0666); err != nil {
 			log.Printf("Warning: failed to write conversation to markdown file for debugging: %v", err)
-		}
-
-		// Handle summarization after receiving AI response
-		if pendingSummaryRequest != nil && (response.StopReason == anthropic.StopReasonEndTurn || len(response.Content) > 0) {
-			// Check if the response contains text (which should be the summary)
-			hasSummaryText := false
-		findSummaryText:
-			for _, contentBlock := range response.Content {
-				switch textBlock := contentBlock.AsAny().(type) {
-				case anthropic.TextBlock:
-					if len(strings.TrimSpace(textBlock.Text)) > 0 {
-						hasSummaryText = true
-						break findSummaryText
-					}
-				}
-			}
-
-			if hasSummaryText {
-				log.Printf("Received summary from AI, performing conversation summarization")
-				err = b.performSummarization(ctx, conversation)
-				if err != nil {
-					log.Printf("Warning: failed to perform summarization: %v", err)
-					// Continue processing - summarization failure shouldn't stop the bot
-				} else {
-					// Update persisted conversation with the summarized version
-					if b.resumableConversations != nil {
-						err = b.resumableConversations.Set(strconv.Itoa(tsk.Issue.Number), conversation.History())
-						if err != nil {
-							log.Printf("Warning: failed to persist summarized conversation history: %v", err)
-						}
-					}
-				}
-				pendingSummaryRequest = nil // Clear the pending request since we've handled it
-			}
 		}
 
 		i++
