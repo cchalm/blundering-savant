@@ -224,8 +224,7 @@ conversationLoop:
 
 			if len(toolUses) == 0 {
 				log.Printf("    WARNING: Stop reason was 'tool_use', but no tool use blocks found in message. Reporting to AI for self-resolution")
-				messageContent := []anthropic.ContentBlockParamUnion{anthropic.NewTextBlock("Error: No tool uses found in message. Was there a formatting issue?")}
-				response, err = conversation.SendMessage(ctx, messageContent...)
+				response, err = conversation.SendMessage(ctx, anthropic.NewTextBlock("Error: No tool uses found in message. Was there a formatting issue?"))
 				if err != nil {
 					return fmt.Errorf("failed to send tool results to AI: %w", err)
 				}
@@ -245,7 +244,7 @@ conversationLoop:
 				// If summarization is needed, append the summary request after the tool results
 				if shouldSummarize {
 					log.Printf("Appending summarization request after tool results")
-					summaryPrompt := buildSummaryRequest()
+					summaryPrompt := buildSummaryPrompt()
 					messageContent = append(messageContent, anthropic.NewTextBlock(summaryPrompt))
 				}
 
@@ -257,7 +256,7 @@ conversationLoop:
 
 				// If we requested summarization, process it
 				if shouldSummarize {
-					err = b.performSummarization(ctx, conversation)
+					err = b.truncateConversationUsingSummary(ctx, conversation)
 					if err != nil {
 						log.Printf("Warning: failed to perform summarization: %v", err)
 						// Continue processing - summarization failure shouldn't stop the bot
@@ -467,8 +466,8 @@ func (b *Bot) rerunStatefulToolCalls(ctx context.Context, toolCtx *ToolContext, 
 	return nil
 }
 
-// buildSummaryRequest creates the prompt for requesting a conversation summary
-func buildSummaryRequest() string {
+// buildSummaryPrompt creates the prompt for requesting a conversation summary
+func buildSummaryPrompt() string {
 	var summaryPrompt strings.Builder
 	summaryPrompt.WriteString("Please summarize all of the work you have done so far. Focus on:\n")
 	summaryPrompt.WriteString("1. Key decisions and changes made\n")
@@ -481,8 +480,12 @@ func buildSummaryRequest() string {
 	return summaryPrompt.String()
 }
 
-// performSummarization reconstructs the conversation with a summary
-func (b *Bot) performSummarization(ctx context.Context, conversation *ai.Conversation) error {
+// truncateConversationUsingSummary reconstructs the conversation with a summary.
+// Assumes:
+// 1. The last turn in the conversation includes a summary response from a prior summarization request
+// 2. There are at least 2 messages in the conversation
+// 3. The summary response is in the expected format and contains meaningful summary content
+func (b *Bot) truncateConversationUsingSummary(ctx context.Context, conversation *ai.Conversation) error {
 	if len(conversation.Messages) <= 2 {
 		// Don't summarize if we have too few messages
 		return nil
