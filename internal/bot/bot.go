@@ -175,6 +175,7 @@ func (b *Bot) processWithAI(ctx context.Context, tsk task.Task, workspace Worksp
 
 	i := 0
 	var pendingSummaryRequest *string // Track deferred summary request
+	conversationLoop: 
 	for response.StopReason != anthropic.StopReasonEndTurn {
 		if i > maxIterations {
 			return fmt.Errorf("exceeded maximum iterations (%d) without completion", maxIterations)
@@ -272,7 +273,7 @@ func (b *Bot) processWithAI(ctx context.Context, tsk task.Task, workspace Worksp
 				// Don't clear pendingSummaryRequest yet - we'll clear it after we get the summary response
 			} else {
 				// AI finished the turn and no summarization is needed - we're done
-				break
+				break conversationLoop
 			}
 		default:
 			return fmt.Errorf("unexpected stop reason: %v", response.StopReason)
