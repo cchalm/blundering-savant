@@ -174,7 +174,6 @@ func (b *Bot) processWithAI(ctx context.Context, tsk task.Task, workspace Worksp
 	}
 
 	i := 0
-conversationLoop:
 	for response.StopReason != anthropic.StopReasonEndTurn {
 		if i > maxIterations {
 			return fmt.Errorf("exceeded maximum iterations (%d) without completion", maxIterations)
@@ -277,7 +276,7 @@ conversationLoop:
 			return fmt.Errorf("the AI refused to generate a response due to safety concerns")
 		case anthropic.StopReasonEndTurn:
 			// AI finished the turn - we're done
-			break conversationLoop
+			break
 		default:
 			return fmt.Errorf("unexpected stop reason: %v", response.StopReason)
 		}
