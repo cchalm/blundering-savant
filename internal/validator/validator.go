@@ -125,7 +125,7 @@ func (gacv GithubActionCommitValidator) triggerWorkflowRun(ctx context.Context, 
 
 func (gacv GithubActionCommitValidator) waitForWorkflowStart(ctx context.Context, headSHA string) (*github.WorkflowRun, error) {
 	pollInterval := 2 * time.Second
-	timeout := 60 * time.Second
+	timeout := 200 * time.Second
 
 	log.Printf("Waiting up to %v for workflow run to be created", timeout)
 
