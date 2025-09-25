@@ -291,7 +291,7 @@ func (b *Bot) processWithAI(ctx context.Context, tsk task.Task, workspace Worksp
 			// Check if the response contains text (which should be the summary)
 			hasSummaryText := false
 			for _, contentBlock := range response.Content {
-				if textBlock, ok := contentBlock.AsAny().(type) {
+				switch textBlock := contentBlock.AsAny().(type) {
 				case anthropic.TextBlock:
 					if len(strings.TrimSpace(textBlock.Text)) > 0 {
 						hasSummaryText = true
