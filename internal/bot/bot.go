@@ -506,7 +506,7 @@ func buildSummaryRequest() string {
 	summaryPrompt.WriteString("4. Tools used and their outcomes\n\n")
 	summaryPrompt.WriteString("Please provide a comprehensive but concise summary that captures all important information needed to continue working effectively. ")
 	summaryPrompt.WriteString("There's no need to include the system prompt or initial repository information in your summary - focus on the actual work and changes made during our conversation.")
-	
+
 	return summaryPrompt.String()
 }
 

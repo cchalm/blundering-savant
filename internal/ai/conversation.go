@@ -214,8 +214,6 @@ func (cc *Conversation) NeedsSummarization() bool {
 	return totalTokens > cc.tokenLimit
 }
 
-
-
 // ConversationHistory contains a serializable and resumable snapshot of a Conversation
 type ConversationHistory struct {
 	SystemPrompt string             `json:"systemPrompt"`
