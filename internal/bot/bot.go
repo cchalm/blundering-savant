@@ -290,12 +290,13 @@ func (b *Bot) processWithAI(ctx context.Context, tsk task.Task, workspace Worksp
 		if pendingSummaryRequest != nil && (response.StopReason == anthropic.StopReasonEndTurn || len(response.Content) > 0) {
 			// Check if the response contains text (which should be the summary)
 			hasSummaryText := false
+		findSummaryText:
 			for _, contentBlock := range response.Content {
 				switch textBlock := contentBlock.AsAny().(type) {
 				case anthropic.TextBlock:
 					if len(strings.TrimSpace(textBlock.Text)) > 0 {
 						hasSummaryText = true
-						break
+						break findSummaryText
 					}
 				}
 			}
