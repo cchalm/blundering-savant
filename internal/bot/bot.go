@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"strings"
 
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/google/go-github/v72/github"
@@ -187,22 +188,7 @@ func (b *Bot) processWithAI(ctx context.Context, tsk task.Task, workspace Worksp
 		}
 
 		// Check if we need to summarize the conversation due to token limits
-		if conversation.NeedsSummarization() {
-			log.Printf("Summarizing conversation due to token limit")
-			err = conversation.Summarize(ctx)
-			if err != nil {
-				log.Printf("Warning: failed to summarize conversation: %v", err)
-				// Continue processing - summarization failure shouldn't stop the bot
-			} else {
-				// Update persisted conversation with the summarized version
-				if b.resumableConversations != nil {
-					err = b.resumableConversations.Set(strconv.Itoa(tsk.Issue.Number), conversation.History())
-					if err != nil {
-						log.Printf("Warning: failed to persist summarized conversation history: %v", err)
-					}
-				}
-			}
-		}
+		shouldSummarize := conversation.NeedsSummarization()
 
 		log.Printf("Processing AI response, iteration: %d", i+1)
 		for _, contentBlock := range response.Content {
@@ -242,7 +228,7 @@ func (b *Bot) processWithAI(ctx context.Context, tsk task.Task, workspace Worksp
 					return fmt.Errorf("failed to send tool results to AI: %w", err)
 				}
 			} else {
-				toolResults := []anthropic.ContentBlockParamUnion{}
+				messageContent := []anthropic.ContentBlockParamUnion{}
 				for _, toolUse := range toolUses {
 					log.Printf("    Executing tool: %s", toolUse.Name)
 
@@ -251,13 +237,37 @@ func (b *Bot) processWithAI(ctx context.Context, tsk task.Task, workspace Worksp
 					if err != nil {
 						return fmt.Errorf("failed to process tool use: %w", err)
 					}
-					toolResults = append(toolResults, anthropic.ContentBlockParamUnion{OfToolResult: toolResult})
+					messageContent = append(messageContent, anthropic.ContentBlockParamUnion{OfToolResult: toolResult})
+				}
+
+				// If summarization is needed, append the summary request after the tool results
+				if shouldSummarize {
+					log.Printf("Appending summarization request after tool results")
+					summaryPrompt := buildSummaryPrompt()
+					messageContent = append(messageContent, anthropic.NewTextBlock(summaryPrompt))
 				}
 
 				log.Printf("    Sending tool results to AI and streaming response")
-				response, err = conversation.SendMessage(ctx, toolResults...)
+				response, err = conversation.SendMessage(ctx, messageContent...)
 				if err != nil {
 					return fmt.Errorf("failed to send tool results to AI: %w", err)
+				}
+
+				// If we requested summarization, process it
+				if shouldSummarize {
+					err = b.truncateConversationUsingSummary(ctx, conversation)
+					if err != nil {
+						log.Printf("Warning: failed to perform summarization: %v", err)
+						// Continue processing - summarization failure shouldn't stop the bot
+					} else {
+						// Update persisted conversation with the summarized version
+						if b.resumableConversations != nil {
+							err = b.resumableConversations.Set(strconv.Itoa(tsk.Issue.Number), conversation.History())
+							if err != nil {
+								log.Printf("Warning: failed to persist summarized conversation history: %v", err)
+							}
+						}
+					}
 				}
 			}
 		case anthropic.StopReasonMaxTokens:
@@ -265,7 +275,7 @@ func (b *Bot) processWithAI(ctx context.Context, tsk task.Task, workspace Worksp
 		case anthropic.StopReasonRefusal:
 			return fmt.Errorf("the AI refused to generate a response due to safety concerns")
 		case anthropic.StopReasonEndTurn:
-			return fmt.Errorf("that's weird, it shouldn't be possible to reach this branch")
+			// AI finished the turn - the loop condition will handle exiting
 		default:
 			return fmt.Errorf("unexpected stop reason: %v", response.StopReason)
 		}
@@ -450,6 +460,89 @@ func (b *Bot) rerunStatefulToolCalls(ctx context.Context, toolCtx *ToolContext, 
 			}
 		}
 	}
+
+	return nil
+}
+
+// buildSummaryPrompt creates the prompt for requesting a conversation summary
+func buildSummaryPrompt() string {
+	var summaryPrompt strings.Builder
+	summaryPrompt.WriteString("Please summarize all of the work you have done so far. Focus on:\n")
+	summaryPrompt.WriteString("1. Key decisions and changes made\n")
+	summaryPrompt.WriteString("2. Current state of the codebase\n")
+	summaryPrompt.WriteString("3. Any important context for continuing the work\n")
+	summaryPrompt.WriteString("4. Tools used and their outcomes\n\n")
+	summaryPrompt.WriteString("Please provide a comprehensive but concise summary that captures all important information needed to continue working effectively. ")
+	summaryPrompt.WriteString("There's no need to include the system prompt or initial repository information in your summary - focus on the actual work and changes made during our conversation.")
+
+	return summaryPrompt.String()
+}
+
+// truncateConversationUsingSummary reconstructs the conversation with a summary.
+// Assumes:
+// 1. The last turn in the conversation includes a summary response from a prior summarization request
+// 2. There are at least 2 messages in the conversation
+// 3. The summary response is in the expected format and contains meaningful summary content
+func (b *Bot) truncateConversationUsingSummary(ctx context.Context, conversation *ai.Conversation) error {
+	if len(conversation.Messages) <= 2 {
+		// Don't summarize if we have too few messages
+		return nil
+	}
+
+	// Get token count from most recent response for logging
+	var totalTokens int64
+	if lastMsg := conversation.Messages[len(conversation.Messages)-1]; lastMsg.Response != nil {
+		totalTokens = lastMsg.Response.Usage.InputTokens +
+			lastMsg.Response.Usage.CacheReadInputTokens +
+			lastMsg.Response.Usage.CacheCreationInputTokens
+	}
+
+	log.Printf("Conversation has %d messages and %d total input tokens, summarizing...",
+		len(conversation.Messages), totalTokens)
+
+	// Preserve the first message (initial repository and task content)
+	numFirstMessagesToPreserve := 1
+
+	// Ensure we have something to summarize
+	if len(conversation.Messages) <= numFirstMessagesToPreserve {
+		return nil
+	}
+
+	// Get the summary response (should be the most recent response)
+	lastTurn := conversation.Messages[len(conversation.Messages)-1]
+	if lastTurn.Response == nil {
+		return fmt.Errorf("cannot perform summarization: last turn has no response")
+	}
+	summaryResponse := lastTurn.Response
+
+	// Create conversation turns that properly represent the summary exchange
+	// First turn: User asks for summary + Assistant provides the summary
+	summaryRequestTurn := ai.ConversationTurn{
+		UserMessage: anthropic.NewUserMessage(anthropic.NewTextBlock("Please respond with the summary you generated earlier.")),
+		Response:    summaryResponse,
+	}
+
+	// Second turn: User asks to resume work based on the summary
+	resumeRequestTurn := ai.ConversationTurn{
+		UserMessage: anthropic.NewUserMessage(anthropic.NewTextBlock("Please resume working on this task based on your summary.")),
+		// No response yet - this will be filled in by the next actual conversation turn
+	}
+
+	// Reconstruct the conversation: preserved first messages + summary exchange + resume request
+	newMessages := []ai.ConversationTurn{}
+
+	// Add preserved first messages
+	newMessages = append(newMessages, conversation.Messages[:numFirstMessagesToPreserve]...)
+
+	// Add summary conversation turns
+	newMessages = append(newMessages, summaryRequestTurn, resumeRequestTurn)
+
+	// Update the conversation
+	originalMessageCount := len(conversation.Messages)
+	conversation.Messages = newMessages
+
+	log.Printf("Conversation summarized: %d messages -> %d messages",
+		originalMessageCount, len(conversation.Messages))
 
 	return nil
 }
