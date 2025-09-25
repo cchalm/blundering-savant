@@ -174,6 +174,7 @@ func (b *Bot) processWithAI(ctx context.Context, tsk task.Task, workspace Worksp
 	}
 
 	i := 0
+	var pendingSummaryRequest *string // Track deferred summary request
 	for response.StopReason != anthropic.StopReasonEndTurn {
 		if i > maxIterations {
 			return fmt.Errorf("exceeded maximum iterations (%d) without completion", maxIterations)
@@ -189,11 +190,10 @@ func (b *Bot) processWithAI(ctx context.Context, tsk task.Task, workspace Worksp
 
 		// Check if we need to summarize the conversation due to token limits
 		shouldSummarize := conversation.NeedsSummarization()
-		var summaryRequest *string
-		if shouldSummarize {
-			log.Printf("Conversation needs summarization due to token limit - will include summary request in next message")
+		if shouldSummarize && pendingSummaryRequest == nil {
+			log.Printf("Conversation needs summarization due to token limit - will defer until appropriate moment")
 			summaryPrompt := buildSummaryRequest()
-			summaryRequest = &summaryPrompt
+			pendingSummaryRequest = &summaryPrompt
 		}
 
 		log.Printf("Processing AI response, iteration: %d", i+1)
@@ -230,10 +230,7 @@ func (b *Bot) processWithAI(ctx context.Context, tsk task.Task, workspace Worksp
 			if len(toolUses) == 0 {
 				log.Printf("    WARNING: Stop reason was 'tool_use', but no tool use blocks found in message. Reporting to AI for self-resolution")
 				messageContent := []anthropic.ContentBlockParamUnion{anthropic.NewTextBlock("Error: No tool uses found in message. Was there a formatting issue?")}
-				if summaryRequest != nil {
-					log.Printf("    Including summary request in error message")
-					messageContent = append(messageContent, anthropic.NewTextBlock(*summaryRequest))
-				}
+				// Don't include summary request here - we'll handle it in the next natural opportunity
 				response, err = conversation.SendMessage(ctx, messageContent...)
 				if err != nil {
 					return fmt.Errorf("failed to send tool results to AI: %w", err)
@@ -251,11 +248,8 @@ func (b *Bot) processWithAI(ctx context.Context, tsk task.Task, workspace Worksp
 					messageContent = append(messageContent, anthropic.ContentBlockParamUnion{OfToolResult: toolResult})
 				}
 
-				// Include summary request if needed
-				if summaryRequest != nil {
-					log.Printf("    Including summary request with tool results")
-					messageContent = append(messageContent, anthropic.NewTextBlock(*summaryRequest))
-				}
+				// Don't include summary request with tool results as this violates the API requirement
+				// that tool uses must be immediately followed by tool results only
 
 				log.Printf("    Sending tool results to AI and streaming response")
 				response, err = conversation.SendMessage(ctx, messageContent...)
@@ -268,15 +262,17 @@ func (b *Bot) processWithAI(ctx context.Context, tsk task.Task, workspace Worksp
 		case anthropic.StopReasonRefusal:
 			return fmt.Errorf("the AI refused to generate a response due to safety concerns")
 		case anthropic.StopReasonEndTurn:
-			// If we need summarization and the AI finished without tool uses, send the summary request now
-			if summaryRequest != nil {
-				log.Printf("AI finished turn but summarization needed - sending summary request")
-				response, err = conversation.SendMessage(ctx, anthropic.NewTextBlock(*summaryRequest))
+			// If we have a pending summary request, send it now
+			if pendingSummaryRequest != nil {
+				log.Printf("AI finished turn and we have pending summarization request - sending now")
+				response, err = conversation.SendMessage(ctx, anthropic.NewTextBlock(*pendingSummaryRequest))
 				if err != nil {
 					return fmt.Errorf("failed to send summary request to AI: %w", err)
 				}
+				// Don't clear pendingSummaryRequest yet - we'll clear it after we get the summary response
 			} else {
-				return fmt.Errorf("that's weird, it shouldn't be possible to reach this branch")
+				// AI finished the turn and no summarization is needed - we're done
+				break
 			}
 		default:
 			return fmt.Errorf("unexpected stop reason: %v", response.StopReason)
@@ -291,13 +287,16 @@ func (b *Bot) processWithAI(ctx context.Context, tsk task.Task, workspace Worksp
 		}
 
 		// Handle summarization after receiving AI response
-		if summaryRequest != nil && (response.StopReason == anthropic.StopReasonEndTurn || len(response.Content) > 0) {
+		if pendingSummaryRequest != nil && (response.StopReason == anthropic.StopReasonEndTurn || len(response.Content) > 0) {
 			// Check if the response contains text (which should be the summary)
 			hasSummaryText := false
 			for _, contentBlock := range response.Content {
-				if textBlock, ok := contentBlock.AsAny().(anthropic.TextBlock); ok && len(strings.TrimSpace(textBlock.Text)) > 0 {
-					hasSummaryText = true
-					break
+				if textBlock, ok := contentBlock.AsAny().(type) {
+				case anthropic.TextBlock:
+					if len(strings.TrimSpace(textBlock.Text)) > 0 {
+						hasSummaryText = true
+						break
+					}
 				}
 			}
 
@@ -316,7 +315,7 @@ func (b *Bot) processWithAI(ctx context.Context, tsk task.Task, workspace Worksp
 						}
 					}
 				}
-				summaryRequest = nil // Reset so we don't try to summarize again
+				pendingSummaryRequest = nil // Clear the pending request since we've handled it
 			}
 		}
 
