@@ -268,7 +268,7 @@ func (rvw *RemoteValidationWorkspace) PublishChangesForReview(ctx context.Contex
 	if rvw.needsPullRequest {
 		err := rvw.createPullRequest(ctx, reviewRequestTitle, reviewRequestBody)
 		if err != nil {
-			return fmt.Errorf("failed to create pull request: %w", err)
+			return err
 		}
 		rvw.needsPullRequest = false
 	}
