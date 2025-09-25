@@ -175,7 +175,7 @@ func (b *Bot) processWithAI(ctx context.Context, tsk task.Task, workspace Worksp
 
 	i := 0
 	var pendingSummaryRequest *string // Track deferred summary request
-	conversationLoop: 
+conversationLoop:
 	for response.StopReason != anthropic.StopReasonEndTurn {
 		if i > maxIterations {
 			return fmt.Errorf("exceeded maximum iterations (%d) without completion", maxIterations)
