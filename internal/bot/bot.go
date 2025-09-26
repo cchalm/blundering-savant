@@ -187,9 +187,6 @@ func (b *Bot) processWithAI(ctx context.Context, tsk task.Task, workspace Worksp
 			}
 		}
 
-		// Check if we need to summarize the conversation due to token limits
-		shouldSummarize := conversation.NeedsSummarization()
-
 		log.Printf("Processing AI response, iteration: %d", i+1)
 		for _, contentBlock := range response.Content {
 			switch block := contentBlock.AsAny().(type) {
@@ -210,65 +207,14 @@ func (b *Bot) processWithAI(ctx context.Context, tsk task.Task, workspace Worksp
 			}
 		}
 
+		var messageContent []anthropic.ContentBlockParamUnion
+
 		switch response.StopReason {
 		case anthropic.StopReasonToolUse:
 			// Process tool uses and collect tool results
-			toolUses := []anthropic.ToolUseBlock{}
-			for _, content := range response.Content {
-				switch block := content.AsAny().(type) {
-				case anthropic.ToolUseBlock:
-					toolUses = append(toolUses, block)
-				}
-			}
-
-			if len(toolUses) == 0 {
-				log.Printf("    WARNING: Stop reason was 'tool_use', but no tool use blocks found in message. Reporting to AI for self-resolution")
-				response, err = conversation.SendMessage(ctx, anthropic.NewTextBlock("Error: No tool uses found in message. Was there a formatting issue?"))
-				if err != nil {
-					return fmt.Errorf("failed to send tool results to AI: %w", err)
-				}
-			} else {
-				messageContent := []anthropic.ContentBlockParamUnion{}
-				for _, toolUse := range toolUses {
-					log.Printf("    Executing tool: %s", toolUse.Name)
-
-					// Process the tool use with the registry
-					toolResult, err := b.toolRegistry.ProcessToolUse(ctx, toolUse, toolCtx)
-					if err != nil {
-						return fmt.Errorf("failed to process tool use: %w", err)
-					}
-					messageContent = append(messageContent, anthropic.ContentBlockParamUnion{OfToolResult: toolResult})
-				}
-
-				// If summarization is needed, append the summary request after the tool results
-				if shouldSummarize {
-					log.Printf("Appending summarization request after tool results")
-					summaryPrompt := buildSummaryPrompt()
-					messageContent = append(messageContent, anthropic.NewTextBlock(summaryPrompt))
-				}
-
-				log.Printf("    Sending tool results to AI and streaming response")
-				response, err = conversation.SendMessage(ctx, messageContent...)
-				if err != nil {
-					return fmt.Errorf("failed to send tool results to AI: %w", err)
-				}
-
-				// If we requested summarization, process it
-				if shouldSummarize {
-					err = truncateConversationUsingSummary(conversation)
-					if err != nil {
-						log.Printf("Warning: failed to perform summarization: %v", err)
-						// Continue processing - summarization failure shouldn't stop the bot
-					} else {
-						// Update persisted conversation with the summarized version
-						if b.resumableConversations != nil {
-							err = b.resumableConversations.Set(strconv.Itoa(tsk.Issue.Number), conversation.History())
-							if err != nil {
-								log.Printf("Warning: failed to persist summarized conversation history: %v", err)
-							}
-						}
-					}
-				}
+			messageContent, err = b.getToolResults(ctx, toolCtx, response)
+			if err != nil {
+				return err
 			}
 		case anthropic.StopReasonMaxTokens:
 			return fmt.Errorf("exceeded max tokens")
@@ -278,6 +224,12 @@ func (b *Bot) processWithAI(ctx context.Context, tsk task.Task, workspace Worksp
 			return fmt.Errorf("that's weird, it shouldn't be possible to reach this branch")
 		default:
 			return fmt.Errorf("unexpected stop reason: %v", response.StopReason)
+		}
+
+		log.Printf("    Responding to AI")
+		response, err = b.sendMessage(ctx, conversation, messageContent...)
+		if err != nil {
+			return err
 		}
 
 		if s, err := conversation.ToMarkdown(); err != nil {
@@ -308,6 +260,69 @@ func (b *Bot) processWithAI(ctx context.Context, tsk task.Task, workspace Worksp
 
 	log.Print("AI interaction concluded")
 	return nil
+}
+
+func (b *Bot) sendMessage(
+	ctx context.Context,
+	conversation *ai.Conversation,
+	messageContent ...anthropic.ContentBlockParamUnion,
+) (*anthropic.Message, error) {
+	// Check if we need to summarize the conversation due to token limits
+	shouldSummarize := conversation.NeedsSummarization()
+	// If summarization is needed, append the summary request after other content
+	if shouldSummarize {
+		log.Printf("    Appending summarization request to this message")
+		summaryPrompt := buildSummaryPrompt()
+		messageContent = append(messageContent, anthropic.NewTextBlock(summaryPrompt))
+	}
+
+	response, err := conversation.SendMessage(ctx, messageContent...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to send message to AI: %w", err)
+	}
+
+	// If we requested summarization, process it
+	if shouldSummarize {
+		err = truncateConversationUsingSummary(conversation)
+		if err != nil {
+			return nil, fmt.Errorf("failed to apply conversation summary: %w", err)
+		}
+	}
+
+	return response, nil
+}
+
+// getToolResults executes tool calls requested by the given assistant message and returns their results
+func (b *Bot) getToolResults(ctx context.Context, toolCtx *ToolContext, msg *anthropic.Message) ([]anthropic.ContentBlockParamUnion, error) {
+	// Process tool uses and collect tool results
+	toolUses := []anthropic.ToolUseBlock{}
+	for _, content := range msg.Content {
+		switch block := content.AsAny().(type) {
+		case anthropic.ToolUseBlock:
+			toolUses = append(toolUses, block)
+		}
+	}
+
+	if msg.StopReason == anthropic.StopReasonToolUse && len(toolUses) == 0 {
+		log.Printf("    WARNING: Stop reason was 'tool_use', but no tool use blocks found in message. Reporting to AI for self-resolution")
+		return []anthropic.ContentBlockParamUnion{
+			anthropic.NewTextBlock("Error: No tool uses found in message. Was there a formatting issue?"),
+		}, nil
+	}
+
+	toolResults := []anthropic.ContentBlockParamUnion{}
+	for _, toolUse := range toolUses {
+		log.Printf("    Executing tool: %s", toolUse.Name)
+
+		// Process the tool use with the registry
+		toolResult, err := b.toolRegistry.ProcessToolUse(ctx, toolUse, toolCtx)
+		if err != nil {
+			return nil, fmt.Errorf("failed to process tool use: %w", err)
+		}
+		toolResults = append(toolResults, anthropic.ContentBlockParamUnion{OfToolResult: toolResult})
+	}
+
+	return toolResults, nil
 }
 
 // Helper functions
