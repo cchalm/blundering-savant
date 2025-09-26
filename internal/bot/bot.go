@@ -255,7 +255,7 @@ func (b *Bot) processWithAI(ctx context.Context, tsk task.Task, workspace Worksp
 
 				// If we requested summarization, process it
 				if shouldSummarize {
-					err = b.truncateConversationUsingSummary(ctx, conversation)
+					err = truncateConversationUsingSummary(conversation)
 					if err != nil {
 						log.Printf("Warning: failed to perform summarization: %v", err)
 						// Continue processing - summarization failure shouldn't stop the bot
@@ -275,7 +275,7 @@ func (b *Bot) processWithAI(ctx context.Context, tsk task.Task, workspace Worksp
 		case anthropic.StopReasonRefusal:
 			return fmt.Errorf("the AI refused to generate a response due to safety concerns")
 		case anthropic.StopReasonEndTurn:
-			// AI finished the turn - the loop condition will handle exiting
+			return fmt.Errorf("that's weird, it shouldn't be possible to reach this branch")
 		default:
 			return fmt.Errorf("unexpected stop reason: %v", response.StopReason)
 		}
@@ -478,12 +478,12 @@ func buildSummaryPrompt() string {
 	return summaryPrompt.String()
 }
 
-// truncateConversationUsingSummary reconstructs the conversation with a summary.
+// truncateConversationUsingSummary reconstructs the conversation from a summary.
 // Assumes:
 // 1. The last turn in the conversation includes a summary response from a prior summarization request
 // 2. There are at least 2 messages in the conversation
 // 3. The summary response is in the expected format and contains meaningful summary content
-func (b *Bot) truncateConversationUsingSummary(ctx context.Context, conversation *ai.Conversation) error {
+func truncateConversationUsingSummary(conversation *ai.Conversation) error {
 	if len(conversation.Messages) <= 2 {
 		// Don't summarize if we have too few messages
 		return nil
