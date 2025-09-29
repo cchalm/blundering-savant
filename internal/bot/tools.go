@@ -95,7 +95,7 @@ func NewTextEditorTool() *TextEditorTool {
 // GetToolParam returns the tool parameter definition
 func (t *TextEditorTool) GetToolParam() anthropic.ToolParam {
 	return anthropic.ToolParam{
-		Type: "text_editor_20250429",
+		Type: "text_editor_20250728",
 		Name: t.Name,
 	}
 }
@@ -777,6 +777,9 @@ func (t *PublishChangesForReviewTool) Run(ctx context.Context, block anthropic.T
 
 	err = toolCtx.Workspace.PublishChangesForReview(ctx, input.PullRequestTitle, input.PullRequestBody)
 	if err != nil {
+		if errors.Is(err, workspace.ErrNoCommits) {
+			return nil, ToolInputError{fmt.Errorf("failed to publish changes: there are no new changes")}
+		}
 		return nil, fmt.Errorf("failed to publish changes: %w", err)
 	}
 

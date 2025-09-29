@@ -501,7 +501,7 @@ func newTestConversation(t *testing.T, toolRegistry ToolRegistry, previousMessag
 		Messages:     previousMessages,
 	}
 
-	model := anthropic.ModelClaudeSonnet4_0
+	model := anthropic.ModelClaudeSonnet4_5
 	var maxTokens int64 = 64000
 
 	conversation, err := ai.ResumeConversation(

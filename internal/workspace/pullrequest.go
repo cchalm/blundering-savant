@@ -2,10 +2,14 @@ package workspace
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/google/go-github/v72/github"
 )
+
+var ErrNoCommits = fmt.Errorf("no commits")
 
 // githubPullRequestService is a wrapper around github.PullRequestsService.Create
 type githubPullRequestService struct {
@@ -42,6 +46,14 @@ func (gprs *githubPullRequestService) Create(ctx context.Context, title string, 
 
 	_, _, err := gprs.prService.Create(ctx, gprs.owner, gprs.repo, pr)
 	if err != nil {
+		var ghErr *github.ErrorResponse
+		if errors.As(err, &ghErr) {
+			for _, e := range ghErr.Errors {
+				if e.Code == "custom" && strings.Contains(e.Message, "No commits between") {
+					return fmt.Errorf("failed to create pull request: %w", ErrNoCommits)
+				}
+			}
+		}
 		return fmt.Errorf("failed to create pull request: %w", err)
 	}
 	return nil
