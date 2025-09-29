@@ -58,23 +58,41 @@ jobs:
       run: |
         echo "Processing ${{ github.event_name }}.${{ github.event.action }} by ${{ github.actor }}"
 
-        # Determine whether to use issue number or PR branch
-        if [ -n "${{ github.event.issue.number }}" ]; then
-          echo "Repository: ${{ github.repository }} / Issue #${{ github.event.issue.number }}"
-          blundering-savant oneshot \
-            --repo ${{ github.repository }} \
-            --issue ${{ github.event.issue.number }} \
-            --validation-workflow ${{ vars.VALIDATION_WORKFLOW_NAME || 'blundering-savant-validate.yml' }}
-        elif [ -n "${{ github.event.pull_request.head.ref }}" ]; then
-          echo "Repository: ${{ github.repository }} / PR branch '${{ github.event.pull_request.head.ref }}'"
-          blundering-savant oneshot \
-            --repo ${{ github.repository }} \
-            --pr-branch ${{ github.event.pull_request.head.ref }} \
-            --validation-workflow ${{ vars.VALIDATION_WORKFLOW_NAME || 'blundering-savant-validate.yml' }}
+        # Set validation workflow name with default
+        VALIDATION_WORKFLOW="${{ vars.VALIDATION_WORKFLOW_NAME || 'blundering-savant-validate.yml' }}"
+
+        # Determine whether to use issue number or PR number
+        ISSUE_NUMBER=""
+        PR_NUMBER=""
+
+        # For issue_comment events on PRs, check if it's a pull request comment
+        if [ -n "${{ github.event.issue.number }}" ] && [ "${{ github.event.issue.pull_request }}" != "" ]; then
+          # This is a comment on a PR (treated as an issue comment by GitHub)
+          PR_NUMBER="${{ github.event.issue.number }}"
+        elif [ -n "${{ github.event.issue.number }}" ]; then
+          # This is a regular issue
+          ISSUE_NUMBER="${{ github.event.issue.number }}"
+        elif [ -n "${{ github.event.pull_request.number }}" ]; then
+          # This is a PR event (synchronize, review, etc.)
+          PR_NUMBER="${{ github.event.pull_request.number }}"
         else
-          echo "Error: Neither issue number nor PR branch available"
+          echo "Error: Neither issue number nor PR number available"
           exit 1
         fi
+
+        # Build command with appropriate flags
+        CMD="blundering-savant oneshot --repo ${{ github.repository }} --validation-workflow \"$VALIDATION_WORKFLOW\""
+        if [ -n "$ISSUE_NUMBER" ]; then
+          echo "Repository: ${{ github.repository }} / Issue #$ISSUE_NUMBER"
+          CMD="$CMD --issue-number $ISSUE_NUMBER"
+        fi
+        if [ -n "$PR_NUMBER" ]; then
+          echo "Repository: ${{ github.repository }} / PR #$PR_NUMBER"
+          CMD="$CMD --pr-number $PR_NUMBER"
+        fi
+
+        # Execute the command
+        eval "$CMD"
 
         if [ $? -ne 0 ]; then
           echo "Bot failed with exit code $?"
