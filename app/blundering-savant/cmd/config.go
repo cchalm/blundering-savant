@@ -18,7 +18,7 @@ type Config struct {
 	// One-shot options
 	QualifiedRepoName string
 	IssueNumber       int
-	PRBranch          string
+	PRNumber          int
 
 	// Polling options
 	CheckInterval             time.Duration

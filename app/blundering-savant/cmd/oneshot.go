@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"strings"
@@ -27,11 +28,12 @@ func loadOneShotConfig(cmd *cobra.Command, args []string) {
 
 func init() {
 	oneShotCmd.Flags().StringVar(&config.QualifiedRepoName, "repo", "", "Repository name in the format 'owner/repo'")
-	oneShotCmd.Flags().IntVar(&config.IssueNumber, "issue", 0, "Issue number to process")
-	oneShotCmd.Flags().StringVar(&config.PRBranch, "pr-branch", "", "Pull request branch name")
+	oneShotCmd.Flags().IntVar(&config.IssueNumber, "issue-number", 0, "Issue number to process")
+	oneShotCmd.Flags().IntVar(&config.PRNumber, "pr-number", 0, "Pull request number to process")
 
 	_ = oneShotCmd.MarkFlagRequired("repo")
-	oneShotCmd.MarkFlagsOneRequired("issue", "pr-branch")
+	oneShotCmd.MarkFlagsOneRequired("issue-number", "pr-number")
+	oneShotCmd.MarkFlagsMutuallyExclusive("issue-number", "pr-number")
 
 	rootCmd.AddCommand(oneShotCmd)
 }
@@ -42,27 +44,30 @@ func runTaskMode(cmd *cobra.Command, args []string) error {
 	log.Printf("Starting Blundering Savant in TASK mode")
 	log.Printf("Repository: %s", config.QualifiedRepoName)
 
-	// Parse issue number from PR branch if needed
-	var issueNumber int
-	if config.IssueNumber != 0 {
-		issueNumber = config.IssueNumber
-	} else if config.PRBranch != "" {
-		_, err := fmt.Sscanf(config.PRBranch, "fix/issue-%d", &issueNumber)
-		if err != nil {
-			return fmt.Errorf("failed to parse issue number from PR branch '%s': %w", config.PRBranch, err)
-		}
-	} else {
-		return fmt.Errorf("issue number and PR branch are both nil")
-	}
-
-	log.Printf("Processing issue #%d", issueNumber)
-
 	// Parse repository owner and name
 	parts := strings.Split(config.QualifiedRepoName, "/")
 	if len(parts) != 2 {
 		return fmt.Errorf("invalid repository format '%s', expected owner/repo", config.QualifiedRepoName)
 	}
 	owner, repo := parts[0], parts[1]
+
+	// Resolve issue number from either direct issue flag or PR number
+	var issueNumber int
+	if config.IssueNumber != 0 {
+		issueNumber = config.IssueNumber
+	} else if config.PRNumber != 0 {
+		// Fetch PR branch name from GitHub and parse issue number
+		var err error
+		issueNumber, err = getIssueNumberFromPR(ctx, owner, repo, config.PRNumber)
+		if err != nil {
+			return fmt.Errorf("failed to resolve issue number from PR #%d: %w", config.PRNumber, err)
+		}
+		log.Printf("Resolved PR #%d to issue #%d", config.PRNumber, issueNumber)
+	} else {
+		return fmt.Errorf("issue number and PR number are both nil")
+	}
+
+	log.Printf("Processing issue #%d", issueNumber)
 
 	// Create clients
 	systemGithubClient := createGithubClient(ctx, config.SystemGithubToken)
@@ -105,4 +110,25 @@ func runTaskMode(cmd *cobra.Command, args []string) error {
 	}
 
 	return nil
+}
+
+func getIssueNumberFromPR(ctx context.Context, owner, repo string, prNumber int) (int, error) {
+	// Create a GitHub client to fetch PR details
+	githubClient := createGithubClient(ctx, config.SystemGithubToken)
+
+	// Fetch the pull request
+	pr, _, err := githubClient.PullRequests.Get(ctx, owner, repo, prNumber)
+	if err != nil {
+		return 0, fmt.Errorf("failed to fetch PR #%d: %w", prNumber, err)
+	}
+
+	// Parse issue number from branch name
+	branchName := pr.Head.GetRef()
+	var issueNumber int
+	_, err = fmt.Sscanf(branchName, "fix/issue-%d", &issueNumber)
+	if err != nil {
+		return 0, fmt.Errorf("failed to parse issue number from PR branch '%s': %w", branchName, err)
+	}
+
+	return issueNumber, nil
 }
