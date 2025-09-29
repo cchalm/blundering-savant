@@ -72,33 +72,61 @@ func (cc *Conversation) buildMarkdownData() (*conversationMarkdownData, error) {
 		TokenUsage:   conversationTokenUsage{},
 	}
 
-	// Track pending tool uses to combine with results (using pointers)
-	pendingToolUses := make(map[string]conversationMessage) // toolID -> incomplete message
-
 	// Process each turn
 	for _, turn := range cc.Turns {
-		// Process user message (which might contain text, tool results, etc.)
-		userMessages := convertUserMessage(turn.UserMessage, pendingToolUses)
-		data.Messages = append(data.Messages, userMessages...)
+		// Process user instructions
+		for _, textBlock := range turn.UserInstructions {
+			data.Messages = append(data.Messages, conversationMessage{
+				Type: "user_text",
+				Text: textBlock.Text,
+			})
+		}
 
-		// Process assistant reply if present
-		if turn.Response != nil {
-			assistantMessages := convertAssistantMessage(turn.Response, pendingToolUses)
-			data.Messages = append(data.Messages, assistantMessages...)
+		// Process assistant text blocks
+		for _, block := range turn.AssistantTextBlocks {
+			if textParam := block.OfText; textParam != nil {
+				data.Messages = append(data.Messages, conversationMessage{
+					Type: "assistant_text",
+					Text: textParam.Text,
+				})
+			} else if thinkingParam := block.OfThinking; thinkingParam != nil {
+				data.Messages = append(data.Messages, conversationMessage{
+					Type:     "assistant_thinking",
+					Thinking: thinkingParam.Thinking,
+				})
+			}
+		}
 
-			// Accumulate token usage
-			data.TokenUsage.TotalInputTokens += turn.Response.Usage.InputTokens
-			data.TokenUsage.TotalOutputTokens += turn.Response.Usage.OutputTokens
-			data.TokenUsage.TotalCacheCreationTokens += turn.Response.Usage.CacheCreationInputTokens
-			data.TokenUsage.TotalCacheReadTokens += turn.Response.Usage.CacheReadInputTokens
+		// Process tool exchanges
+		for _, exchange := range turn.ToolExchanges {
+			toolMsg := conversationMessage{
+				Type:      "tool_action",
+				ToolName:  exchange.ToolUse.Name,
+				ToolInput: string(exchange.ToolUse.Input),
+				IsError:   exchange.ToolResult.IsError.Or(false),
+			}
+			parseToolSpecificFields(&toolMsg)
+
+			// Extract tool result text
+			var resultText strings.Builder
+			for _, resultContent := range exchange.ToolResult.Content {
+				if resultContent.OfText != nil {
+					resultText.WriteString(resultContent.OfText.Text)
+				} else if resultContent.OfImage != nil {
+					resultText.WriteString("[Image content]")
+				}
+			}
+			toolMsg.ToolResult = resultText.String()
+
+			data.Messages = append(data.Messages, toolMsg)
 		}
 	}
 
-	// Add any pending tool uses without results
-	for _, message := range pendingToolUses {
-		data.Messages = append(data.Messages, message)
-
-	}
+	// Token usage is tracked in lastUsage field now
+	data.TokenUsage.TotalInputTokens = cc.lastUsage.InputTokens
+	data.TokenUsage.TotalOutputTokens = cc.lastUsage.OutputTokens
+	data.TokenUsage.TotalCacheCreationTokens = cc.lastUsage.CacheCreationInputTokens
+	data.TokenUsage.TotalCacheReadTokens = cc.lastUsage.CacheReadInputTokens
 
 	return data, nil
 }
@@ -223,121 +251,7 @@ func renderConversationMarkdown(data *conversationMarkdownData) (string, error) 
 	return buf.String(), nil
 }
 
-// convertUserMessage converts anthropic.MessageParam to sequential conversationMessages
-func convertUserMessage(msg anthropic.MessageParam, pendingToolUses map[string]conversationMessage) []conversationMessage {
-	var toolUseMessages []conversationMessage
-	var messages []conversationMessage
 
-	for _, contentBlock := range msg.Content {
-		// Check which field is populated in the union
-		if contentBlock.OfText != nil {
-			messages = append(messages, conversationMessage{
-				Type: "user_text",
-				Text: contentBlock.OfText.Text,
-			})
-		} else if contentBlock.OfToolResult != nil {
-			// Look for the pending tool use, add results to it, and then append it to toolUseMessages
-			toolID := contentBlock.OfToolResult.ToolUseID
-			if toolMsg, exists := pendingToolUses[toolID]; exists {
-				// Update the tool action message with results
-				toolMsg.IsError = contentBlock.OfToolResult.IsError.Or(false)
-
-				// Extract text content from tool result
-				var resultText strings.Builder
-				for _, resultContent := range contentBlock.OfToolResult.Content {
-					if resultContent.OfText != nil {
-						resultText.WriteString(resultContent.OfText.Text)
-					} else if resultContent.OfImage != nil {
-						resultText.WriteString("[Image content]")
-					}
-				}
-				toolMsg.ToolResult = resultText.String()
-
-				toolUseMessages = append(toolUseMessages, toolMsg)
-				delete(pendingToolUses, toolID)
-			}
-		}
-	}
-
-	// Return tool use messages prepended to all other messages. Tool uses were captured before this user message, we
-	// just finished them here, so they should go first. Note that these will be in result-order, not use-order.
-	// Probably not a big deal, results will typically come in the same order as uses
-	return append(toolUseMessages, messages...)
-}
-
-// convertAssistantMessage converts anthropic.Message to sequential conversationMessages
-func convertAssistantMessage(msg *anthropic.Message, pendingToolUses map[string]conversationMessage) []conversationMessage {
-	var messages []conversationMessage
-
-	tokenUsage := &messageTokenUsage{
-		InputTokens:         msg.Usage.InputTokens,
-		OutputTokens:        msg.Usage.OutputTokens,
-		CacheCreationTokens: msg.Usage.CacheCreationInputTokens,
-		CacheReadTokens:     msg.Usage.CacheReadInputTokens,
-	}
-
-	// Track if we've already added token usage to a text message
-	tokenUsageAdded := false
-	// Track the first tool use ID to attach token usage if no text blocks are present
-	var firstToolUseID string
-
-	// Convert content blocks in order
-	for _, contentBlock := range msg.Content {
-		switch content := contentBlock.AsAny().(type) {
-		case anthropic.TextBlock:
-			var msgTokenUsage *messageTokenUsage
-			if !tokenUsageAdded {
-				msgTokenUsage = tokenUsage
-				tokenUsageAdded = true
-			}
-			messages = append(messages, conversationMessage{
-				Type:       "assistant_text",
-				Text:       content.Text,
-				TokenUsage: msgTokenUsage,
-			})
-
-		case anthropic.ToolUseBlock:
-			// Create a tool action message
-			toolMsg := conversationMessage{
-				Type:      "tool_action",
-				ToolName:  content.Name,
-				ToolInput: string(content.Input),
-			}
-			parseToolSpecificFields(&toolMsg)
-
-			// Remember the first tool use if we haven't assigned token usage yet
-			if !tokenUsageAdded && firstToolUseID == "" {
-				firstToolUseID = content.ID
-			}
-
-			// Store the partial message in the pending tool uses map
-			pendingToolUses[content.ID] = toolMsg
-
-		case anthropic.ThinkingBlock:
-			messages = append(messages, conversationMessage{
-				Type:     "assistant_thinking",
-				Thinking: content.Thinking,
-			})
-
-		case anthropic.RedactedThinkingBlock:
-			messages = append(messages, conversationMessage{
-				Type:     "assistant_thinking",
-				Thinking: "[Thinking content redacted]",
-			})
-		}
-	}
-
-	// If token usage wasn't attached to any text block and we have a first tool use,
-	// attach it to the first tool use
-	if !tokenUsageAdded && firstToolUseID != "" {
-		if toolMsg, exists := pendingToolUses[firstToolUseID]; exists {
-			toolMsg.TokenUsage = tokenUsage
-			pendingToolUses[firstToolUseID] = toolMsg
-		}
-	}
-
-	return messages
-}
 
 // parseToolSpecificFields extracts tool-specific fields for template use
 func parseToolSpecificFields(msg *conversationMessage) {

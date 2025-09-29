@@ -290,23 +290,17 @@ func sendMessage(
 	return response, nil
 }
 
-// needsSummarization checks if the conversation should be summarized due to token limits
+// tokenUsageExceedsLimit checks if the conversation should be summarized due to token limits
 func tokenUsageExceedsLimit(conversation *ai.Conversation, tokenLimit int64) bool {
 	if len(conversation.Turns) == 0 {
 		return false
 	}
 
-	// Get the most recent response
-	lastMessage := conversation.Turns[len(conversation.Turns)-1]
-	if lastMessage.Response == nil {
-		return false
-	}
-
-	// Check token usage from the most recent turn (which includes cumulative history)
+	// Check token usage from the most recent API response (which includes cumulative history)
 	// Include cache create tokens as they contribute to context size
-	totalTokens := lastMessage.Response.Usage.InputTokens +
-		lastMessage.Response.Usage.CacheReadInputTokens +
-		lastMessage.Response.Usage.CacheCreationInputTokens
+	totalTokens := conversation.LastUsage().InputTokens +
+		conversation.LastUsage().CacheReadInputTokens +
+		conversation.LastUsage().CacheCreationInputTokens
 	return totalTokens > tokenLimit
 }
 
@@ -426,23 +420,33 @@ func (b *Bot) initConversation(ctx context.Context, tsk task.Task, toolCtx *Tool
 			return nil, nil, fmt.Errorf("failed to rerun stateful tool calls: %w", err)
 		}
 
-		// Extract the last message of the resumed conversation. If it is a user message, send it and return the
-		// response. If it is an assistant response, simply return that
+		// Extract the last turn of the resumed conversation. If it has an assistant response (has tool exchanges
+		// or assistant text blocks), we need to reconstruct a synthetic response. Otherwise, send the user message.
 		lastTurn := conv.Turns[len(conv.Turns)-1]
 		var response *anthropic.Message
-		if lastTurn.Response != nil {
+		if len(lastTurn.AssistantTextBlocks) > 0 || len(lastTurn.ToolExchanges) > 0 {
 			// We should be careful here. Assistant message handling is not necessarily idempotent, e.g. if the bot
 			// sends a message with two tool calls and we get through one of them before encountering an error with the
 			// second, the handling of the first tool call may have had side effects that would be damaging to repeat.
 			// Consider implementing transactions with rollback for parallel tool calls.
 
-			// Resuming from a response
+			// Resuming from an assistant response - reconstruct a synthetic response
 			log.Printf("Resuming previous conversation from an assistant message")
-			response = lastTurn.Response
+			response = conv.reconstructResponse(len(conv.Turns) - 1)
 		} else {
-			// Resuming from a user message
+			// Resuming from a user message - resend it
 			log.Printf("Resuming previous conversation from a user message - sending message")
-			r, err := conv.SendMessage(ctx, lastTurn.UserMessage.Content...)
+			// Build message content from user instructions
+			var messageContent []anthropic.ContentBlockParamUnion
+			for _, textBlock := range lastTurn.UserInstructions {
+				messageContent = append(messageContent, anthropic.ContentBlockParamUnion{
+					OfText: &anthropic.TextBlockParam{
+						Text: textBlock.Text,
+						Type: textBlock.Type,
+					},
+				})
+			}
+			r, err := conv.SendMessage(ctx, messageContent...)
 			if err != nil {
 				return nil, nil, fmt.Errorf("failed to send last message of resumed conversation: %w", err)
 			}
@@ -483,13 +487,10 @@ func (b *Bot) rerunStatefulToolCalls(ctx context.Context, toolCtx *ToolContext, 
 			// Skip the last message in the conversation, since this message was not previously handled
 			break
 		}
-		for _, block := range turn.Response.Content {
-			switch toolUseBlock := block.AsAny().(type) {
-			case anthropic.ToolUseBlock:
-				err := b.toolRegistry.ReplayToolUse(ctx, toolUseBlock, toolCtx)
-				if err != nil {
-					return err
-				}
+		for _, exchange := range turn.ToolExchanges {
+			err := b.toolRegistry.ReplayToolUse(ctx, exchange.ToolUse, toolCtx)
+			if err != nil {
+				return err
 			}
 		}
 	}
@@ -555,12 +556,6 @@ func summarize(ctx context.Context, conversation *ai.Conversation, keepFirst int
 	// Turn 6:     User: success							>    										>	User: success
 	//             Asst: validate							>    										>	Asst: validate
 
-	// This is all getting pretty complicated, especially with conversation turn boundaries sometimes being logically
-	// after user messages, and other times being logically after assistant messages, and even other times being
-	// logically after the tool use blocks _in_ a user message. We might want to consider building a higher-level
-	// abstraction layer on top of the current `ai.Conversation`. In particular, an abstraction would be useful around
-	// the tool use/result pairs, to expose them as a group rather than individual content blocks in separate messages
-
 	if keepFirst < 0 {
 		return fmt.Errorf("keepFirst must be >= 0")
 	}
@@ -576,18 +571,7 @@ func summarize(ctx context.Context, conversation *ai.Conversation, keepFirst int
 		return nil
 	}
 
-	{
-		// Get token count from most recent response for logging
-		var totalTokens int64
-		if lastMsg := conversation.Turns[len(conversation.Turns)-1]; lastMsg.Response != nil {
-			totalTokens = lastMsg.Response.Usage.InputTokens +
-				lastMsg.Response.Usage.CacheReadInputTokens +
-				lastMsg.Response.Usage.CacheCreationInputTokens
-		}
-
-		log.Printf("    Conversation has %d messages and %d total input tokens, summarizing...",
-			len(conversation.Turns), totalTokens)
-	}
+	log.Printf("    Conversation has %d turns, summarizing...", len(conversation.Turns))
 
 	// Generate a summary of the conversation with AI
 	summaryMessage, err := generateSummary(ctx, conversation, keepLast)
@@ -595,26 +579,62 @@ func summarize(ctx context.Context, conversation *ai.Conversation, keepFirst int
 		return fmt.Errorf("failed to generate summary: %w", err)
 	}
 
-	// Reconstruct the conversation: preserved first messages + summary exchange + preserved last messages
+	// Reconstruct the conversation: preserved first turns + summary exchange + preserved last turns
 	summarizedTurns := slices.Clone(conversation.Turns[:keepFirst])
-	summarizedTurns = append(summarizedTurns, []ai.ConversationTurn{
-		{
-			// The first user message after the preserved ones, with the summary request block appended. It is important
-			// to append the summary request to the existing content in case the existing content contains tool results
-			// that must match prior tool uses.
-			UserMessage: anthropic.NewUserMessage(
-				append(conversation.Turns[keepFirst].UserMessage.Content, repeatSummaryRequest)...,
-			),
-			Response: summaryMessage,
+	
+	// Add a summary turn: the first user instructions after preserved turns + summary request,
+	// followed by the AI's summary response
+	summaryTurn := ai.ConversationTurn{
+		UserInstructions: append(
+			slices.Clone(conversation.Turns[keepFirst].UserInstructions),
+			anthropic.TextBlock{
+				Text: repeatSummaryRequest.OfText.Text,
+				Type: repeatSummaryRequest.OfText.Type,
+			},
+		),
+		AssistantTextBlocks: []anthropic.ContentBlockParamUnion{},
+		ToolExchanges:       []ai.ToolExchange{},
+	}
+	
+	// Parse summary message into the turn
+	for _, contentBlock := range summaryMessage.Content {
+		switch block := contentBlock.AsAny().(type) {
+		case anthropic.TextBlock:
+			summaryTurn.AssistantTextBlocks = append(summaryTurn.AssistantTextBlocks, anthropic.ContentBlockParamUnion{
+				OfText: &anthropic.TextBlockParam{
+					Text: block.Text,
+					Type: block.Type,
+				},
+			})
+		case anthropic.ThinkingBlock:
+			summaryTurn.AssistantTextBlocks = append(summaryTurn.AssistantTextBlocks, anthropic.ContentBlockParamUnion{
+				OfThinking: &anthropic.ThinkingBlockParam{
+					Thinking: block.Thinking,
+					Type:     block.Type,
+				},
+			})
+		}
+	}
+	
+	summarizedTurns = append(summarizedTurns, summaryTurn)
+	
+	// Add a resume turn with the instruction to continue and the last assistant response before preserved turns
+	resumeTurn := ai.ConversationTurn{
+		UserInstructions: []anthropic.TextBlock{
+			{
+				Text: resumeFromSummaryRequest.OfText.Text,
+				Type: resumeFromSummaryRequest.OfText.Type,
+			},
 		},
-		{
-			UserMessage: anthropic.NewUserMessage(resumeFromSummaryRequest),
-			Response:    conversation.Turns[len(conversation.Turns)-keepLast-1].Response,
-		},
-	}...)
+		AssistantTextBlocks: conversation.Turns[len(conversation.Turns)-keepLast-1].AssistantTextBlocks,
+		ToolExchanges:       conversation.Turns[len(conversation.Turns)-keepLast-1].ToolExchanges,
+	}
+	summarizedTurns = append(summarizedTurns, resumeTurn)
+	
+	// Add preserved last turns
 	summarizedTurns = append(summarizedTurns, conversation.Turns[len(conversation.Turns)-keepLast:]...)
 
-	log.Printf("    Conversation summarized: %d messages -> %d messages",
+	log.Printf("    Conversation summarized: %d turns -> %d turns",
 		len(conversation.Turns), len(summarizedTurns))
 
 	// Update the conversation
@@ -626,18 +646,26 @@ func summarize(ctx context.Context, conversation *ai.Conversation, keepFirst int
 // generateSummary uses AI to generate a summary of the given conversation excluding the specified number of
 // conversation turns. Does not modify the given conversation. excludeLast must be > 0
 func generateSummary(ctx context.Context, conversation *ai.Conversation, excludeLast int) (*anthropic.Message, error) {
-	// Create a shallow copy of the conversation
-	summaryConversation := *conversation
-	// Replace the conversation history with a copy of the messages we want to summarize
-	summaryConversation.Turns = slices.Clone(conversation.Turns[:len(conversation.Turns)-excludeLast-1])
+	// Fork the conversation to exclude the last turns
+	summaryConversation := conversation.Fork(len(conversation.Turns) - excludeLast - 1)
 
 	summaryPrompt := buildSummaryPrompt()
 
-	// Piggyback the summary prompt on the content of the first user message after the turns to summarize. It is
-	// important to append the prompt to the existing content because the existing content might be tool results that
-	// are required to match tool uses in the previous assistant response.
-	piggybackMessage := conversation.Turns[len(conversation.Turns)-excludeLast-1].UserMessage
-	summaryPromptContent := append(piggybackMessage.Content, anthropic.NewTextBlock(summaryPrompt))
+	// Build message content: user instructions from the turn after the fork point + summary prompt
+	// It's important to preserve any user instructions because they might include context needed for the summary
+	var messageContent []anthropic.ContentBlockParamUnion
+	piggybackTurn := conversation.Turns[len(conversation.Turns)-excludeLast-1]
+	
+	for _, textBlock := range piggybackTurn.UserInstructions {
+		messageContent = append(messageContent, anthropic.ContentBlockParamUnion{
+			OfText: &anthropic.TextBlockParam{
+				Text: textBlock.Text,
+				Type: textBlock.Type,
+			},
+		})
+	}
+	
+	messageContent = append(messageContent, anthropic.NewTextBlock(summaryPrompt))
 
-	return summaryConversation.SendMessage(ctx, summaryPromptContent...)
+	return summaryConversation.SendMessage(ctx, messageContent...)
 }
