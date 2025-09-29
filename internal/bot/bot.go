@@ -515,22 +515,22 @@ func buildSummaryPrompt() string {
 var (
 	// repeatSummaryRequest is a content block that will be used to simulate the assistant being prompted to produce its
 	// previously-generated summary
-	repeatSummaryRequest = func() anthropic.ContentBlockParamUnion {
-		block := anthropic.NewTextBlock(
-			"You have already done some work on this task, but there was an interruption. " +
+	repeatSummaryRequest = anthropic.ContentBlockParamUnion{
+		OfText: &anthropic.TextBlockParam{
+			Type: "text",
+			Text: "You have already done some work on this task, but there was an interruption. " +
 				"Before the interruption, you were asked to generate a summary of the work you had done so far. " +
 				"Please respond with that summary.",
-		)
-		block.OfText.Type = "text"
-		return block
-	}()
+		},
+	}
 	// resumeFromSummaryRequest is a content block that will be used to prompt the assistant to continue work after
 	// summarization
-	resumeFromSummaryRequest = func() anthropic.ContentBlockParamUnion {
-		block := anthropic.NewTextBlock("Please resume working on this task based on your summary.")
-		block.OfText.Type = "text"
-		return block
-	}()
+	resumeFromSummaryRequest = anthropic.ContentBlockParamUnion{
+		OfText: &anthropic.TextBlockParam{
+			Type: "text",
+			Text: "Please resume working on this task based on your summary.",
+		},
+	}
 )
 
 // summarize compresses conversation history using an AI-generated summary. It modifies the given conversation in-place.
