@@ -33,16 +33,20 @@ func TestSummarize_Basic(t *testing.T) {
 	keepFirst := 2
 	keepLast := 3
 
+	turn3 := turn(t, 3)
+	turn3.UserInstructions = append(turn3.UserInstructions, anthropic.TextBlock{Type: "text", Text: repeatSummaryRequest.Text})
+	turn3.AssistantTextBlocks = []anthropic.ContentBlockParamUnion{{OfText: &anthropic.TextBlockParam{Type: "text", Text: summary.Text}}}
+
+	turn7 := turn(t, 7)
+	
 	expectedSummarizedTurns := []ai.ConversationTurn{
 		turn(t, 1),
 		turn(t, 2),
+		turn3,
 		{
-			UserMessage: anthropic.NewUserMessage(append(turn(t, 3).UserMessage.Content, repeatSummaryRequest)...),
-			Response:    newAnthropicResponse(t, summary),
-		},
-		{
-			UserMessage: anthropic.NewUserMessage(resumeFromSummaryRequest),
-			Response:    turn(t, 7).Response,
+			UserInstructions:    []anthropic.TextBlock{{Type: "text", Text: resumeFromSummaryRequest.Text}},
+			AssistantTextBlocks: turn7.AssistantTextBlocks,
+			ToolExchanges:       []ai.ToolExchange{},
 		},
 		turn(t, 8),
 		turn(t, 9),
@@ -69,14 +73,18 @@ func TestSummarize_KeepNone(t *testing.T) {
 	keepFirst := 0
 	keepLast := 0
 
+	turn1 := turn(t, 1)
+	turn1.UserInstructions = append(turn1.UserInstructions, anthropic.TextBlock{Type: "text", Text: repeatSummaryRequest.Text})
+	turn1.AssistantTextBlocks = []anthropic.ContentBlockParamUnion{{OfText: &anthropic.TextBlockParam{Type: "text", Text: summary.Text}}}
+
+	turn10 := turn(t, 10)
+	
 	expectedSummarizedTurns := []ai.ConversationTurn{
+		turn1,
 		{
-			UserMessage: anthropic.NewUserMessage(append(turn(t, 1).UserMessage.Content, repeatSummaryRequest)...),
-			Response:    newAnthropicResponse(t, summary),
-		},
-		{
-			UserMessage: anthropic.NewUserMessage(resumeFromSummaryRequest),
-			Response:    turn(t, 10).Response,
+			UserInstructions:    []anthropic.TextBlock{{Type: "text", Text: resumeFromSummaryRequest.Text}},
+			AssistantTextBlocks: turn10.AssistantTextBlocks,
+			ToolExchanges:       []ai.ToolExchange{},
 		},
 	}
 
@@ -100,6 +108,12 @@ func TestSummarize_KeepAllButTwo(t *testing.T) {
 	keepFirst := 6
 	keepLast := 2
 
+	turn7 := turn(t, 7)
+	turn7.UserInstructions = append(turn7.UserInstructions, anthropic.TextBlock{Type: "text", Text: repeatSummaryRequest.Text})
+	turn7.AssistantTextBlocks = []anthropic.ContentBlockParamUnion{{OfText: &anthropic.TextBlockParam{Type: "text", Text: summary.Text}}}
+
+	turn8 := turn(t, 8)
+	
 	expectedSummarizedTurns := []ai.ConversationTurn{
 		turn(t, 1),
 		turn(t, 2),
@@ -107,13 +121,11 @@ func TestSummarize_KeepAllButTwo(t *testing.T) {
 		turn(t, 4),
 		turn(t, 5),
 		turn(t, 6),
+		turn7,
 		{
-			UserMessage: anthropic.NewUserMessage(append(turn(t, 7).UserMessage.Content, repeatSummaryRequest)...),
-			Response:    newAnthropicResponse(t, summary),
-		},
-		{
-			UserMessage: anthropic.NewUserMessage(resumeFromSummaryRequest),
-			Response:    turn(t, 8).Response,
+			UserInstructions:    []anthropic.TextBlock{{Type: "text", Text: resumeFromSummaryRequest.Text}},
+			AssistantTextBlocks: turn8.AssistantTextBlocks,
+			ToolExchanges:       []ai.ToolExchange{},
 		},
 		turn(t, 9),
 		turn(t, 10),
@@ -192,11 +204,13 @@ func testSummarize(
 	err = summarize(ctx, conversation, keepFirst, keepLast)
 	require.NoError(t, err)
 	for _, turn := range conversation.Turns {
-		for _, block := range turn.UserMessage.Content {
-			fmt.Printf("User: %s\n", block.OfText.Text)
+		for _, block := range turn.UserInstructions {
+			fmt.Printf("User: %s\n", block.Text)
 		}
-		for _, block := range turn.Response.Content {
-			fmt.Printf("Asst: %s\n", block.Text)
+		for _, block := range turn.AssistantTextBlocks {
+			if block.OfText != nil {
+				fmt.Printf("Asst: %s\n", block.OfText.Text)
+			}
 		}
 	}
 	require.Equal(t, expectedTurns, conversation.Turns)
@@ -212,9 +226,20 @@ func (ss senderStub) SendMessage(_ context.Context, _ anthropic.MessageNewParams
 
 // turn creates a conversation turn with fake, hard-coded content
 func turn(t *testing.T, n int) ai.ConversationTurn {
+	textBlock := anthropic.TextBlock{
+		Type: "text",
+		Text: fmt.Sprintf("user message %d", n),
+	}
+	assistantText := anthropic.ContentBlockParamUnion{
+		OfText: &anthropic.TextBlockParam{
+			Type: "text",
+			Text: fmt.Sprintf("response %d", n),
+		},
+	}
 	return ai.ConversationTurn{
-		UserMessage: anthropic.NewUserMessage(anthropic.NewTextBlock(fmt.Sprintf("user message %d", n))),
-		Response:    newAnthropicResponse(t, anthropic.NewTextBlock(fmt.Sprintf("response %d", n))),
+		UserInstructions:    []anthropic.TextBlock{textBlock},
+		AssistantTextBlocks: []anthropic.ContentBlockParamUnion{assistantText},
+		ToolExchanges:       []ai.ToolExchange{},
 	}
 }
 
