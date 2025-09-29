@@ -360,9 +360,9 @@ func extractToolResults(content []anthropic.ContentBlockParamUnion) []anthropic.
 
 // ConversationHistory contains a serializable and resumable snapshot of a Conversation
 type ConversationHistory struct {
-	SystemPrompt string              `json:"systemPrompt"`
-	Messages     []ConversationTurn  `json:"messages"`
-	LastResponse *anthropic.Message  `json:"lastResponse,omitempty"`
+	SystemPrompt string             `json:"systemPrompt"`
+	Messages     []ConversationTurn `json:"messages"`
+	LastResponse *anthropic.Message `json:"lastResponse,omitempty"`
 }
 
 // History returns a serializable conversation history
