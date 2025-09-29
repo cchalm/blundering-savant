@@ -21,8 +21,9 @@ type Conversation struct {
 	tools        []anthropic.ToolParam
 	Turns        []ConversationTurn
 
-	maxOutputTokens int64           // Maximum number of output tokens per response
-	lastUsage       anthropic.Usage // Token usage from the most recent API response
+	maxOutputTokens int64              // Maximum number of output tokens per response
+	lastUsage       anthropic.Usage    // Token usage from the most recent API response
+	lastResponse    *anthropic.Message // The most recent API response (for resuming conversations)
 }
 
 // ConversationTurn represents a complete interaction cycle: optional user instructions,
@@ -81,6 +82,11 @@ func ResumeConversation(
 		Turns:        history.Messages,
 
 		maxOutputTokens: maxOutputTokens,
+		lastResponse:    history.LastResponse,
+	}
+	// Restore last usage from last response if available
+	if history.LastResponse != nil {
+		c.lastUsage = history.LastResponse.Usage
 	}
 	return c, nil
 }
@@ -197,8 +203,9 @@ func (cc *Conversation) sendMessage(ctx context.Context, enableCache bool, messa
 		response.Usage.InputTokens+response.Usage.CacheCreationInputTokens+response.Usage.CacheReadInputTokens,
 	)
 
-	// Track token usage from this response
+	// Track token usage and response from this API call
 	cc.lastUsage = response.Usage
+	cc.lastResponse = response
 
 	// Parse the response and update the turn
 	err = cc.updateTurnWithResponse(len(cc.Turns)-1, response)
@@ -353,8 +360,9 @@ func extractToolResults(content []anthropic.ContentBlockParamUnion) []anthropic.
 
 // ConversationHistory contains a serializable and resumable snapshot of a Conversation
 type ConversationHistory struct {
-	SystemPrompt string             `json:"systemPrompt"`
-	Messages     []ConversationTurn `json:"messages"`
+	SystemPrompt string              `json:"systemPrompt"`
+	Messages     []ConversationTurn  `json:"messages"`
+	LastResponse *anthropic.Message  `json:"lastResponse,omitempty"`
 }
 
 // History returns a serializable conversation history
@@ -362,6 +370,7 @@ func (cc *Conversation) History() ConversationHistory {
 	return ConversationHistory{
 		SystemPrompt: cc.systemPrompt,
 		Messages:     cc.Turns,
+		LastResponse: cc.lastResponse,
 	}
 }
 
@@ -370,57 +379,8 @@ func (cc *Conversation) LastUsage() anthropic.Usage {
 	return cc.lastUsage
 }
 
-// reconstructResponse creates a synthetic anthropic.Message from a turn's assistant content.
+// getLastResponse returns the most recent API response, or nil if there isn't one.
 // This is useful for resuming conversations where we need to return the last assistant response.
-func (cc *Conversation) reconstructResponse(turnIndex int) *anthropic.Message {
-	if turnIndex < 0 || turnIndex >= len(cc.Turns) {
-		return nil
-	}
-
-	turn := cc.Turns[turnIndex]
-
-	// Build content blocks: text blocks + tool uses
-	var contentBlocks []anthropic.ContentBlockUnion
-
-	// Add text and thinking blocks
-	for _, block := range turn.AssistantTextBlocks {
-		if textParam := block.OfText; textParam != nil {
-			contentBlocks = append(contentBlocks, anthropic.ContentBlockUnion{
-				OfText: &anthropic.TextBlock{
-					Text: textParam.Text,
-					Type: textParam.Type,
-				},
-			})
-		} else if thinkingParam := block.OfThinking; thinkingParam != nil {
-			contentBlocks = append(contentBlocks, anthropic.ContentBlockUnion{
-				OfThinking: &anthropic.ThinkingBlock{
-					Thinking: thinkingParam.Thinking,
-					Type:     thinkingParam.Type,
-				},
-			})
-		}
-	}
-
-	// Add tool uses
-	for _, exchange := range turn.ToolExchanges {
-		contentBlocks = append(contentBlocks, anthropic.ContentBlockUnion{
-			OfToolUse: &exchange.ToolUse,
-		})
-	}
-
-	// Determine stop reason based on content
-	stopReason := anthropic.StopReasonEndTurn
-	if len(turn.ToolExchanges) > 0 {
-		stopReason = anthropic.StopReasonToolUse
-	}
-
-	return &anthropic.Message{
-		ID:         "", // Synthetic message doesn't have an ID
-		Content:    contentBlocks,
-		Model:      cc.model,
-		Role:       anthropic.MessageRole("assistant"),
-		StopReason: stopReason,
-		Type:       "message",
-		Usage:      anthropic.Usage{}, // No usage data for reconstructed messages
-	}
+func (cc *Conversation) getLastResponse() *anthropic.Message {
+	return cc.lastResponse
 }

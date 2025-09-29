@@ -420,22 +420,22 @@ func (b *Bot) initConversation(ctx context.Context, tsk task.Task, toolCtx *Tool
 			return nil, nil, fmt.Errorf("failed to rerun stateful tool calls: %w", err)
 		}
 
-		// Extract the last turn of the resumed conversation. If it has an assistant response (has tool exchanges
-		// or assistant text blocks), we need to reconstruct a synthetic response. Otherwise, send the user message.
-		lastTurn := conv.Turns[len(conv.Turns)-1]
+		// Extract the last response. If there is one, we're resuming from an assistant response.
+		// Otherwise, we need to resend the last user message.
 		var response *anthropic.Message
-		if len(lastTurn.AssistantTextBlocks) > 0 || len(lastTurn.ToolExchanges) > 0 {
+		if lastResp := conv.getLastResponse(); lastResp != nil {
 			// We should be careful here. Assistant message handling is not necessarily idempotent, e.g. if the bot
 			// sends a message with two tool calls and we get through one of them before encountering an error with the
 			// second, the handling of the first tool call may have had side effects that would be damaging to repeat.
 			// Consider implementing transactions with rollback for parallel tool calls.
 
-			// Resuming from an assistant response - reconstruct a synthetic response
+			// Resuming from an assistant response
 			log.Printf("Resuming previous conversation from an assistant message")
-			response = conv.reconstructResponse(len(conv.Turns) - 1)
+			response = lastResp
 		} else {
 			// Resuming from a user message - resend it
 			log.Printf("Resuming previous conversation from a user message - sending message")
+			lastTurn := conv.Turns[len(conv.Turns)-1]
 			// Build message content from user instructions
 			var messageContent []anthropic.ContentBlockParamUnion
 			for _, textBlock := range lastTurn.UserInstructions {
