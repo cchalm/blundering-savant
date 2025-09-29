@@ -103,21 +103,25 @@ func (cc *Conversation) buildMarkdownData() (*conversationMarkdownData, error) {
 				Type:      "tool_action",
 				ToolName:  exchange.ToolUse.Name,
 				ToolInput: string(exchange.ToolUse.Input),
-				IsError:   exchange.ToolResult.IsError.Or(false),
 			}
-			parseToolSpecificFields(&toolMsg)
-
-			// Extract tool result text
-			var resultText strings.Builder
-			for _, resultContent := range exchange.ToolResult.Content {
-				if resultContent.OfText != nil {
-					resultText.WriteString(resultContent.OfText.Text)
-				} else if resultContent.OfImage != nil {
-					resultText.WriteString("[Image content]")
+			
+			// Only process tool result if ToolUseID is set (meaning result was provided)
+			if exchange.ToolResult.ToolUseID != "" {
+				toolMsg.IsError = exchange.ToolResult.IsError.Or(false)
+				
+				// Extract tool result text
+				var resultText strings.Builder
+				for _, resultContent := range exchange.ToolResult.Content {
+					if resultContent.OfText != nil {
+						resultText.WriteString(resultContent.OfText.Text)
+					} else if resultContent.OfImage != nil {
+						resultText.WriteString("[Image content]")
+					}
 				}
+				toolMsg.ToolResult = resultText.String()
 			}
-			toolMsg.ToolResult = resultText.String()
-
+			
+			parseToolSpecificFields(&toolMsg)
 			data.Messages = append(data.Messages, toolMsg)
 		}
 	}

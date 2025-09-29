@@ -380,19 +380,19 @@ func (cc *Conversation) reconstructResponse(turnIndex int) *anthropic.Message {
 	turn := cc.Turns[turnIndex]
 
 	// Build content blocks: text blocks + tool uses
-	var contentBlocks []anthropic.ContentBlock
+	var contentBlocks []anthropic.ContentBlockUnion
 
 	// Add text and thinking blocks
 	for _, block := range turn.AssistantTextBlocks {
 		if textParam := block.OfText; textParam != nil {
-			contentBlocks = append(contentBlocks, anthropic.ContentBlock{
+			contentBlocks = append(contentBlocks, anthropic.ContentBlockUnion{
 				OfText: &anthropic.TextBlock{
 					Text: textParam.Text,
 					Type: textParam.Type,
 				},
 			})
 		} else if thinkingParam := block.OfThinking; thinkingParam != nil {
-			contentBlocks = append(contentBlocks, anthropic.ContentBlock{
+			contentBlocks = append(contentBlocks, anthropic.ContentBlockUnion{
 				OfThinking: &anthropic.ThinkingBlock{
 					Thinking: thinkingParam.Thinking,
 					Type:     thinkingParam.Type,
@@ -403,7 +403,7 @@ func (cc *Conversation) reconstructResponse(turnIndex int) *anthropic.Message {
 
 	// Add tool uses
 	for _, exchange := range turn.ToolExchanges {
-		contentBlocks = append(contentBlocks, anthropic.ContentBlock{
+		contentBlocks = append(contentBlocks, anthropic.ContentBlockUnion{
 			OfToolUse: &exchange.ToolUse,
 		})
 	}
@@ -418,9 +418,9 @@ func (cc *Conversation) reconstructResponse(turnIndex int) *anthropic.Message {
 		ID:         "", // Synthetic message doesn't have an ID
 		Content:    contentBlocks,
 		Model:      cc.model,
-		Role:       anthropic.MessageRoleAssistant,
+		Role:       anthropic.MessageRole("assistant"),
 		StopReason: stopReason,
-		Type:       anthropic.MessageTypeMessage,
+		Type:       "message",
 		Usage:      anthropic.Usage{}, // No usage data for reconstructed messages
 	}
 }
