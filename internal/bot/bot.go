@@ -24,7 +24,7 @@ import (
 // comments from other users
 type Bot struct {
 	githubClient           *github.Client
-	anthropicClient        anthropic.Client
+	sender                 ai.MessageSender
 	toolRegistry           *ToolRegistry
 	workspaceFactory       WorkspaceFactory
 	resumableConversations ConversationHistoryStore // May be nil
@@ -75,13 +75,13 @@ type WorkspaceFactory interface {
 func New(
 	githubClient *github.Client,
 	githubUser *github.User,
-	anthropicClient anthropic.Client,
+	sender ai.MessageSender,
 	historyStore ConversationHistoryStore,
 	workspaceFactory WorkspaceFactory,
 ) *Bot {
 	return &Bot{
 		githubClient:           githubClient,
-		anthropicClient:        anthropicClient,
+		sender:                 sender,
 		toolRegistry:           NewToolRegistry(),
 		workspaceFactory:       workspaceFactory,
 		resumableConversations: historyStore,
@@ -273,30 +273,17 @@ func sendMessage(
 	messageContent ...anthropic.ContentBlockParamUnion,
 ) (*anthropic.Message, error) {
 
-	var response *anthropic.Message
-	var err error
 	if tokenUsageExceedsLimit(conversation, tokenLimit) {
-		response, err = summarizeAndResume(ctx, conversation, messageContent...)
-	} else {
-		response, err = conversation.SendMessage(ctx, messageContent...)
+		keepFirst, keepLast := 1, 10 // Keep the first message and the last 10
+		err := summarize(ctx, conversation, keepFirst, keepLast)
+		if err != nil {
+			return nil, err
+		}
 	}
 
+	response, err := conversation.SendMessage(ctx, messageContent...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to send message: %w", err)
-	}
-	// If summarization is needed, append the summary request after other content
-	if shouldSummarize {
-		log.Printf("    Appending summarization request to this message")
-		summaryPrompt := buildSummaryPrompt()
-		messageContent = append(messageContent, anthropic.NewTextBlock(summaryPrompt))
-	}
-
-	// If we requested summarization, process it
-	if shouldSummarize {
-		err = truncateConversationUsingSummary(conversation)
-		if err != nil {
-			return nil, fmt.Errorf("failed to apply conversation summary: %w", err)
-		}
 	}
 
 	return response, nil
@@ -428,7 +415,7 @@ func (b *Bot) initConversation(ctx context.Context, tsk task.Task, toolCtx *Tool
 	}
 
 	if history != nil {
-		conv, err := ai.ResumeConversation(b.anthropicClient, *history, model, maxTokens, tools)
+		conv, err := ai.ResumeConversation(b.sender, *history, model, maxTokens, tools)
 		if err != nil {
 			return nil, nil, fmt.Errorf("failed to resume conversation: %w", err)
 		}
@@ -469,7 +456,7 @@ func (b *Bot) initConversation(ctx context.Context, tsk task.Task, toolCtx *Tool
 			return nil, nil, fmt.Errorf("failed to build system prompt: %w", err)
 		}
 
-		c := ai.NewConversation(b.anthropicClient, model, maxTokens, tools, systemPrompt)
+		c := ai.NewConversation(b.sender, model, maxTokens, tools, systemPrompt)
 
 		log.Printf("Sending initial message to AI")
 		repositoryContent, taskContent, err := buildPrompt(tsk)
@@ -523,8 +510,7 @@ func buildSummaryPrompt() string {
 	return summaryPrompt.String()
 }
 
-// summarizeAndResume compresses conversation history using an AI-generated summary. It modifies the given conversation
-// in-place.
+// summarize compresses conversation history using an AI-generated summary. It modifies the given conversation in-place.
 //
 // keepFirst specifies how many turns from the beginning of the conversation to keep in the summarized conversation.
 // E.g. this can be used to preserve seeded turns used to guide the assistant's behavior. Must be >= 0.
@@ -536,7 +522,7 @@ func buildSummaryPrompt() string {
 // used to maintain the continuity of the assistant's recent thoughts upon resumption. Must be >= 0.
 // The assistant message from the turn _before_ the preserved turns will also appear in the summarized converation.
 // E.g. if keepLast == 1, the 2nd-to-last turn of the summarized conversation will
-func summarizeAndResume(ctx context.Context, conversation *ai.Conversation, keepFirst int, keepLast int) error {
+func summarize(ctx context.Context, conversation *ai.Conversation, keepFirst int, keepLast int) error {
 	// Example summarization with keepFirst == 2 and keepLast == 2
 	//
 	//                  **Original conversation**                     **Summary request**                        **Summarized conversation**
@@ -554,6 +540,12 @@ func summarizeAndResume(ctx context.Context, conversation *ai.Conversation, keep
 	//             Asst: replace string in file foo.txt		>    										>	Asst: replace string in file foo.txt
 	// Turn 6:     User: success							>    										>	User: success
 	//             Asst: validate							>    										>	Asst: validate
+
+	// This is all getting pretty complicated, especially with conversation turn boundaries sometimes being logically
+	// after user messages, and other times being logically after assistant messages, and even other times being
+	// logically after the tool use blocks _in_ a user message. We might want to consider building a higher-level
+	// abstraction layer on top of the current `ai.Conversation`. In particular, an abstraction would be useful around
+	// the tool use/result pairs, to expose them as a group rather than individual content blocks in separate messages
 
 	if keepFirst < 0 {
 		return fmt.Errorf("keepFirst must be >= 0")
@@ -584,9 +576,9 @@ func summarizeAndResume(ctx context.Context, conversation *ai.Conversation, keep
 	}
 
 	// Generate a summary of the conversation with AI
-	summaryMessage, err := summarize(ctx, conversation, keepLast)
+	summaryMessage, err := generateSummary(ctx, conversation, keepLast)
 	if err != nil {
-		return fmt.Errorf("failed to generate summary: %w")
+		return fmt.Errorf("failed to generate summary: %w", err)
 	}
 
 	// Create a content block that will simulate the assistant being prompted to produce its previously-generated summary
@@ -626,11 +618,9 @@ func summarizeAndResume(ctx context.Context, conversation *ai.Conversation, keep
 	return nil
 }
 
-// TODO add Fork function to Conversation?
-
-// summarize uses AI to generate a summary of the given conversation excluding the specified number of conversation
-// turns. Does not modify the given conversation. excludeLast must be > 0
-func summarize(ctx context.Context, conversation *ai.Conversation, excludeLast int) (*anthropic.Message, error) {
+// generateSummary uses AI to generate a summary of the given conversation excluding the specified number of
+// conversation turns. Does not modify the given conversation. excludeLast must be > 0
+func generateSummary(ctx context.Context, conversation *ai.Conversation, excludeLast int) (*anthropic.Message, error) {
 	// Create a shallow copy of the conversation
 	summaryConversation := *conversation
 	// Replace the conversation history with a copy of the messages we want to summarize

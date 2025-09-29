@@ -2,15 +2,19 @@ package ai
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"log"
 
 	"github.com/anthropics/anthropic-sdk-go"
+	anthropt "github.com/anthropics/anthropic-sdk-go/option"
 )
 
+type MessageSender interface {
+	SendMessage(ctx context.Context, params anthropic.MessageNewParams, opts ...anthropt.RequestOption) (*anthropic.Message, error)
+}
+
 type Conversation struct {
-	client anthropic.Client
+	sender MessageSender
 
 	model        anthropic.Model
 	systemPrompt string
@@ -27,7 +31,7 @@ type ConversationTurn struct {
 }
 
 func NewConversation(
-	anthropicClient anthropic.Client,
+	sender MessageSender,
 	model anthropic.Model,
 	maxOutputTokens int64,
 	tools []anthropic.ToolParam,
@@ -35,7 +39,7 @@ func NewConversation(
 ) *Conversation {
 
 	return &Conversation{
-		client: anthropicClient,
+		sender: sender,
 
 		model:        model,
 		systemPrompt: systemPrompt,
@@ -46,14 +50,14 @@ func NewConversation(
 }
 
 func ResumeConversation(
-	anthropicClient anthropic.Client,
+	sender MessageSender,
 	history ConversationHistory,
 	model anthropic.Model,
 	maxOutputTokens int64,
 	tools []anthropic.ToolParam,
 ) (*Conversation, error) {
 	c := &Conversation{
-		client: anthropicClient,
+		sender: sender,
 
 		model:        model,
 		systemPrompt: history.SystemPrompt,
@@ -137,24 +141,9 @@ func (cc *Conversation) sendMessage(ctx context.Context, enableCache bool, messa
 	}
 	params.Tools = toolParams
 
-	stream := cc.client.Messages.NewStreaming(ctx, params)
-	response := anthropic.Message{}
-	for stream.Next() {
-		event := stream.Current()
-		err := response.Accumulate(event)
-		if err != nil {
-			return nil, fmt.Errorf("failed to accumulate response content stream: %w", err)
-		}
-	}
-	if stream.Err() != nil {
-		return nil, fmt.Errorf("failed to stream response: %w", stream.Err())
-	}
-	if response.StopReason == "" {
-		b, err := json.Marshal(response)
-		if err != nil {
-			log.Printf("error while marshalling corrupt message for inspection: %v", err)
-		}
-		return nil, fmt.Errorf("malformed message: %v", string(b))
+	response, err := cc.sender.SendMessage(ctx, params)
+	if err != nil {
+		return nil, err
 	}
 
 	log.Printf("Token usage - Input: %d, Cache create: %d, Cache read: %d, Total: %d",
@@ -165,7 +154,7 @@ func (cc *Conversation) sendMessage(ctx context.Context, enableCache bool, messa
 	)
 
 	// Record the response
-	cc.Turns[len(cc.Turns)-1].Response = &response
+	cc.Turns[len(cc.Turns)-1].Response = response
 
 	// Remove the cache control element from the conversation history if caching was enabled
 	if enableCache {
@@ -176,7 +165,7 @@ func (cc *Conversation) sendMessage(ctx context.Context, enableCache bool, messa
 		}
 	}
 
-	return &response, nil
+	return response, nil
 }
 
 func getLastCacheControl(content []anthropic.ContentBlockParamUnion) (*anthropic.CacheControlEphemeralParam, error) {

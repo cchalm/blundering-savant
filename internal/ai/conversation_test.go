@@ -21,15 +21,12 @@ func TestConversationHistory(t *testing.T) {
 }
 
 func TestResumeConversation(t *testing.T) {
-	// Create a mock anthropic client
-	client := anthropic.Client{}
-
 	history := ConversationHistory{
 		SystemPrompt: "test system prompt",
 		Messages:     []ConversationTurn{},
 	}
 
-	conv, err := ResumeConversation(client, history, anthropic.ModelClaudeSonnet4_0, 4000, []anthropic.ToolParam{})
+	conv, err := ResumeConversation(nil, history, anthropic.ModelClaudeSonnet4_0, 4000, []anthropic.ToolParam{})
 
 	require.NoError(t, err)
 	assert.Equal(t, "test system prompt", conv.systemPrompt)

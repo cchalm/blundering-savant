@@ -491,6 +491,7 @@ func newTestConversation(t *testing.T, toolRegistry ToolRegistry, previousMessag
 	anthropicClient := anthropic.NewClient(
 		option.WithAPIKey(anthropicAPIKey),
 	)
+	sender := ai.NewStreamingMessageSender(anthropicClient)
 
 	systemPrompt, err := buildSystemPrompt("Blundering Savant", "blunderingsavant")
 	require.NoError(t, err)
@@ -504,7 +505,7 @@ func newTestConversation(t *testing.T, toolRegistry ToolRegistry, previousMessag
 	var maxTokens int64 = 64000
 
 	conversation, err := ai.ResumeConversation(
-		anthropicClient,
+		sender,
 		history,
 		model,
 		maxTokens,
