@@ -104,11 +104,11 @@ func (cc *Conversation) buildMarkdownData() (*conversationMarkdownData, error) {
 				ToolName:  exchange.ToolUse.Name,
 				ToolInput: string(exchange.ToolUse.Input),
 			}
-			
+
 			// Only process tool result if ToolUseID is set (meaning result was provided)
 			if exchange.ToolResult.ToolUseID != "" {
 				toolMsg.IsError = exchange.ToolResult.IsError.Or(false)
-				
+
 				// Extract tool result text
 				var resultText strings.Builder
 				for _, resultContent := range exchange.ToolResult.Content {
@@ -120,7 +120,7 @@ func (cc *Conversation) buildMarkdownData() (*conversationMarkdownData, error) {
 				}
 				toolMsg.ToolResult = resultText.String()
 			}
-			
+
 			parseToolSpecificFields(&toolMsg)
 			data.Messages = append(data.Messages, toolMsg)
 		}
