@@ -181,7 +181,7 @@ func testSummarize(
 		SystemPrompt: "some system prompt",
 		Messages:     originalTurns,
 	}
-	model := anthropic.ModelClaudeSonnet4_0
+	model := anthropic.ModelClaudeSonnet4_5
 	var maxTokens int64 = 10000
 	tools := []anthropic.ToolParam{}
 

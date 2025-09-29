@@ -3,7 +3,7 @@ module github.com/cchalm/blundering-savant
 go 1.24.3
 
 require (
-	github.com/anthropics/anthropic-sdk-go v1.9.1
+	github.com/anthropics/anthropic-sdk-go v1.13.0
 	github.com/google/go-github/v72 v72.0.0
 	github.com/joho/godotenv v1.5.1
 	github.com/spf13/cobra v1.10.1

@@ -399,7 +399,7 @@ func ensureLabelExists(ctx context.Context, issuesService *github.IssuesService,
 
 // initConversation either constructs a new conversation or resumes a previous conversation
 func (b *Bot) initConversation(ctx context.Context, tsk task.Task, toolCtx *ToolContext) (*ai.Conversation, *anthropic.Message, error) {
-	model := anthropic.ModelClaudeSonnet4_0
+	model := anthropic.ModelClaudeSonnet4_5
 	var maxTokens int64 = 64000
 
 	tools := b.toolRegistry.GetAllToolParams()
