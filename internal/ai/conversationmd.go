@@ -8,8 +8,6 @@ import (
 	"strings"
 	"text/template"
 	"time"
-
-	"github.com/anthropics/anthropic-sdk-go"
 )
 
 //go:embed conversation_template.tmpl
