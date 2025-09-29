@@ -38,7 +38,7 @@ func TestSummarize_Basic(t *testing.T) {
 	turn3.AssistantTextBlocks = []anthropic.ContentBlockParamUnion{{OfText: &anthropic.TextBlockParam{Type: "text", Text: summary.Text}}}
 
 	turn7 := turn(t, 7)
-	
+
 	expectedSummarizedTurns := []ai.ConversationTurn{
 		turn(t, 1),
 		turn(t, 2),
@@ -78,7 +78,7 @@ func TestSummarize_KeepNone(t *testing.T) {
 	turn1.AssistantTextBlocks = []anthropic.ContentBlockParamUnion{{OfText: &anthropic.TextBlockParam{Type: "text", Text: summary.Text}}}
 
 	turn10 := turn(t, 10)
-	
+
 	expectedSummarizedTurns := []ai.ConversationTurn{
 		turn1,
 		{
@@ -113,7 +113,7 @@ func TestSummarize_KeepAllButTwo(t *testing.T) {
 	turn7.AssistantTextBlocks = []anthropic.ContentBlockParamUnion{{OfText: &anthropic.TextBlockParam{Type: "text", Text: summary.Text}}}
 
 	turn8 := turn(t, 8)
-	
+
 	expectedSummarizedTurns := []ai.ConversationTurn{
 		turn(t, 1),
 		turn(t, 2),
