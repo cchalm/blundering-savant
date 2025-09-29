@@ -423,7 +423,7 @@ func (b *Bot) initConversation(ctx context.Context, tsk task.Task, toolCtx *Tool
 		// Extract the last response. If there is one, we're resuming from an assistant response.
 		// Otherwise, we need to resend the last user message.
 		var response *anthropic.Message
-		if lastResp := conv.getLastResponse(); lastResp != nil {
+		if lastResp := conv.GetLastResponse(); lastResp != nil {
 			// We should be careful here. Assistant message handling is not necessarily idempotent, e.g. if the bot
 			// sends a message with two tool calls and we get through one of them before encountering an error with the
 			// second, the handling of the first tool call may have had side effects that would be damaging to repeat.

@@ -379,8 +379,8 @@ func (cc *Conversation) LastUsage() anthropic.Usage {
 	return cc.lastUsage
 }
 
-// getLastResponse returns the most recent API response, or nil if there isn't one.
+// GetLastResponse returns the most recent API response, or nil if there isn't one.
 // This is useful for resuming conversations where we need to return the last assistant response.
-func (cc *Conversation) getLastResponse() *anthropic.Message {
+func (cc *Conversation) GetLastResponse() *anthropic.Message {
 	return cc.lastResponse
 }
