@@ -95,7 +95,7 @@ func NewTextEditorTool() *TextEditorTool {
 // GetToolParam returns the tool parameter definition
 func (t *TextEditorTool) GetToolParam() anthropic.ToolParam {
 	return anthropic.ToolParam{
-		Type: "text_editor_20250429",
+		Type: "text_editor_20250728",
 		Name: t.Name,
 	}
 }
