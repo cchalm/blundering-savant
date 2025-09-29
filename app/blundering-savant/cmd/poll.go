@@ -45,6 +45,8 @@ func runPollMode(cmd *cobra.Command, args []string) error {
 	botGithubClient := createGithubClient(ctx, config.BotGithubToken)
 	anthropicClient := createAnthropicClient(config.AnthropicAPIKey)
 
+	sender := ai.NewStreamingMessageSender(anthropicClient)
+
 	// Get bot user info
 	githubUser, _, err := botGithubClient.Users.Get(ctx, "")
 	if err != nil {
@@ -65,7 +67,7 @@ func runPollMode(cmd *cobra.Command, args []string) error {
 
 	// Create task generator and bot
 	taskGen := task.NewGenerator(systemGithubClient, githubUser, config.CheckInterval)
-	b := bot.New(botGithubClient, githubUser, anthropicClient, historyStore, workspaceFactory)
+	b := bot.New(botGithubClient, githubUser, sender, historyStore, workspaceFactory)
 
 	log.Printf("Bot started. Monitoring issues for @%s every %s", *githubUser.Login, config.CheckInterval)
 

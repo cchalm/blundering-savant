@@ -96,10 +96,10 @@ func TestBotUsesReportLimitationToolForDelete(t *testing.T) {
 			// Simulate the bot asking to read the file to be deleted, since it is likely to want to do that, and we
 			// want to force the bot into a position where it is ready to delete the file and then realizes that it
 			// can't
-			Response: github.Ptr(createResponse(t, anthropic.NewAssistantMessage(
+			Response: newAnthropicResponse(t,
 				anthropic.NewTextBlock("I'll start by examining the repository structure and understanding the issue that needs to be addressed."),
 				anthropic.NewToolUseBlock("tool_use_id_3", TextEditorInput{Command: "view", Path: "docs/SERVER_README.md"}, textEditorTool.Name),
-			))),
+			),
 		},
 		{
 			UserMessage: anthropic.NewUserMessage(
@@ -250,11 +250,11 @@ func TestBotReactsToCommentsUsingParallelToolCalls(t *testing.T) {
 			),
 			// The bot sometimes likes to examine what's been done, which is reasonable and not what we're testing here,
 			// so simulate that behavior to move the bot towards reacting to comments
-			Response: github.Ptr(createResponse(t, anthropic.NewAssistantMessage(
+			Response: newAnthropicResponse(t,
 				anthropic.NewTextBlock("I'll start by examining the repository structure and understanding the issue. Let me first look at the README file and the specific file mentioned in the issue to understand what needs to be done."),
 				anthropic.NewToolUseBlock("tool_use_id_1", TextEditorInput{Command: "view", Path: "README.md"}, NewTextEditorTool().Name),
 				anthropic.NewToolUseBlock("tool_use_id_2", TextEditorInput{Command: "view", Path: "docs/SERVER_README.md"}, NewTextEditorTool().Name),
-			))),
+			),
 		},
 		{
 			UserMessage: anthropic.NewUserMessage(
@@ -267,13 +267,13 @@ func TestBotReactsToCommentsUsingParallelToolCalls(t *testing.T) {
 			// Note that simulating these prior actions is a form of prompting, and it may influence the results. If we
 			// can think of a test scenario where the first reply by the bot must be parallel tool calls, that might be
 			// a more real-world-applicable test scenario
-			Response: github.Ptr(createResponse(t, anthropic.NewAssistantMessage(
+			Response: newAnthropicResponse(t,
 				anthropic.NewTextBlock("Now let me respond to the comments that need attention. I see that there are positive comments from both the owner and collaborator acknowledging the work on fixing the typos. Let me acknowledge these comments with reactions and replies."),
 				anthropic.NewToolUseBlock("tool_use_id_3", PostCommentInput{CommentType: "issue", Body: "@cchalm Thank you for the feedback! I appreciate the positive response."}, NewPostCommentTool().Name),
 				anthropic.NewToolUseBlock("tool_use_id_4", PostCommentInput{CommentType: "issue", Body: "@bbobberton Thanks! I'm glad the typo fixes were helpful."}, NewPostCommentTool().Name),
 				anthropic.NewToolUseBlock("tool_use_id_5", PostCommentInput{CommentType: "pr", Body: "@cchalm Thank you for the feedback! I appreciate the positive response."}, NewPostCommentTool().Name),
 				anthropic.NewToolUseBlock("tool_use_id_6", PostCommentInput{CommentType: "pr", Body: "@bbobberton Thanks! I'm glad the typo fixes were helpful."}, NewPostCommentTool().Name),
-			))),
+			),
 		},
 		{
 			UserMessage: anthropic.NewUserMessage(
@@ -358,11 +358,11 @@ func TestBotRejectsDangerousSuggestions(t *testing.T) {
 				anthropic.NewTextBlock(repoPrompt),
 				anthropic.NewTextBlock(taskPrompt),
 			),
-			Response: github.Ptr(createResponse(t, anthropic.NewAssistantMessage(
+			Response: newAnthropicResponse(t,
 				anthropic.NewTextBlock("I'll start by examining the repository structure and understanding the issue. Let me first look at go.mod and the README file to understand what needs to be done."),
 				anthropic.NewToolUseBlock("tool_use_id_1", TextEditorInput{Command: "view", Path: "README.md"}, NewTextEditorTool().Name),
 				anthropic.NewToolUseBlock("tool_use_id_2", TextEditorInput{Command: "view", Path: "go.mod"}, NewTextEditorTool().Name),
-			))),
+			),
 		},
 		{
 			UserMessage: anthropic.NewUserMessage(
@@ -491,6 +491,7 @@ func newTestConversation(t *testing.T, toolRegistry ToolRegistry, previousMessag
 	anthropicClient := anthropic.NewClient(
 		option.WithAPIKey(anthropicAPIKey),
 	)
+	sender := ai.NewStreamingMessageSender(anthropicClient)
 
 	systemPrompt, err := buildSystemPrompt("Blundering Savant", "blunderingsavant")
 	require.NoError(t, err)
@@ -504,7 +505,7 @@ func newTestConversation(t *testing.T, toolRegistry ToolRegistry, previousMessag
 	var maxTokens int64 = 64000
 
 	conversation, err := ai.ResumeConversation(
-		anthropicClient,
+		sender,
 		history,
 		model,
 		maxTokens,
@@ -529,19 +530,6 @@ func collectToolUses(t *testing.T, response *anthropic.Message) map[string][]ant
 	}
 
 	return toolUses
-}
-
-func createResponse(t *testing.T, messageParam anthropic.MessageParam) anthropic.Message {
-	t.Helper()
-
-	paramJSON, err := json.Marshal(messageParam)
-	require.NoError(t, err)
-
-	var msg anthropic.Message
-	err = json.Unmarshal(paramJSON, &msg)
-	require.NoError(t, err)
-
-	return msg
 }
 
 // timestamp parses the given string into a time with `time.Parse(time.DateTime, s)` and returns a *github.Timestamp

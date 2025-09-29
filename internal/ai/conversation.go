@@ -2,24 +2,26 @@ package ai
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"log"
-	"strings"
 
 	"github.com/anthropics/anthropic-sdk-go"
+	anthropt "github.com/anthropics/anthropic-sdk-go/option"
 )
 
+type MessageSender interface {
+	SendMessage(ctx context.Context, params anthropic.MessageNewParams, opts ...anthropt.RequestOption) (*anthropic.Message, error)
+}
+
 type Conversation struct {
-	client anthropic.Client
+	sender MessageSender
 
 	model        anthropic.Model
 	systemPrompt string
 	tools        []anthropic.ToolParam
-	Messages     []ConversationTurn
+	Turns        []ConversationTurn
 
 	maxOutputTokens int64 // Maximum number of output tokens per response
-	tokenLimit      int64 // When to trigger summarization
 }
 
 // ConversationTurn is a pair of messages: a user message, and an optional assistant response
@@ -29,7 +31,7 @@ type ConversationTurn struct {
 }
 
 func NewConversation(
-	anthropicClient anthropic.Client,
+	sender MessageSender,
 	model anthropic.Model,
 	maxOutputTokens int64,
 	tools []anthropic.ToolParam,
@@ -37,34 +39,32 @@ func NewConversation(
 ) *Conversation {
 
 	return &Conversation{
-		client: anthropicClient,
+		sender: sender,
 
 		model:        model,
 		systemPrompt: systemPrompt,
 		tools:        tools,
 
 		maxOutputTokens: maxOutputTokens,
-		tokenLimit:      100000, // 100k token limit
 	}
 }
 
 func ResumeConversation(
-	anthropicClient anthropic.Client,
+	sender MessageSender,
 	history ConversationHistory,
 	model anthropic.Model,
 	maxOutputTokens int64,
 	tools []anthropic.ToolParam,
 ) (*Conversation, error) {
 	c := &Conversation{
-		client: anthropicClient,
+		sender: sender,
 
 		model:        model,
 		systemPrompt: history.SystemPrompt,
 		tools:        tools,
-		Messages:     history.Messages,
+		Turns:        history.Messages,
 
 		maxOutputTokens: maxOutputTokens,
-		tokenLimit:      100000, // 100k token limit
 	}
 	return c, nil
 }
@@ -76,18 +76,18 @@ func (cc *Conversation) SendMessage(ctx context.Context, messageContent ...anthr
 
 // SeedTurn adds a message to the conversation with a hard-coded (i.e. fake) response
 func (cc *Conversation) SeedTurn(ctx context.Context, turn ConversationTurn) {
-	cc.Messages = append(cc.Messages, turn)
+	cc.Turns = append(cc.Turns, turn)
 }
 
-// ResendLastMessage erases the last message in the conversation history and resends it
+// ResendLastMessage erases the last turn in the conversation history and resends the user message in that turn
 func (cc *Conversation) ResendLastMessage(ctx context.Context) (*anthropic.Message, error) {
-	if len(cc.Messages) == 0 {
+	if len(cc.Turns) == 0 {
 		return nil, fmt.Errorf("cannot resend last message: no messages")
 	}
 
 	var lastTurn ConversationTurn
 	// Pop the last message off of the conversation history
-	lastTurn, cc.Messages = cc.Messages[len(cc.Messages)-1], cc.Messages[:len(cc.Messages)-1]
+	lastTurn, cc.Turns = cc.Turns[len(cc.Turns)-1], cc.Turns[:len(cc.Turns)-1]
 
 	return cc.SendMessage(ctx, lastTurn.UserMessage.Content...)
 }
@@ -106,12 +106,12 @@ func (cc *Conversation) sendMessage(ctx context.Context, enableCache bool, messa
 		}
 	}
 
-	cc.Messages = append(cc.Messages, ConversationTurn{
+	cc.Turns = append(cc.Turns, ConversationTurn{
 		UserMessage: anthropic.NewUserMessage(messageContent...),
 	})
 
 	messageParams := []anthropic.MessageParam{}
-	for _, turn := range cc.Messages {
+	for _, turn := range cc.Turns {
 		messageParams = append(messageParams, turn.UserMessage)
 		if turn.Response != nil {
 			messageParams = append(messageParams, turn.Response.ToParam())
@@ -141,24 +141,9 @@ func (cc *Conversation) sendMessage(ctx context.Context, enableCache bool, messa
 	}
 	params.Tools = toolParams
 
-	stream := cc.client.Messages.NewStreaming(ctx, params)
-	response := anthropic.Message{}
-	for stream.Next() {
-		event := stream.Current()
-		err := response.Accumulate(event)
-		if err != nil {
-			return nil, fmt.Errorf("failed to accumulate response content stream: %w", err)
-		}
-	}
-	if stream.Err() != nil {
-		return nil, fmt.Errorf("failed to stream response: %w", stream.Err())
-	}
-	if response.StopReason == "" {
-		b, err := json.Marshal(response)
-		if err != nil {
-			log.Printf("error while marshalling corrupt message for inspection: %v", err)
-		}
-		return nil, fmt.Errorf("malformed message: %v", string(b))
+	response, err := cc.sender.SendMessage(ctx, params)
+	if err != nil {
+		return nil, err
 	}
 
 	log.Printf("Token usage - Input: %d, Cache create: %d, Cache read: %d, Total: %d",
@@ -169,7 +154,7 @@ func (cc *Conversation) sendMessage(ctx context.Context, enableCache bool, messa
 	)
 
 	// Record the response
-	cc.Messages[len(cc.Messages)-1].Response = &response
+	cc.Turns[len(cc.Turns)-1].Response = response
 
 	// Remove the cache control element from the conversation history if caching was enabled
 	if enableCache {
@@ -180,7 +165,7 @@ func (cc *Conversation) sendMessage(ctx context.Context, enableCache bool, messa
 		}
 	}
 
-	return &response, nil
+	return response, nil
 }
 
 func getLastCacheControl(content []anthropic.ContentBlockParamUnion) (*anthropic.CacheControlEphemeralParam, error) {
@@ -194,113 +179,6 @@ func getLastCacheControl(content []anthropic.ContentBlockParamUnion) (*anthropic
 	return nil, fmt.Errorf("no cacheable blocks in content")
 }
 
-// NeedsSummarization checks if the conversation should be summarized due to token limits
-func (cc *Conversation) NeedsSummarization() bool {
-	if len(cc.Messages) == 0 {
-		return false
-	}
-
-	// Get the most recent response
-	lastMessage := cc.Messages[len(cc.Messages)-1]
-	if lastMessage.Response == nil {
-		return false
-	}
-
-	// Check token usage from the most recent turn (which includes cumulative history)
-	// Include cache create tokens as they contribute to context size
-	totalTokens := lastMessage.Response.Usage.InputTokens +
-		lastMessage.Response.Usage.CacheReadInputTokens +
-		lastMessage.Response.Usage.CacheCreationInputTokens
-	return totalTokens > cc.tokenLimit
-}
-
-// Summarize creates a condensed version of the conversation history, preserving
-// the first message (initial repository and task content) while summarizing the rest
-func (cc *Conversation) Summarize(ctx context.Context) error {
-	if len(cc.Messages) <= 2 {
-		// Don't summarize if we have too few messages
-		return nil
-	}
-
-	// Get token count from most recent response for logging
-	var totalTokens int64
-	if lastMsg := cc.Messages[len(cc.Messages)-1]; lastMsg.Response != nil {
-		totalTokens = lastMsg.Response.Usage.InputTokens +
-			lastMsg.Response.Usage.CacheReadInputTokens +
-			lastMsg.Response.Usage.CacheCreationInputTokens
-	}
-
-	log.Printf("Conversation has %d messages and %d total input tokens, summarizing...",
-		len(cc.Messages), totalTokens)
-
-	// Preserve the first message (initial repository and task content)
-	numFirstMessagesToPreserve := 1
-
-	// Ensure we have something to summarize
-	if len(cc.Messages) <= numFirstMessagesToPreserve {
-		return nil
-	}
-
-	// Generate summary using AI (this will add a summary request/response to the conversation)
-	summaryResponse, err := cc.generateConversationSummary(ctx)
-	if err != nil {
-		return fmt.Errorf("failed to generate conversation summary: %w", err)
-	}
-
-	// Create conversation turns that properly represent the summary exchange
-	// First turn: User asks for summary + Assistant provides the summary
-	summaryRequestTurn := ConversationTurn{
-		UserMessage: anthropic.NewUserMessage(anthropic.NewTextBlock("Please respond with the summary you generated earlier.")),
-		Response:    summaryResponse,
-	}
-
-	// Second turn: User asks to resume work based on the summary
-	resumeRequestTurn := ConversationTurn{
-		UserMessage: anthropic.NewUserMessage(anthropic.NewTextBlock("Please resume working on this task based on your summary.")),
-		// No response yet - this will be filled in by the next actual conversation turn
-	}
-
-	// Reconstruct the conversation: preserved first messages + summary exchange + resume request
-	newMessages := []ConversationTurn{}
-
-	// Add preserved first messages
-	newMessages = append(newMessages, cc.Messages[:numFirstMessagesToPreserve]...)
-
-	// Add summary conversation turns
-	newMessages = append(newMessages, summaryRequestTurn, resumeRequestTurn)
-
-	// Update the conversation
-	originalMessageCount := len(cc.Messages)
-	cc.Messages = newMessages
-
-	log.Printf("Conversation summarized: %d messages -> %d messages",
-		originalMessageCount, len(cc.Messages))
-
-	return nil
-}
-
-// generateConversationSummary creates a summary of the conversation using AI
-func (cc *Conversation) generateConversationSummary(ctx context.Context) (*anthropic.Message, error) {
-	// Build a summary request that will be sent as part of the current conversation
-	var summaryPrompt strings.Builder
-	summaryPrompt.WriteString("Please summarize all of the work you have done so far. Focus on:\n")
-	summaryPrompt.WriteString("1. Key decisions and changes made\n")
-	summaryPrompt.WriteString("2. Current state of the codebase\n")
-	summaryPrompt.WriteString("3. Any important context for continuing the work\n")
-	summaryPrompt.WriteString("4. Tools used and their outcomes\n\n")
-	summaryPrompt.WriteString("Please provide a comprehensive but concise summary that captures all important information needed to continue working effectively. ")
-	summaryPrompt.WriteString("There's no need to include the system prompt or initial repository information in your summary - focus on the actual work and changes made during our conversation.")
-
-	// Send summary request without caching since we're throwing away conversation history
-	response, err := cc.sendMessage(ctx, false, anthropic.NewTextBlock(summaryPrompt.String()))
-	if err != nil {
-		return nil, fmt.Errorf("failed to generate summary: %w", err)
-	}
-
-	// Return the complete response message
-	return response, nil
-}
-
 // ConversationHistory contains a serializable and resumable snapshot of a Conversation
 type ConversationHistory struct {
 	SystemPrompt string             `json:"systemPrompt"`
@@ -311,6 +189,6 @@ type ConversationHistory struct {
 func (cc *Conversation) History() ConversationHistory {
 	return ConversationHistory{
 		SystemPrompt: cc.systemPrompt,
-		Messages:     cc.Messages,
+		Messages:     cc.Turns,
 	}
 }
