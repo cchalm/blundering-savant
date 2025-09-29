@@ -34,8 +34,8 @@ func TestSummarize_Basic(t *testing.T) {
 	keepLast := 3
 
 	turn3 := turn(t, 3)
-	turn3.UserInstructions = append(turn3.UserInstructions, anthropic.TextBlock{Type: "text", Text: repeatSummaryRequest.Text})
-	turn3.AssistantTextBlocks = []anthropic.ContentBlockParamUnion{{OfText: &anthropic.TextBlockParam{Type: "text", Text: summary.Text}}}
+	turn3.UserInstructions = append(turn3.UserInstructions, anthropic.TextBlock{Type: "text", Text: repeatSummaryRequest.OfText.Text})
+	turn3.AssistantTextBlocks = []anthropic.ContentBlockParamUnion{{OfText: &anthropic.TextBlockParam{Type: "text", Text: summary.OfText.Text}}}
 
 	turn7 := turn(t, 7)
 
@@ -44,7 +44,7 @@ func TestSummarize_Basic(t *testing.T) {
 		turn(t, 2),
 		turn3,
 		{
-			UserInstructions:    []anthropic.TextBlock{{Type: "text", Text: resumeFromSummaryRequest.Text}},
+			UserInstructions:    []anthropic.TextBlock{{Type: "text", Text: resumeFromSummaryRequest.OfText.Text}},
 			AssistantTextBlocks: turn7.AssistantTextBlocks,
 			ToolExchanges:       []ai.ToolExchange{},
 		},
@@ -74,15 +74,15 @@ func TestSummarize_KeepNone(t *testing.T) {
 	keepLast := 0
 
 	turn1 := turn(t, 1)
-	turn1.UserInstructions = append(turn1.UserInstructions, anthropic.TextBlock{Type: "text", Text: repeatSummaryRequest.Text})
-	turn1.AssistantTextBlocks = []anthropic.ContentBlockParamUnion{{OfText: &anthropic.TextBlockParam{Type: "text", Text: summary.Text}}}
+	turn1.UserInstructions = append(turn1.UserInstructions, anthropic.TextBlock{Type: "text", Text: repeatSummaryRequest.OfText.Text})
+	turn1.AssistantTextBlocks = []anthropic.ContentBlockParamUnion{{OfText: &anthropic.TextBlockParam{Type: "text", Text: summary.OfText.Text}}}
 
 	turn10 := turn(t, 10)
 
 	expectedSummarizedTurns := []ai.ConversationTurn{
 		turn1,
 		{
-			UserInstructions:    []anthropic.TextBlock{{Type: "text", Text: resumeFromSummaryRequest.Text}},
+			UserInstructions:    []anthropic.TextBlock{{Type: "text", Text: resumeFromSummaryRequest.OfText.Text}},
 			AssistantTextBlocks: turn10.AssistantTextBlocks,
 			ToolExchanges:       []ai.ToolExchange{},
 		},
@@ -109,8 +109,8 @@ func TestSummarize_KeepAllButTwo(t *testing.T) {
 	keepLast := 2
 
 	turn7 := turn(t, 7)
-	turn7.UserInstructions = append(turn7.UserInstructions, anthropic.TextBlock{Type: "text", Text: repeatSummaryRequest.Text})
-	turn7.AssistantTextBlocks = []anthropic.ContentBlockParamUnion{{OfText: &anthropic.TextBlockParam{Type: "text", Text: summary.Text}}}
+	turn7.UserInstructions = append(turn7.UserInstructions, anthropic.TextBlock{Type: "text", Text: repeatSummaryRequest.OfText.Text})
+	turn7.AssistantTextBlocks = []anthropic.ContentBlockParamUnion{{OfText: &anthropic.TextBlockParam{Type: "text", Text: summary.OfText.Text}}}
 
 	turn8 := turn(t, 8)
 
@@ -123,7 +123,7 @@ func TestSummarize_KeepAllButTwo(t *testing.T) {
 		turn(t, 6),
 		turn7,
 		{
-			UserInstructions:    []anthropic.TextBlock{{Type: "text", Text: resumeFromSummaryRequest.Text}},
+			UserInstructions:    []anthropic.TextBlock{{Type: "text", Text: resumeFromSummaryRequest.OfText.Text}},
 			AssistantTextBlocks: turn8.AssistantTextBlocks,
 			ToolExchanges:       []ai.ToolExchange{},
 		},
