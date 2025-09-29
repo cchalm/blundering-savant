@@ -275,7 +275,7 @@ func sendMessage(
 ) (*anthropic.Message, error) {
 
 	if tokenUsageExceedsLimit(conversation, tokenLimit) {
-		keepFirst, keepLast := 1, 10 // Keep the first message and the last 10
+		keepFirst, keepLast := 0, 10 // Keep the last 10 messages
 		err := summarize(ctx, conversation, keepFirst, keepLast)
 		if err != nil {
 			return nil, err

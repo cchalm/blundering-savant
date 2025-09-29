@@ -191,14 +191,6 @@ func testSummarize(
 	ctx := context.Background()
 	err = summarize(ctx, conversation, keepFirst, keepLast)
 	require.NoError(t, err)
-	for _, turn := range conversation.Turns {
-		for _, block := range turn.UserMessage.Content {
-			fmt.Printf("User: %s\n", block.OfText.Text)
-		}
-		for _, block := range turn.Response.Content {
-			fmt.Printf("Asst: %s\n", block.Text)
-		}
-	}
 	require.Equal(t, expectedTurns, conversation.Turns)
 }
 
