@@ -517,7 +517,6 @@ var (
 	// previously-generated summary
 	repeatSummaryRequest = anthropic.ContentBlockParamUnion{
 		OfText: &anthropic.TextBlockParam{
-			Type: "text",
 			Text: "You have already done some work on this task, but there was an interruption. " +
 				"Before the interruption, you were asked to generate a summary of the work you had done so far. " +
 				"Please respond with that summary.",
@@ -527,7 +526,6 @@ var (
 	// summarization
 	resumeFromSummaryRequest = anthropic.ContentBlockParamUnion{
 		OfText: &anthropic.TextBlockParam{
-			Type: "text",
 			Text: "Please resume working on this task based on your summary.",
 		},
 	}
