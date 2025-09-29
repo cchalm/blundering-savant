@@ -510,6 +510,19 @@ func buildSummaryPrompt() string {
 	return summaryPrompt.String()
 }
 
+var (
+	// repeatSummaryRequest is a content block that will be used to simulate the assistant being prompted to produce its
+	// previously-generated summary
+	repeatSummaryRequest = anthropic.NewTextBlock(
+		"You have already done some work on this task, but there was an interruption. " +
+			"Before the interruption, you were asked to generate a summary of the work you had done so far. " +
+			"Please respond with that summary.",
+	)
+	// resumeFromSummaryRequest is a content block that will be used to prompt the assistant to continue work after
+	// summarization
+	resumeFromSummaryRequest = anthropic.NewTextBlock("Please resume working on this task based on your summary.")
+)
+
 // summarize compresses conversation history using an AI-generated summary. It modifies the given conversation in-place.
 //
 // keepFirst specifies how many turns from the beginning of the conversation to keep in the summarized conversation.
@@ -581,13 +594,6 @@ func summarize(ctx context.Context, conversation *ai.Conversation, keepFirst int
 		return fmt.Errorf("failed to generate summary: %w", err)
 	}
 
-	// Create a content block that will simulate the assistant being prompted to produce its previously-generated summary
-	summaryRequestBlock := anthropic.NewTextBlock(
-		"You have already done some work on this task, but there was an interruption. " +
-			"Before the interruption, you were asked to generate a summary of the work you had done so far. " +
-			"Please respond with that summary.",
-	)
-
 	// Reconstruct the conversation: preserved first messages + summary exchange + preserved last messages
 	summarizedTurns := slices.Clone(conversation.Turns[:keepFirst])
 	summarizedTurns = append(summarizedTurns, []ai.ConversationTurn{
@@ -596,15 +602,13 @@ func summarize(ctx context.Context, conversation *ai.Conversation, keepFirst int
 			// to append the summary request to the existing content in case the existing content contains tool results
 			// that must match prior tool uses.
 			UserMessage: anthropic.NewUserMessage(
-				append(conversation.Turns[keepFirst].UserMessage.Content, summaryRequestBlock)...,
+				append(conversation.Turns[keepFirst].UserMessage.Content, repeatSummaryRequest)...,
 			),
 			Response: summaryMessage,
 		},
 		{
-			UserMessage: anthropic.NewUserMessage(
-				anthropic.NewTextBlock("Please resume working on this task based on your summary."),
-			),
-			Response: conversation.Turns[len(conversation.Turns)-keepLast-1].Response,
+			UserMessage: anthropic.NewUserMessage(resumeFromSummaryRequest),
+			Response:    conversation.Turns[len(conversation.Turns)-keepLast-1].Response,
 		},
 	}...)
 	summarizedTurns = append(summarizedTurns, conversation.Turns[len(conversation.Turns)-keepLast:]...)
