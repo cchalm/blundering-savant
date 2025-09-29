@@ -85,6 +85,7 @@ func New(
 		toolRegistry:           NewToolRegistry(),
 		workspaceFactory:       workspaceFactory,
 		resumableConversations: historyStore,
+		tokenLimit:             100000, // Use a limit of 100k tokens, half of the context limit of 200k
 		user:                   githubUser,
 	}
 }
