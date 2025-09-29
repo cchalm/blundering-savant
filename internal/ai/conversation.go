@@ -15,10 +15,9 @@ type Conversation struct {
 	model        anthropic.Model
 	systemPrompt string
 	tools        []anthropic.ToolParam
-	Messages     []ConversationTurn
+	Turns        []ConversationTurn
 
 	maxOutputTokens int64 // Maximum number of output tokens per response
-	tokenLimit      int64 // When to trigger summarization
 }
 
 // ConversationTurn is a pair of messages: a user message, and an optional assistant response
@@ -43,7 +42,6 @@ func NewConversation(
 		tools:        tools,
 
 		maxOutputTokens: maxOutputTokens,
-		tokenLimit:      100000, // 100k token limit
 	}
 }
 
@@ -60,10 +58,9 @@ func ResumeConversation(
 		model:        model,
 		systemPrompt: history.SystemPrompt,
 		tools:        tools,
-		Messages:     history.Messages,
+		Turns:        history.Messages,
 
 		maxOutputTokens: maxOutputTokens,
-		tokenLimit:      100000, // 100k token limit
 	}
 	return c, nil
 }
@@ -75,18 +72,18 @@ func (cc *Conversation) SendMessage(ctx context.Context, messageContent ...anthr
 
 // SeedTurn adds a message to the conversation with a hard-coded (i.e. fake) response
 func (cc *Conversation) SeedTurn(ctx context.Context, turn ConversationTurn) {
-	cc.Messages = append(cc.Messages, turn)
+	cc.Turns = append(cc.Turns, turn)
 }
 
-// ResendLastMessage erases the last message in the conversation history and resends it
+// ResendLastMessage erases the last turn in the conversation history and resends the user message in that turn
 func (cc *Conversation) ResendLastMessage(ctx context.Context) (*anthropic.Message, error) {
-	if len(cc.Messages) == 0 {
+	if len(cc.Turns) == 0 {
 		return nil, fmt.Errorf("cannot resend last message: no messages")
 	}
 
 	var lastTurn ConversationTurn
 	// Pop the last message off of the conversation history
-	lastTurn, cc.Messages = cc.Messages[len(cc.Messages)-1], cc.Messages[:len(cc.Messages)-1]
+	lastTurn, cc.Turns = cc.Turns[len(cc.Turns)-1], cc.Turns[:len(cc.Turns)-1]
 
 	return cc.SendMessage(ctx, lastTurn.UserMessage.Content...)
 }
@@ -105,12 +102,12 @@ func (cc *Conversation) sendMessage(ctx context.Context, enableCache bool, messa
 		}
 	}
 
-	cc.Messages = append(cc.Messages, ConversationTurn{
+	cc.Turns = append(cc.Turns, ConversationTurn{
 		UserMessage: anthropic.NewUserMessage(messageContent...),
 	})
 
 	messageParams := []anthropic.MessageParam{}
-	for _, turn := range cc.Messages {
+	for _, turn := range cc.Turns {
 		messageParams = append(messageParams, turn.UserMessage)
 		if turn.Response != nil {
 			messageParams = append(messageParams, turn.Response.ToParam())
@@ -168,7 +165,7 @@ func (cc *Conversation) sendMessage(ctx context.Context, enableCache bool, messa
 	)
 
 	// Record the response
-	cc.Messages[len(cc.Messages)-1].Response = &response
+	cc.Turns[len(cc.Turns)-1].Response = &response
 
 	// Remove the cache control element from the conversation history if caching was enabled
 	if enableCache {
@@ -193,26 +190,6 @@ func getLastCacheControl(content []anthropic.ContentBlockParamUnion) (*anthropic
 	return nil, fmt.Errorf("no cacheable blocks in content")
 }
 
-// NeedsSummarization checks if the conversation should be summarized due to token limits
-func (cc *Conversation) NeedsSummarization() bool {
-	if len(cc.Messages) == 0 {
-		return false
-	}
-
-	// Get the most recent response
-	lastMessage := cc.Messages[len(cc.Messages)-1]
-	if lastMessage.Response == nil {
-		return false
-	}
-
-	// Check token usage from the most recent turn (which includes cumulative history)
-	// Include cache create tokens as they contribute to context size
-	totalTokens := lastMessage.Response.Usage.InputTokens +
-		lastMessage.Response.Usage.CacheReadInputTokens +
-		lastMessage.Response.Usage.CacheCreationInputTokens
-	return totalTokens > cc.tokenLimit
-}
-
 // ConversationHistory contains a serializable and resumable snapshot of a Conversation
 type ConversationHistory struct {
 	SystemPrompt string             `json:"systemPrompt"`
@@ -223,6 +200,6 @@ type ConversationHistory struct {
 func (cc *Conversation) History() ConversationHistory {
 	return ConversationHistory{
 		SystemPrompt: cc.systemPrompt,
-		Messages:     cc.Messages,
+		Messages:     cc.Turns,
 	}
 }
