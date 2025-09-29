@@ -5,6 +5,7 @@ import (
 	"log"
 	"strings"
 
+	"github.com/cchalm/blundering-savant/internal/ai"
 	"github.com/cchalm/blundering-savant/internal/bot"
 	"github.com/cchalm/blundering-savant/internal/task"
 	"github.com/spf13/cobra"
@@ -68,6 +69,8 @@ func runTaskMode(cmd *cobra.Command, args []string) error {
 	botGithubClient := createGithubClient(ctx, config.BotGithubToken)
 	anthropicClient := createAnthropicClient(config.AnthropicAPIKey)
 
+	sender := ai.NewStreamingMessageSender(anthropicClient)
+
 	// Get bot user info
 	botUser, _, err := botGithubClient.Users.Get(ctx, "")
 	if err != nil {
@@ -81,7 +84,7 @@ func runTaskMode(cmd *cobra.Command, args []string) error {
 	}
 
 	// Create bot (no conversation history in task mode)
-	b := bot.New(botGithubClient, botUser, anthropicClient, nil, workspaceFactory)
+	b := bot.New(botGithubClient, botUser, sender, nil, workspaceFactory)
 
 	// Build task
 	taskBuilder := task.NewBuilder(systemGithubClient, botUser)

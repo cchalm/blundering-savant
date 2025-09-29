@@ -76,7 +76,7 @@ func (cc *Conversation) buildMarkdownData() (*conversationMarkdownData, error) {
 	pendingToolUses := make(map[string]conversationMessage) // toolID -> incomplete message
 
 	// Process each turn
-	for _, turn := range cc.Messages {
+	for _, turn := range cc.Turns {
 		// Process user message (which might contain text, tool results, etc.)
 		userMessages := convertUserMessage(turn.UserMessage, pendingToolUses)
 		data.Messages = append(data.Messages, userMessages...)
