@@ -21,7 +21,7 @@ type Conversation struct {
 	tools        []anthropic.ToolParam
 	Turns        []ConversationTurn
 
-	maxOutputTokens int64          // Maximum number of output tokens per response
+	maxOutputTokens int64           // Maximum number of output tokens per response
 	lastUsage       anthropic.Usage // Token usage from the most recent API response
 }
 
@@ -378,10 +378,10 @@ func (cc *Conversation) reconstructResponse(turnIndex int) *anthropic.Message {
 	}
 
 	turn := cc.Turns[turnIndex]
-	
+
 	// Build content blocks: text blocks + tool uses
 	var contentBlocks []anthropic.ContentBlock
-	
+
 	// Add text and thinking blocks
 	for _, block := range turn.AssistantTextBlocks {
 		if textParam := block.OfText; textParam != nil {
@@ -400,22 +400,22 @@ func (cc *Conversation) reconstructResponse(turnIndex int) *anthropic.Message {
 			})
 		}
 	}
-	
+
 	// Add tool uses
 	for _, exchange := range turn.ToolExchanges {
 		contentBlocks = append(contentBlocks, anthropic.ContentBlock{
 			OfToolUse: &exchange.ToolUse,
 		})
 	}
-	
+
 	// Determine stop reason based on content
 	stopReason := anthropic.StopReasonEndTurn
 	if len(turn.ToolExchanges) > 0 {
 		stopReason = anthropic.StopReasonToolUse
 	}
-	
+
 	return &anthropic.Message{
-		ID:         "",  // Synthetic message doesn't have an ID
+		ID:         "", // Synthetic message doesn't have an ID
 		Content:    contentBlocks,
 		Model:      cc.model,
 		Role:       anthropic.MessageRoleAssistant,

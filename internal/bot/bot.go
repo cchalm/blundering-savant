@@ -581,7 +581,7 @@ func summarize(ctx context.Context, conversation *ai.Conversation, keepFirst int
 
 	// Reconstruct the conversation: preserved first turns + summary exchange + preserved last turns
 	summarizedTurns := slices.Clone(conversation.Turns[:keepFirst])
-	
+
 	// Add a summary turn: the first user instructions after preserved turns + summary request,
 	// followed by the AI's summary response
 	summaryTurn := ai.ConversationTurn{
@@ -595,7 +595,7 @@ func summarize(ctx context.Context, conversation *ai.Conversation, keepFirst int
 		AssistantTextBlocks: []anthropic.ContentBlockParamUnion{},
 		ToolExchanges:       []ai.ToolExchange{},
 	}
-	
+
 	// Parse summary message into the turn
 	for _, contentBlock := range summaryMessage.Content {
 		switch block := contentBlock.AsAny().(type) {
@@ -615,9 +615,9 @@ func summarize(ctx context.Context, conversation *ai.Conversation, keepFirst int
 			})
 		}
 	}
-	
+
 	summarizedTurns = append(summarizedTurns, summaryTurn)
-	
+
 	// Add a resume turn with the instruction to continue and the last assistant response before preserved turns
 	resumeTurn := ai.ConversationTurn{
 		UserInstructions: []anthropic.TextBlock{
@@ -630,7 +630,7 @@ func summarize(ctx context.Context, conversation *ai.Conversation, keepFirst int
 		ToolExchanges:       conversation.Turns[len(conversation.Turns)-keepLast-1].ToolExchanges,
 	}
 	summarizedTurns = append(summarizedTurns, resumeTurn)
-	
+
 	// Add preserved last turns
 	summarizedTurns = append(summarizedTurns, conversation.Turns[len(conversation.Turns)-keepLast:]...)
 
@@ -655,7 +655,7 @@ func generateSummary(ctx context.Context, conversation *ai.Conversation, exclude
 	// It's important to preserve any user instructions because they might include context needed for the summary
 	var messageContent []anthropic.ContentBlockParamUnion
 	piggybackTurn := conversation.Turns[len(conversation.Turns)-excludeLast-1]
-	
+
 	for _, textBlock := range piggybackTurn.UserInstructions {
 		messageContent = append(messageContent, anthropic.ContentBlockParamUnion{
 			OfText: &anthropic.TextBlockParam{
@@ -664,7 +664,7 @@ func generateSummary(ctx context.Context, conversation *ai.Conversation, exclude
 			},
 		})
 	}
-	
+
 	messageContent = append(messageContent, anthropic.NewTextBlock(summaryPrompt))
 
 	return summaryConversation.SendMessage(ctx, messageContent...)

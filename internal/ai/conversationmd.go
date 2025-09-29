@@ -251,8 +251,6 @@ func renderConversationMarkdown(data *conversationMarkdownData) (string, error) 
 	return buf.String(), nil
 }
 
-
-
 // parseToolSpecificFields extracts tool-specific fields for template use
 func parseToolSpecificFields(msg *conversationMessage) {
 	if msg.ToolName == "str_replace_based_edit_tool" {
