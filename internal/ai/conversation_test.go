@@ -405,6 +405,21 @@ func TestAddToolResult_ToolUseNotFound(t *testing.T) {
 	assert.Contains(t, err.Error(), "tool use block with ID 'tool_456' not found")
 }
 
+func TestSendMessage_RejectsToolResults(t *testing.T) {
+	stub := &messageSenderStub{
+		response: newAnthropicMessage(t, anthropic.NewTextBlock("response")),
+	}
+	conv := NewConversation(stub, anthropic.ModelClaudeSonnet4_5, 1000, nil, "system prompt")
+
+	// Try to send a tool result as an instruction (this should be rejected)
+	toolResult := newToolResultBlockParam("tool_123", "result", false)
+
+	_, err := conv.SendMessage(context.Background(), anthropic.ContentBlockParamUnion{OfToolResult: &toolResult})
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "tool results must not be passed as instructions")
+}
+
 func TestConvertTurnsToMessages_Empty(t *testing.T) {
 	turns := []ConversationTurn{}
 
@@ -559,4 +574,106 @@ func TestBuildToolExchangesFromResponse_WithToolUses(t *testing.T) {
 	assert.Equal(t, "tool_456", exchanges[1].UseBlock.ID)
 	assert.Equal(t, "test_tool_2", exchanges[1].UseBlock.Name)
 	assert.Nil(t, exchanges[1].ResultBlock)
+}
+
+func TestFork_AtIndexZero(t *testing.T) {
+	stub := &messageSenderStub{}
+	conv := NewConversation(stub, anthropic.ModelClaudeSonnet4_5, 1000, []anthropic.ToolParam{}, "test prompt")
+
+	// Add some turns
+	conv.Turns = []ConversationTurn{
+		{Instructions: []anthropic.ContentBlockParamUnion{anthropic.NewTextBlock("turn 1")}},
+		{Instructions: []anthropic.ContentBlockParamUnion{anthropic.NewTextBlock("turn 2")}},
+	}
+
+	forked, err := conv.Fork(0)
+
+	require.NoError(t, err)
+	assert.Empty(t, forked.Turns)
+	assert.Equal(t, "test prompt", forked.systemPrompt)
+	assert.Equal(t, anthropic.ModelClaudeSonnet4_5, forked.model)
+	assert.Equal(t, int64(1000), forked.maxOutputTokens)
+}
+
+func TestFork_InMiddle(t *testing.T) {
+	stub := &messageSenderStub{}
+	conv := NewConversation(stub, anthropic.ModelClaudeSonnet4_5, 1000, []anthropic.ToolParam{}, "test prompt")
+
+	// Add some turns
+	conv.Turns = []ConversationTurn{
+		{Instructions: []anthropic.ContentBlockParamUnion{anthropic.NewTextBlock("turn 1")}},
+		{Instructions: []anthropic.ContentBlockParamUnion{anthropic.NewTextBlock("turn 2")}},
+		{Instructions: []anthropic.ContentBlockParamUnion{anthropic.NewTextBlock("turn 3")}},
+		{Instructions: []anthropic.ContentBlockParamUnion{anthropic.NewTextBlock("turn 4")}},
+	}
+
+	forked, err := conv.Fork(2)
+
+	require.NoError(t, err)
+	require.Len(t, forked.Turns, 2)
+	assert.Equal(t, "turn 1", forked.Turns[0].Instructions[0].OfText.Text)
+	assert.Equal(t, "turn 2", forked.Turns[1].Instructions[0].OfText.Text)
+}
+
+func TestFork_AtEnd(t *testing.T) {
+	stub := &messageSenderStub{}
+	conv := NewConversation(stub, anthropic.ModelClaudeSonnet4_5, 1000, []anthropic.ToolParam{}, "test prompt")
+
+	// Add some turns
+	conv.Turns = []ConversationTurn{
+		{Instructions: []anthropic.ContentBlockParamUnion{anthropic.NewTextBlock("turn 1")}},
+		{Instructions: []anthropic.ContentBlockParamUnion{anthropic.NewTextBlock("turn 2")}},
+	}
+
+	forked, err := conv.Fork(2)
+
+	require.NoError(t, err)
+	require.Len(t, forked.Turns, 2)
+	assert.Equal(t, "turn 1", forked.Turns[0].Instructions[0].OfText.Text)
+	assert.Equal(t, "turn 2", forked.Turns[1].Instructions[0].OfText.Text)
+}
+
+func TestFork_BeyondEnd(t *testing.T) {
+	stub := &messageSenderStub{}
+	conv := NewConversation(stub, anthropic.ModelClaudeSonnet4_5, 1000, []anthropic.ToolParam{}, "test prompt")
+
+	// Add some turns
+	conv.Turns = []ConversationTurn{
+		{Instructions: []anthropic.ContentBlockParamUnion{anthropic.NewTextBlock("turn 1")}},
+		{Instructions: []anthropic.ContentBlockParamUnion{anthropic.NewTextBlock("turn 2")}},
+	}
+
+	forked, err := conv.Fork(3)
+
+	require.Error(t, err)
+	assert.Nil(t, forked)
+	assert.Contains(t, err.Error(), "turnIndex is 3, but there are only 2 turns")
+}
+
+func TestFork_IndependentCopy(t *testing.T) {
+	stub := &messageSenderStub{
+		response: newAnthropicMessage(t, anthropic.NewTextBlock("response")),
+	}
+	conv := NewConversation(stub, anthropic.ModelClaudeSonnet4_5, 1000, []anthropic.ToolParam{}, "test prompt")
+
+	// Add some turns
+	conv.Turns = []ConversationTurn{
+		{Instructions: []anthropic.ContentBlockParamUnion{anthropic.NewTextBlock("turn 1")}},
+		{Instructions: []anthropic.ContentBlockParamUnion{anthropic.NewTextBlock("turn 2")}},
+	}
+
+	forked, err := conv.Fork(1)
+	require.NoError(t, err)
+
+	// Modify the forked conversation
+	_, err = forked.SendMessage(context.Background(), anthropic.NewTextBlock("new instruction"))
+	require.NoError(t, err)
+
+	// Original conversation should be unchanged
+	require.Len(t, conv.Turns, 2)
+	require.Len(t, forked.Turns, 2) // 1 from fork + 1 from SendMessage
+	assert.Equal(t, "turn 1", conv.Turns[0].Instructions[0].OfText.Text)
+	assert.Equal(t, "turn 2", conv.Turns[1].Instructions[0].OfText.Text)
+	assert.Equal(t, "turn 1", forked.Turns[0].Instructions[0].OfText.Text)
+	assert.Equal(t, "new instruction", forked.Turns[1].Instructions[0].OfText.Text)
 }

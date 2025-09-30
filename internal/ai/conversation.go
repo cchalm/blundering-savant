@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"slices"
 
 	"github.com/anthropics/anthropic-sdk-go"
 	anthropt "github.com/anthropics/anthropic-sdk-go/option"
@@ -96,6 +97,13 @@ func (cc *Conversation) ResendLastMessage(ctx context.Context) (*anthropic.Messa
 
 // sendMessage is the internal implementation with a boolean parameter to specify caching
 func (cc *Conversation) sendMessage(ctx context.Context, enableCache bool, instructions ...anthropic.ContentBlockParamUnion) (*anthropic.Message, error) {
+	// Safeguard: prevent tool results from being passed as instructions
+	for _, instruction := range instructions {
+		if instruction.OfToolResult != nil {
+			return nil, fmt.Errorf("tool results must not be passed as instructions; use AddToolResult instead")
+		}
+	}
+
 	messages, err := convertTurnsToMessages(append(cc.Turns, ConversationTurn{Instructions: instructions}))
 	if err != nil {
 		return nil, fmt.Errorf("failed to convert turns to messages: %w", err)
@@ -200,6 +208,16 @@ func (cc *Conversation) AddToolResult(result anthropic.ToolResultBlockParam) err
 	}
 
 	return fmt.Errorf("tool use block with ID '%s' not found", result.ToolUseID)
+}
+
+// Fork returns a new conversation with the same history as this one up to but not including the turn at the given
+// index. E.g. if the given index is 3, the forked conversation's history will be turns 0, 1, and 2
+func (cc Conversation) Fork(turnIndex int) (*Conversation, error) {
+	if turnIndex > len(cc.Turns) {
+		return nil, fmt.Errorf("turnIndex is %d, but there are only %d turns in the conversation", turnIndex, len(cc.Turns))
+	}
+	cc.Turns = slices.Clone(cc.Turns[:turnIndex])
+	return &cc, nil
 }
 
 func buildToolExchangesFromResponse(response *anthropic.Message) []ToolExchange {

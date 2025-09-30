@@ -37,12 +37,12 @@ func TestSummarize_Basic(t *testing.T) {
 		turn(t, 1),
 		turn(t, 2),
 		{
-			UserMessage: anthropic.NewUserMessage(append(turn(t, 3).UserMessage.Content, repeatSummaryRequest)...),
-			Response:    newAnthropicResponse(t, summary),
+			Instructions: []anthropic.ContentBlockParamUnion{repeatSummaryRequest},
+			Response:     newAnthropicResponse(t, summary),
 		},
 		{
-			UserMessage: anthropic.NewUserMessage(resumeFromSummaryRequest),
-			Response:    turn(t, 7).Response,
+			Instructions: []anthropic.ContentBlockParamUnion{resumeFromSummaryRequest},
+			Response:     turn(t, 7).Response,
 		},
 		turn(t, 8),
 		turn(t, 9),
@@ -71,12 +71,12 @@ func TestSummarize_KeepNone(t *testing.T) {
 
 	expectedSummarizedTurns := []ai.ConversationTurn{
 		{
-			UserMessage: anthropic.NewUserMessage(append(turn(t, 1).UserMessage.Content, repeatSummaryRequest)...),
-			Response:    newAnthropicResponse(t, summary),
+			Instructions: []anthropic.ContentBlockParamUnion{repeatSummaryRequest},
+			Response:     newAnthropicResponse(t, summary),
 		},
 		{
-			UserMessage: anthropic.NewUserMessage(resumeFromSummaryRequest),
-			Response:    turn(t, 10).Response,
+			Instructions: []anthropic.ContentBlockParamUnion{resumeFromSummaryRequest},
+			Response:     turn(t, 10).Response,
 		},
 	}
 
@@ -108,12 +108,12 @@ func TestSummarize_KeepAllButTwo(t *testing.T) {
 		turn(t, 5),
 		turn(t, 6),
 		{
-			UserMessage: anthropic.NewUserMessage(append(turn(t, 7).UserMessage.Content, repeatSummaryRequest)...),
-			Response:    newAnthropicResponse(t, summary),
+			Instructions: []anthropic.ContentBlockParamUnion{repeatSummaryRequest},
+			Response:     newAnthropicResponse(t, summary),
 		},
 		{
-			UserMessage: anthropic.NewUserMessage(resumeFromSummaryRequest),
-			Response:    turn(t, 8).Response,
+			Instructions: []anthropic.ContentBlockParamUnion{resumeFromSummaryRequest},
+			Response:     turn(t, 8).Response,
 		},
 		turn(t, 9),
 		turn(t, 10),
@@ -179,7 +179,7 @@ func testSummarize(
 	}
 	history := ai.ConversationHistory{
 		SystemPrompt: "some system prompt",
-		Messages:     originalTurns,
+		Turns:        originalTurns,
 	}
 	model := anthropic.ModelClaudeSonnet4_5
 	var maxTokens int64 = 10000
@@ -192,7 +192,7 @@ func testSummarize(
 	err = summarize(ctx, conversation, keepFirst, keepLast)
 	require.NoError(t, err)
 	for _, turn := range conversation.Turns {
-		for _, block := range turn.UserMessage.Content {
+		for _, block := range turn.Instructions {
 			fmt.Printf("User: %s\n", block.OfText.Text)
 		}
 		for _, block := range turn.Response.Content {
@@ -213,8 +213,8 @@ func (ss senderStub) SendMessage(_ context.Context, _ anthropic.MessageNewParams
 // turn creates a conversation turn with fake, hard-coded content
 func turn(t *testing.T, n int) ai.ConversationTurn {
 	return ai.ConversationTurn{
-		UserMessage: anthropic.NewUserMessage(anthropic.NewTextBlock(fmt.Sprintf("user message %d", n))),
-		Response:    newAnthropicResponse(t, anthropic.NewTextBlock(fmt.Sprintf("response %d", n))),
+		Instructions: []anthropic.ContentBlockParamUnion{anthropic.NewTextBlock(fmt.Sprintf("user message %d", n))},
+		Response:     newAnthropicResponse(t, anthropic.NewTextBlock(fmt.Sprintf("response %d", n))),
 	}
 }
 
