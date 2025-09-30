@@ -211,12 +211,10 @@ func (b *Bot) processWithAI(ctx context.Context, tsk task.Task, workspace Worksp
 			}
 		}
 
-		var messageContent []anthropic.ContentBlockParamUnion
-
 		switch response.StopReason {
 		case anthropic.StopReasonToolUse:
-			// Process tool uses and collect tool results
-			messageContent, err = b.getToolResults(ctx, toolCtx, response)
+			// Execute tool uses and add results to conversation
+			err = b.runTools(ctx, toolCtx, conversation)
 			if err != nil {
 				return err
 			}
@@ -231,7 +229,7 @@ func (b *Bot) processWithAI(ctx context.Context, tsk task.Task, workspace Worksp
 		}
 
 		log.Printf("    Responding to AI")
-		response, err = sendMessage(ctx, conversation, b.tokenLimit, messageContent...)
+		response, err = sendMessage(ctx, conversation, b.tokenLimit)
 		if err != nil {
 			return err
 		}
@@ -271,7 +269,7 @@ func sendMessage(
 	ctx context.Context,
 	conversation *ai.Conversation,
 	tokenLimit int64,
-	messageContent ...anthropic.ContentBlockParamUnion,
+	instructions ...anthropic.ContentBlockParamUnion,
 ) (*anthropic.Message, error) {
 
 	if tokenUsageExceedsLimit(conversation, tokenLimit) {
@@ -282,7 +280,7 @@ func sendMessage(
 		}
 	}
 
-	response, err := conversation.SendMessage(ctx, messageContent...)
+	response, err := conversation.SendMessage(ctx, instructions...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to send message: %w", err)
 	}
@@ -310,37 +308,34 @@ func tokenUsageExceedsLimit(conversation *ai.Conversation, tokenLimit int64) boo
 	return totalTokens > tokenLimit
 }
 
-// getToolResults executes tool calls requested by the given assistant message and returns their results
-func (b *Bot) getToolResults(ctx context.Context, toolCtx *ToolContext, msg *anthropic.Message) ([]anthropic.ContentBlockParamUnion, error) {
-	// Process tool uses and collect tool results
-	toolUses := []anthropic.ToolUseBlock{}
-	for _, content := range msg.Content {
-		switch block := content.AsAny().(type) {
-		case anthropic.ToolUseBlock:
-			toolUses = append(toolUses, block)
-		}
+// runTools executes pending tool calls and adds their results to the conversation
+func (b *Bot) runTools(ctx context.Context, toolCtx *ToolContext, conversation *ai.Conversation) error {
+	pendingToolUses := conversation.GetPendingToolUses()
+
+	if len(pendingToolUses) == 0 {
+		log.Printf("    WARNING: Stop reason was 'tool_use', but no pending tool uses found. This shouldn't happen.")
+		// Add an error message as an instruction so the AI can self-correct
+		_, err := conversation.SendMessage(ctx, anthropic.NewTextBlock("Error: No tool uses found in message. Was there a formatting issue?"))
+		return err
 	}
 
-	if msg.StopReason == anthropic.StopReasonToolUse && len(toolUses) == 0 {
-		log.Printf("    WARNING: Stop reason was 'tool_use', but no tool use blocks found in message. Reporting to AI for self-resolution")
-		return []anthropic.ContentBlockParamUnion{
-			anthropic.NewTextBlock("Error: No tool uses found in message. Was there a formatting issue?"),
-		}, nil
-	}
-
-	toolResults := []anthropic.ContentBlockParamUnion{}
-	for _, toolUse := range toolUses {
+	for _, toolUse := range pendingToolUses {
 		log.Printf("    Executing tool: %s", toolUse.Name)
 
 		// Process the tool use with the registry
 		toolResult, err := b.toolRegistry.ProcessToolUse(ctx, toolUse, toolCtx)
 		if err != nil {
-			return nil, fmt.Errorf("failed to process tool use: %w", err)
+			return fmt.Errorf("failed to process tool use: %w", err)
 		}
-		toolResults = append(toolResults, anthropic.ContentBlockParamUnion{OfToolResult: toolResult})
+
+		// Add the result to the conversation
+		err = conversation.AddToolResult(*toolResult)
+		if err != nil {
+			return fmt.Errorf("failed to add tool result: %w", err)
+		}
 	}
 
-	return toolResults, nil
+	return nil
 }
 
 // Helper functions
@@ -416,65 +411,83 @@ func (b *Bot) initConversation(ctx context.Context, tsk task.Task, toolCtx *Tool
 	}
 
 	if history != nil {
-		conv, err := ai.ResumeConversation(b.sender, *history, model, maxTokens, tools)
-		if err != nil {
-			return nil, nil, fmt.Errorf("failed to resume conversation: %w", err)
-		}
-
-		err = b.rerunStatefulToolCalls(ctx, toolCtx, conv)
-		if err != nil {
-			return nil, nil, fmt.Errorf("failed to rerun stateful tool calls: %w", err)
-		}
-
-		// Extract the last message of the resumed conversation. If it is a user message, send it and return the
-		// response. If it is an assistant response, simply return that
-		lastTurn := conv.Turns[len(conv.Turns)-1]
-		var response *anthropic.Message
-		if lastTurn.Response != nil {
-			// We should be careful here. Assistant message handling is not necessarily idempotent, e.g. if the bot
-			// sends a message with two tool calls and we get through one of them before encountering an error with the
-			// second, the handling of the first tool call may have had side effects that would be damaging to repeat.
-			// Consider implementing transactions with rollback for parallel tool calls.
-
-			// Resuming from a response
-			log.Printf("Resuming previous conversation from an assistant message")
-			response = lastTurn.Response
-		} else {
-			// Resuming from a user message
-			log.Printf("Resuming previous conversation from a user message - sending message")
-			r, err := conv.SendMessage(ctx, lastTurn.UserMessage.Content...)
-			if err != nil {
-				return nil, nil, fmt.Errorf("failed to send last message of resumed conversation: %w", err)
-			}
-			response = r
-		}
-		return conv, response, nil
+		return b.resumeConversation(ctx, *history, model, maxTokens, tools, toolCtx)
 	} else {
-		// Start a new conversation
-
-		systemPrompt, err := buildSystemPrompt("Blundering Savant", *b.user.Login)
-		if err != nil {
-			return nil, nil, fmt.Errorf("failed to build system prompt: %w", err)
-		}
-
-		c := ai.NewConversation(b.sender, model, maxTokens, tools, systemPrompt)
-
-		log.Printf("Sending initial message to AI")
-		repositoryContent, taskContent, err := buildPrompt(tsk)
-		if err != nil {
-			return nil, nil, fmt.Errorf("failed to build prompt: %w", err)
-		}
-
-		// Send repository content as cacheable block, followed by task-specific content
-		repositoryBlock := anthropic.NewTextBlock(repositoryContent)
-		taskBlock := anthropic.NewTextBlock(taskContent)
-
-		response, err := c.SendMessage(ctx, repositoryBlock, taskBlock)
-		if err != nil {
-			return nil, nil, fmt.Errorf("failed to send initial message to AI: %w", err)
-		}
-		return c, response, nil
+		return b.newConversation(ctx, tsk, model, maxTokens, tools)
 	}
+}
+
+func (b *Bot) resumeConversation(
+	ctx context.Context,
+	history ai.ConversationHistory,
+	model anthropic.Model,
+	maxTokens int64,
+	tools []anthropic.ToolParam,
+	toolCtx *ToolContext,
+) (*ai.Conversation, *anthropic.Message, error) {
+	conv, err := ai.ResumeConversation(b.sender, history, model, maxTokens, tools)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to resume conversation: %w", err)
+	}
+
+	err = b.rerunStatefulToolCalls(ctx, toolCtx, conv)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to rerun stateful tool calls: %w", err)
+	}
+
+	// Extract the last message of the resumed conversation. If tool uses are already resolved, send the next
+	// message. Otherwise, return the response from the last message
+	var response *anthropic.Message
+	if len(conv.GetPendingToolUses()) == 0 {
+		log.Printf("Resuming previous conversation from a completed turn - sending next message")
+		r, err := conv.SendMessage(ctx)
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to send message: %w", err)
+		}
+		response = r
+	} else {
+		log.Printf("Resuming previous conversation from an incomplete turn - returning previous response")
+
+		// We should be careful here. Assistant message handling is not necessarily idempotent, e.g. if the bot
+		// sends a message with two tool calls and we get through one of them before encountering an error with the
+		// second, the handling of the first tool call may have had side effects that would be damaging to repeat.
+		// Consider implementing transactions with rollback for parallel tool calls.
+
+		lastTurn := conv.Turns[len(conv.Turns)-1]
+		response = lastTurn.Response
+	}
+	return conv, response, nil
+}
+
+func (b *Bot) newConversation(
+	ctx context.Context,
+	tsk task.Task,
+	model anthropic.Model,
+	maxTokens int64,
+	tools []anthropic.ToolParam,
+) (*ai.Conversation, *anthropic.Message, error) {
+	systemPrompt, err := buildSystemPrompt("Blundering Savant", *b.user.Login)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to build system prompt: %w", err)
+	}
+
+	c := ai.NewConversation(b.sender, model, maxTokens, tools, systemPrompt)
+
+	log.Printf("Sending initial message to AI")
+	repositoryContent, taskContent, err := buildPrompt(tsk)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to build prompt: %w", err)
+	}
+
+	// Send repository content as cacheable block, followed by task-specific content
+	repositoryBlock := anthropic.NewTextBlock(repositoryContent)
+	taskBlock := anthropic.NewTextBlock(taskContent)
+
+	response, err := c.SendMessage(ctx, repositoryBlock, taskBlock)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to send initial message to AI: %w", err)
+	}
+	return c, response, nil
 }
 
 func (b *Bot) rerunStatefulToolCalls(ctx context.Context, toolCtx *ToolContext, conversation *ai.Conversation) error {
@@ -542,24 +555,18 @@ func summarize(ctx context.Context, conversation *ai.Conversation, keepFirst int
 	//                  **Original conversation**                     **Summary request**                        **Summarized conversation**
 	// Turn 0:     User: <repo info> / <task info>			>    User: <repo info> / <task info>		>	User: <repo info> / <task info>
 	//             Asst: read file foo.txt					>    Asst: read file foo.txt				>	Asst: read file foo.txt
-	// Turn 1:     User: <foo.txt contents>					>    User: <foo.txt contents>				>	User: <foo.txt contents>
+	// Turn 1:     User: N/A								>    User: N/A								>	User: N/A
 	//             Asst: replace string in file foo.txt		>    Asst: replace string in file foo.txt	>	Asst: replace string in file foo.txt
-	// Turn 2:     User: success							>    User: success							>	User: success / **<simulated summary request>**
-	//             Asst: read file bar.txt					>    Asst: read file bar.txt				>
-	// Turn 3:     User: <bar.txt contents>					>    User: <bar.txt contents>				>	Asst: <summary>
+	// Turn 2:     User: N/A								>    User: N/A								>
+	//             Asst: read file bar.txt					>    Asst: read file bar.txt				>	User: <simulated summary request>
+	// Turn 3:     User: N/A								>    User: N/A								>	Asst: <summary>
 	//             Asst: replace string in file bar.txt		>    Asst: replace string in file bar.txt	>	User: please resume work from summary
-	// Turn 4:     User: success							>    User: success / **<summary_request>**	>
-	//             Asst: validate							>    										>	Asst: validate
-	// Turn 5:     User: <validation results>				>    										>	User: <validation results>
+	// Turn 4:     User: N/A								>    User: <summary_request>				>	Asst: validate
+	//             Asst: validate							>    										>
+	// Turn 5:     User: N/A								>    										>	User: N/A
 	//             Asst: replace string in file foo.txt		>    										>	Asst: replace string in file foo.txt
-	// Turn 6:     User: success							>    										>	User: success
+	// Turn 6:     User: N/A								>    										>	User: N/A
 	//             Asst: validate							>    										>	Asst: validate
-
-	// This is all getting pretty complicated, especially with conversation turn boundaries sometimes being logically
-	// after user messages, and other times being logically after assistant messages, and even other times being
-	// logically after the tool use blocks _in_ a user message. We might want to consider building a higher-level
-	// abstraction layer on top of the current `ai.Conversation`. In particular, an abstraction would be useful around
-	// the tool use/result pairs, to expose them as a group rather than individual content blocks in separate messages
 
 	if keepFirst < 0 {
 		return fmt.Errorf("keepFirst must be >= 0")
@@ -599,17 +606,12 @@ func summarize(ctx context.Context, conversation *ai.Conversation, keepFirst int
 	summarizedTurns := slices.Clone(conversation.Turns[:keepFirst])
 	summarizedTurns = append(summarizedTurns, []ai.ConversationTurn{
 		{
-			// The first user message after the preserved ones, with the summary request block appended. It is important
-			// to append the summary request to the existing content in case the existing content contains tool results
-			// that must match prior tool uses.
-			UserMessage: anthropic.NewUserMessage(
-				append(conversation.Turns[keepFirst].UserMessage.Content, repeatSummaryRequest)...,
-			),
-			Response: summaryMessage,
+			Instructions: []anthropic.ContentBlockParamUnion{repeatSummaryRequest},
+			Response:     summaryMessage,
 		},
 		{
-			UserMessage: anthropic.NewUserMessage(resumeFromSummaryRequest),
-			Response:    conversation.Turns[len(conversation.Turns)-keepLast-1].Response,
+			Instructions: []anthropic.ContentBlockParamUnion{resumeFromSummaryRequest},
+			Response:     conversation.Turns[len(conversation.Turns)-keepLast-1].Response,
 		},
 	}...)
 	summarizedTurns = append(summarizedTurns, conversation.Turns[len(conversation.Turns)-keepLast:]...)
@@ -626,18 +628,13 @@ func summarize(ctx context.Context, conversation *ai.Conversation, keepFirst int
 // generateSummary uses AI to generate a summary of the given conversation excluding the specified number of
 // conversation turns. Does not modify the given conversation. excludeLast must be > 0
 func generateSummary(ctx context.Context, conversation *ai.Conversation, excludeLast int) (*anthropic.Message, error) {
-	// Create a shallow copy of the conversation
-	summaryConversation := *conversation
-	// Replace the conversation history with a copy of the messages we want to summarize
-	summaryConversation.Turns = slices.Clone(conversation.Turns[:len(conversation.Turns)-excludeLast-1])
-
+	summaryConversation, err := conversation.Fork(len(conversation.Turns) - excludeLast)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fork conversation at summarization point: %w", err)
+	}
 	summaryPrompt := buildSummaryPrompt()
 
-	// Piggyback the summary prompt on the content of the first user message after the turns to summarize. It is
-	// important to append the prompt to the existing content because the existing content might be tool results that
-	// are required to match tool uses in the previous assistant response.
-	piggybackMessage := conversation.Turns[len(conversation.Turns)-excludeLast-1].UserMessage
-	summaryPromptContent := append(piggybackMessage.Content, anthropic.NewTextBlock(summaryPrompt))
-
-	return summaryConversation.SendMessage(ctx, summaryPromptContent...)
+	// With the new conversation abstraction, tool results are stored in ToolExchanges and automatically handled by
+	// convertTurnsToMessages, so we can simply send the summary prompt directly without preserving any existing content.
+	return summaryConversation.SendMessage(ctx, anthropic.NewTextBlock(summaryPrompt))
 }
