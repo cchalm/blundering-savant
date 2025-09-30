@@ -73,11 +73,13 @@ func (cc *Conversation) buildMarkdownData() (*conversationMarkdownData, error) {
 	// Process each turn
 	for _, turn := range cc.Turns {
 		// Process user instructions
-		for _, textBlock := range turn.UserInstructions {
-			data.Messages = append(data.Messages, conversationMessage{
-				Type: "user_text",
-				Text: textBlock.Text,
-			})
+		for _, block := range turn.UserInstructions {
+			if textParam := block.OfText; textParam != nil {
+				data.Messages = append(data.Messages, conversationMessage{
+					Type: "user_text",
+					Text: textParam.Text,
+				})
+			}
 		}
 
 		// Process assistant text blocks

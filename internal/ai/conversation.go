@@ -30,8 +30,8 @@ type Conversation struct {
 // assistant response, and tool exchanges. Turns are divided at places where optional
 // user instructions can go - after tool result blocks in each user message.
 type ConversationTurn struct {
-	// UserInstructions are text blocks at the start of the turn (optional)
-	UserInstructions []anthropic.TextBlock
+	// UserInstructions are content blocks at the start of the turn (optional)
+	UserInstructions []anthropic.ContentBlockParamUnion
 
 	// AssistantTextBlocks contains text and thinking blocks from the assistant response.
 	// Tool use blocks are stored separately in ToolExchanges to avoid duplication.
@@ -255,14 +255,7 @@ func (cc *Conversation) buildAPIMessages() []anthropic.MessageParam {
 		}
 
 		// Add user instructions for this turn
-		for _, textBlock := range turn.UserInstructions {
-			userContent = append(userContent, anthropic.ContentBlockParamUnion{
-				OfText: &anthropic.TextBlockParam{
-					Text: textBlock.Text,
-					Type: textBlock.Type,
-				},
-			})
-		}
+		userContent = append(userContent, turn.UserInstructions...)
 
 		// Only add user message if there's content
 		if len(userContent) > 0 {
@@ -297,14 +290,11 @@ func (cc *Conversation) buildAPIMessages() []anthropic.MessageParam {
 }
 
 // extractTextBlocks extracts text blocks from content block parameters
-func extractTextBlocks(content []anthropic.ContentBlockParamUnion) []anthropic.TextBlock {
-	var textBlocks []anthropic.TextBlock
+func extractTextBlocks(content []anthropic.ContentBlockParamUnion) []anthropic.ContentBlockParamUnion {
+	var textBlocks []anthropic.ContentBlockParamUnion
 	for _, block := range content {
-		if textParam := block.OfText; textParam != nil {
-			textBlocks = append(textBlocks, anthropic.TextBlock{
-				Text: textParam.Text,
-				Type: textParam.Type,
-			})
+		if block.OfText != nil {
+			textBlocks = append(textBlocks, block)
 		}
 	}
 	return textBlocks

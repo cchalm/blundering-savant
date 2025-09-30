@@ -436,17 +436,8 @@ func (b *Bot) initConversation(ctx context.Context, tsk task.Task, toolCtx *Tool
 			// Resuming from a user message - resend it
 			log.Printf("Resuming previous conversation from a user message - sending message")
 			lastTurn := conv.Turns[len(conv.Turns)-1]
-			// Build message content from user instructions
-			var messageContent []anthropic.ContentBlockParamUnion
-			for _, textBlock := range lastTurn.UserInstructions {
-				messageContent = append(messageContent, anthropic.ContentBlockParamUnion{
-					OfText: &anthropic.TextBlockParam{
-						Text: textBlock.Text,
-						Type: textBlock.Type,
-					},
-				})
-			}
-			r, err := conv.SendMessage(ctx, messageContent...)
+			// User instructions are already in the correct format
+			r, err := conv.SendMessage(ctx, lastTurn.UserInstructions...)
 			if err != nil {
 				return nil, nil, fmt.Errorf("failed to send last message of resumed conversation: %w", err)
 			}
@@ -591,13 +582,7 @@ func summarize(ctx context.Context, conversation *ai.Conversation, keepFirst int
 	// Add a summary turn: the first user instructions after preserved turns + summary request,
 	// followed by the AI's summary response
 	summaryTurn := ai.ConversationTurn{
-		UserInstructions: append(
-			slices.Clone(conversation.Turns[keepFirst].UserInstructions),
-			anthropic.TextBlock{
-				Text: repeatSummaryRequest.OfText.Text,
-				Type: repeatSummaryRequest.OfText.Type,
-			},
-		),
+		UserInstructions:    append(slices.Clone(conversation.Turns[keepFirst].UserInstructions), repeatSummaryRequest),
 		AssistantTextBlocks: []anthropic.ContentBlockParamUnion{},
 		ToolExchanges:       []ai.ToolExchange{},
 	}
@@ -626,12 +611,7 @@ func summarize(ctx context.Context, conversation *ai.Conversation, keepFirst int
 
 	// Add a resume turn with the instruction to continue and the last assistant response before preserved turns
 	resumeTurn := ai.ConversationTurn{
-		UserInstructions: []anthropic.TextBlock{
-			{
-				Text: resumeFromSummaryRequest.OfText.Text,
-				Type: resumeFromSummaryRequest.OfText.Type,
-			},
-		},
+		UserInstructions:    []anthropic.ContentBlockParamUnion{resumeFromSummaryRequest},
 		AssistantTextBlocks: conversation.Turns[len(conversation.Turns)-keepLast-1].AssistantTextBlocks,
 		ToolExchanges:       conversation.Turns[len(conversation.Turns)-keepLast-1].ToolExchanges,
 	}
@@ -659,19 +639,11 @@ func generateSummary(ctx context.Context, conversation *ai.Conversation, exclude
 
 	// Build message content: user instructions from the turn after the fork point + summary prompt
 	// It's important to preserve any user instructions because they might include context needed for the summary
-	var messageContent []anthropic.ContentBlockParamUnion
 	piggybackTurn := conversation.Turns[len(conversation.Turns)-excludeLast-1]
-
-	for _, textBlock := range piggybackTurn.UserInstructions {
-		messageContent = append(messageContent, anthropic.ContentBlockParamUnion{
-			OfText: &anthropic.TextBlockParam{
-				Text: textBlock.Text,
-				Type: textBlock.Type,
-			},
-		})
-	}
-
-	messageContent = append(messageContent, anthropic.NewTextBlock(summaryPrompt))
+	messageContent := append(
+		slices.Clone(piggybackTurn.UserInstructions),
+		anthropic.NewTextBlock(summaryPrompt),
+	)
 
 	return summaryConversation.SendMessage(ctx, messageContent...)
 }
