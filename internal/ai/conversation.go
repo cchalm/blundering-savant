@@ -21,30 +21,13 @@ type Conversation struct {
 	tools        []anthropic.ToolParam
 	Turns        []ConversationTurn
 
-	maxOutputTokens int64              // Maximum number of output tokens per response
-	lastUsage       anthropic.Usage    // Token usage from the most recent API response
-	lastResponse    *anthropic.Message // The most recent API response (for resuming conversations)
+	maxOutputTokens int64 // Maximum number of output tokens per response
 }
 
-// ConversationTurn represents a complete interaction cycle: optional user instructions,
-// assistant response, and tool exchanges. Turns are divided at places where optional
-// user instructions can go - after tool result blocks in each user message.
+// ConversationTurn is a pair of messages: a user message, and an optional assistant response
 type ConversationTurn struct {
-	// UserInstructions are content blocks at the start of the turn (optional)
-	UserInstructions []anthropic.ContentBlockParamUnion
-
-	// AssistantTextBlocks contains text and thinking blocks from the assistant response.
-	// Tool use blocks are stored separately in ToolExchanges to avoid duplication.
-	AssistantTextBlocks []anthropic.ContentBlockParamUnion
-
-	// ToolExchanges are the tool use/result pairs from this turn
-	ToolExchanges []ToolExchange
-}
-
-// ToolExchange pairs a tool use block with its result
-type ToolExchange struct {
-	ToolUse    anthropic.ToolUseBlock
-	ToolResult anthropic.ToolResultBlockParam
+	UserMessage anthropic.MessageParam
+	Response    *anthropic.Message // May be nil
 }
 
 func NewConversation(
@@ -82,48 +65,31 @@ func ResumeConversation(
 		Turns:        history.Messages,
 
 		maxOutputTokens: maxOutputTokens,
-		lastResponse:    history.LastResponse,
-	}
-	// Restore last usage from last response if available
-	if history.LastResponse != nil {
-		c.lastUsage = history.LastResponse.Usage
 	}
 	return c, nil
 }
 
-// SendMessage sends a message to the AI, awaits its response, and adds both to the conversation.
-// The content blocks should include user instructions and/or tool results.
+// SendMessage sends a message to the AI, awaits its response, and adds both to the conversation
 func (cc *Conversation) SendMessage(ctx context.Context, messageContent ...anthropic.ContentBlockParamUnion) (*anthropic.Message, error) {
 	return cc.sendMessage(ctx, true, messageContent...)
 }
 
-// SeedTurn adds a turn to the conversation with pre-defined content (e.g. for testing or conversation setup)
-func (cc *Conversation) SeedTurn(turn ConversationTurn) {
+// SeedTurn adds a message to the conversation with a hard-coded (i.e. fake) response
+func (cc *Conversation) SeedTurn(ctx context.Context, turn ConversationTurn) {
 	cc.Turns = append(cc.Turns, turn)
 }
 
-// Fork creates a new conversation from this conversation up to (but not including) the specified turn index.
-// The forked conversation will have the same configuration (model, system prompt, tools) but will contain
-// only the turns before the specified index.
-func (cc *Conversation) Fork(turnIndex int) *Conversation {
-	if turnIndex < 0 {
-		turnIndex = 0
-	}
-	if turnIndex > len(cc.Turns) {
-		turnIndex = len(cc.Turns)
+// ResendLastMessage erases the last turn in the conversation history and resends the user message in that turn
+func (cc *Conversation) ResendLastMessage(ctx context.Context) (*anthropic.Message, error) {
+	if len(cc.Turns) == 0 {
+		return nil, fmt.Errorf("cannot resend last message: no messages")
 	}
 
-	forked := &Conversation{
-		sender:          cc.sender,
-		model:           cc.model,
-		systemPrompt:    cc.systemPrompt,
-		tools:           cc.tools,
-		maxOutputTokens: cc.maxOutputTokens,
-		Turns:           make([]ConversationTurn, turnIndex),
-	}
+	var lastTurn ConversationTurn
+	// Pop the last message off of the conversation history
+	lastTurn, cc.Turns = cc.Turns[len(cc.Turns)-1], cc.Turns[:len(cc.Turns)-1]
 
-	copy(forked.Turns, cc.Turns[:turnIndex])
-	return forked
+	return cc.SendMessage(ctx, lastTurn.UserMessage.Content...)
 }
 
 // sendMessage is the internal implementation with a boolean parameter to specify caching
@@ -140,33 +106,17 @@ func (cc *Conversation) sendMessage(ctx context.Context, enableCache bool, messa
 		}
 	}
 
-	// Extract tool results from the message content and attach them to the previous turn's tool exchanges
-	if len(cc.Turns) > 0 {
-		toolResults := extractToolResults(messageContent)
-		if len(toolResults) > 0 {
-			prevTurn := &cc.Turns[len(cc.Turns)-1]
-			// Match tool results with tool uses by ID
-			for i := range prevTurn.ToolExchanges {
-				for _, result := range toolResults {
-					if result.ToolUseID == prevTurn.ToolExchanges[i].ToolUse.ID {
-						prevTurn.ToolExchanges[i].ToolResult = result
-						break
-					}
-				}
-			}
+	cc.Turns = append(cc.Turns, ConversationTurn{
+		UserMessage: anthropic.NewUserMessage(messageContent...),
+	})
+
+	messageParams := []anthropic.MessageParam{}
+	for _, turn := range cc.Turns {
+		messageParams = append(messageParams, turn.UserMessage)
+		if turn.Response != nil {
+			messageParams = append(messageParams, turn.Response.ToParam())
 		}
 	}
-
-	// Create a new turn with user instructions from the message content
-	newTurn := ConversationTurn{
-		UserInstructions:    extractTextBlocks(messageContent),
-		AssistantTextBlocks: []anthropic.ContentBlockParamUnion{},
-		ToolExchanges:       []ToolExchange{},
-	}
-	cc.Turns = append(cc.Turns, newTurn)
-
-	// Build API messages from logical turns
-	messageParams := cc.buildAPIMessages()
 
 	params := anthropic.MessageNewParams{
 		Model:     cc.model,
@@ -203,15 +153,8 @@ func (cc *Conversation) sendMessage(ctx context.Context, enableCache bool, messa
 		response.Usage.InputTokens+response.Usage.CacheCreationInputTokens+response.Usage.CacheReadInputTokens,
 	)
 
-	// Track token usage and response from this API call
-	cc.lastUsage = response.Usage
-	cc.lastResponse = response
-
-	// Parse the response and update the turn
-	err = cc.updateTurnWithResponse(len(cc.Turns)-1, response)
-	if err != nil {
-		return nil, fmt.Errorf("failed to update turn with response: %w", err)
-	}
+	// Record the response
+	cc.Turns[len(cc.Turns)-1].Response = response
 
 	// Remove the cache control element from the conversation history if caching was enabled
 	if enableCache {
@@ -236,123 +179,10 @@ func getLastCacheControl(content []anthropic.ContentBlockParamUnion) (*anthropic
 	return nil, fmt.Errorf("no cacheable blocks in content")
 }
 
-// buildAPIMessages constructs the API message parameters from the logical turns
-func (cc *Conversation) buildAPIMessages() []anthropic.MessageParam {
-	messages := []anthropic.MessageParam{}
-
-	for i, turn := range cc.Turns {
-		// Build user message content: user instructions (if any) + tool results from previous turn (if any)
-		userContent := []anthropic.ContentBlockParamUnion{}
-
-		// If this is not the first turn, add tool results from the previous turn
-		if i > 0 {
-			prevTurn := cc.Turns[i-1]
-			for _, exchange := range prevTurn.ToolExchanges {
-				userContent = append(userContent, anthropic.ContentBlockParamUnion{
-					OfToolResult: &exchange.ToolResult,
-				})
-			}
-		}
-
-		// Add user instructions for this turn
-		userContent = append(userContent, turn.UserInstructions...)
-
-		// Only add user message if there's content
-		if len(userContent) > 0 {
-			messages = append(messages, anthropic.NewUserMessage(userContent...))
-		}
-
-		// Build assistant message content: text blocks + tool uses
-		assistantContent := []anthropic.ContentBlockParamUnion{}
-
-		// Add assistant text blocks
-		assistantContent = append(assistantContent, turn.AssistantTextBlocks...)
-
-		// Add tool uses
-		for _, exchange := range turn.ToolExchanges {
-			assistantContent = append(assistantContent, anthropic.ContentBlockParamUnion{
-				OfToolUse: &anthropic.ToolUseBlockParam{
-					ID:    exchange.ToolUse.ID,
-					Input: exchange.ToolUse.Input,
-					Name:  exchange.ToolUse.Name,
-					Type:  exchange.ToolUse.Type,
-				},
-			})
-		}
-
-		// Only add assistant message if there's content
-		if len(assistantContent) > 0 {
-			messages = append(messages, anthropic.NewAssistantMessage(assistantContent...))
-		}
-	}
-
-	return messages
-}
-
-// extractTextBlocks extracts text blocks from content block parameters
-func extractTextBlocks(content []anthropic.ContentBlockParamUnion) []anthropic.ContentBlockParamUnion {
-	var textBlocks []anthropic.ContentBlockParamUnion
-	for _, block := range content {
-		if block.OfText != nil {
-			textBlocks = append(textBlocks, block)
-		}
-	}
-	return textBlocks
-}
-
-// updateTurnWithResponse parses an AI response and updates the specified turn with the assistant's
-// response content and any tool uses. Tool results will be added when the next message is sent.
-func (cc *Conversation) updateTurnWithResponse(turnIndex int, response *anthropic.Message) error {
-	if turnIndex < 0 || turnIndex >= len(cc.Turns) {
-		return fmt.Errorf("turn index %d out of range", turnIndex)
-	}
-
-	turn := &cc.Turns[turnIndex]
-
-	// Parse response content blocks
-	for _, contentBlock := range response.Content {
-		switch block := contentBlock.AsAny().(type) {
-		case anthropic.TextBlock:
-			turn.AssistantTextBlocks = append(turn.AssistantTextBlocks, anthropic.ContentBlockParamUnion{
-				OfText: &anthropic.TextBlockParam{
-					Text: block.Text,
-					Type: block.Type,
-				},
-			})
-		case anthropic.ThinkingBlock:
-			turn.AssistantTextBlocks = append(turn.AssistantTextBlocks, anthropic.ContentBlockParamUnion{
-				OfThinking: &anthropic.ThinkingBlockParam{
-					Thinking: block.Thinking,
-					Type:     block.Type,
-				},
-			})
-		case anthropic.ToolUseBlock:
-			// Add tool use without result - result will be added when the next message is sent
-			turn.ToolExchanges = append(turn.ToolExchanges, ToolExchange{
-				ToolUse: block,
-			})
-		}
-	}
-
-	return nil
-}
-
-// extractToolResults extracts tool result blocks from content block parameters
-func extractToolResults(content []anthropic.ContentBlockParamUnion) []anthropic.ToolResultBlockParam {
-	var results []anthropic.ToolResultBlockParam
-	for _, block := range content {
-		if resultParam := block.OfToolResult; resultParam != nil {
-			results = append(results, *resultParam)
-		}
-	}
-	return results
-}
-
 // ConversationHistory contains a serializable and resumable snapshot of a Conversation
 type ConversationHistory struct {
 	SystemPrompt string             `json:"systemPrompt"`
 	Messages     []ConversationTurn `json:"messages"`
-	LastResponse *anthropic.Message `json:"lastResponse,omitempty"`
 }
 
 // History returns a serializable conversation history
@@ -360,17 +190,5 @@ func (cc *Conversation) History() ConversationHistory {
 	return ConversationHistory{
 		SystemPrompt: cc.systemPrompt,
 		Messages:     cc.Turns,
-		LastResponse: cc.lastResponse,
 	}
-}
-
-// LastUsage returns the token usage from the most recent API response
-func (cc *Conversation) LastUsage() anthropic.Usage {
-	return cc.lastUsage
-}
-
-// GetLastResponse returns the most recent API response, or nil if there isn't one.
-// This is useful for resuming conversations where we need to return the last assistant response.
-func (cc *Conversation) GetLastResponse() *anthropic.Message {
-	return cc.lastResponse
 }
