@@ -40,13 +40,13 @@ func TestFork(t *testing.T) {
 		maxOutputTokens: 4000,
 		Turns: []ConversationTurn{
 			{
-				UserInstructions: []anthropic.TextBlock{{Text: "turn 0"}},
+				UserInstructions: []anthropic.ContentBlockParamUnion{anthropic.NewTextBlock("turn 0")},
 			},
 			{
-				UserInstructions: []anthropic.TextBlock{{Text: "turn 1"}},
+				UserInstructions: []anthropic.ContentBlockParamUnion{anthropic.NewTextBlock("turn 1")},
 			},
 			{
-				UserInstructions: []anthropic.TextBlock{{Text: "turn 2"}},
+				UserInstructions: []anthropic.ContentBlockParamUnion{anthropic.NewTextBlock("turn 2")},
 			},
 		},
 	}
@@ -56,14 +56,14 @@ func TestFork(t *testing.T) {
 
 	assert.Equal(t, "test prompt", forked.systemPrompt)
 	assert.Equal(t, 2, len(forked.Turns))
-	assert.Equal(t, "turn 0", forked.Turns[0].UserInstructions[0].Text)
-	assert.Equal(t, "turn 1", forked.Turns[1].UserInstructions[0].Text)
+	assert.Equal(t, "turn 0", forked.Turns[0].UserInstructions[0].OfText.Text)
+	assert.Equal(t, "turn 1", forked.Turns[1].UserInstructions[0].OfText.Text)
 }
 
 func TestForkBounds(t *testing.T) {
 	conv := &Conversation{
 		Turns: []ConversationTurn{
-			{UserInstructions: []anthropic.TextBlock{{Text: "turn 0"}}},
+			{UserInstructions: []anthropic.ContentBlockParamUnion{anthropic.NewTextBlock("turn 0")}},
 		},
 	}
 
