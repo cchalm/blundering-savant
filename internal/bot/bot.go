@@ -273,7 +273,7 @@ func sendMessage(
 ) (*anthropic.Message, error) {
 
 	if tokenUsageExceedsLimit(conversation, tokenLimit) {
-		keepFirst, keepLast := 1, 10 // Keep the first message and the last 10
+		keepFirst, keepLast := 0, 10 // Keep the last 10 messages
 		err := summarize(ctx, conversation, keepFirst, keepLast)
 		if err != nil {
 			return nil, err
@@ -541,9 +541,6 @@ var (
 //
 // keepFirst specifies how many turns from the beginning of the conversation to keep in the summarized conversation.
 // E.g. this can be used to preserve seeded turns used to guide the assistant's behavior. Must be >= 0.
-// The user message from the first turn _after_ the preserved turns will also appear in the summarized conversation.
-// E.g. if keepFirst == 1, the summarized conversation will begin with turn 0 of the original conversation, plus the
-// user message from turn 1.
 //
 // keepLast specifies how many turns from the end of the conversation to keep in the summarized conversation. This is
 // used to maintain the continuity of the assistant's recent thoughts upon resumption. Must be >= 0.
