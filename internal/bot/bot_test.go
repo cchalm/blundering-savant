@@ -195,10 +195,10 @@ func testSummarize(
 }
 
 type senderStub struct {
-	response *anthropic.Message
+	response anthropic.Message
 }
 
-func (ss senderStub) SendMessage(_ context.Context, _ anthropic.MessageNewParams, _ ...anthropt.RequestOption) (*anthropic.Message, error) {
+func (ss senderStub) SendMessage(_ context.Context, _ anthropic.MessageNewParams, _ ...anthropt.RequestOption) (anthropic.Message, error) {
 	return ss.response, nil
 }
 
@@ -213,7 +213,7 @@ func turn(t *testing.T, n int) ai.ConversationTurn {
 // newAnthropicResponse creates an *anthropic.Message, which is difficult to create otherwise because the SDK only
 // intends users to get one by deserializing an API response. newAnthropicResponse is only intended to be used for
 // testing; it serializes and deserializes JSON, so it's fairly expensive
-func newAnthropicResponse(t *testing.T, content ...anthropic.ContentBlockParamUnion) *anthropic.Message {
+func newAnthropicResponse(t *testing.T, content ...anthropic.ContentBlockParamUnion) anthropic.Message {
 	t.Helper()
 
 	requireNoError := func(err error) {
@@ -233,5 +233,5 @@ func newAnthropicResponse(t *testing.T, content ...anthropic.ContentBlockParamUn
 	err = json.Unmarshal(paramJSON, &msg)
 	requireNoError(err)
 
-	return &msg
+	return msg
 }

@@ -11,8 +11,14 @@ import (
 )
 
 type MessageSender interface {
-	SendMessage(ctx context.Context, params anthropic.MessageNewParams, opts ...anthropt.RequestOption) (*anthropic.Message, error)
+	SendMessage(ctx context.Context, params anthropic.MessageNewParams, opts ...anthropt.RequestOption) (anthropic.Message, error)
 }
+
+// OutputFilter is a function that can modify conversation turns before they are sent to the AI.
+// It receives all turns and returns a modified slice of turns. This is useful for temporarily
+// suppressing verbose content (like all but the latest validation results) while keeping the full
+// history intact for forking and other operations.
+type OutputFilter func(turns []ConversationTurnParam) []ConversationTurnParam
 
 type Conversation struct {
 	Turns []ConversationTurn
@@ -23,18 +29,60 @@ type Conversation struct {
 	systemPrompt    string
 	tools           []anthropic.ToolParam
 	maxOutputTokens int64 // Maximum number of output tokens per response
+
+	outputFilter OutputFilter // Optional filter to modify history before sending to AI
 }
 
 // ConversationTurn represents user instructions, assistant response, and resolved tool uses as a single unit
 type ConversationTurn struct {
 	Instructions  []anthropic.ContentBlockParamUnion
-	Response      *anthropic.Message // May be nil
+	Response      anthropic.Message
 	ToolExchanges []ToolExchange
 }
 
+// ConversationTurnParam is a ConversationTurn as it will appear in API requests (as opposed to responses)
+type ConversationTurnParam struct {
+	Instructions  []anthropic.ContentBlockParamUnion
+	Response      anthropic.MessageParam
+	ToolExchanges []ToolExchangeParam
+}
+
+func (ct ConversationTurn) ToParam() (ConversationTurnParam, error) {
+	var toolExchanges []ToolExchangeParam
+	for _, toolExchange := range ct.ToolExchanges {
+		toolExchangeParam, err := toolExchange.ToParam()
+		if err != nil {
+			return ConversationTurnParam{}, err
+		}
+		toolExchanges = append(toolExchanges, toolExchangeParam)
+	}
+	return ConversationTurnParam{
+		Instructions:  ct.Instructions,
+		Response:      ct.Response.ToParam(),
+		ToolExchanges: toolExchanges,
+	}, nil
+}
+
+// ToolExchange represents a tool use and its result
 type ToolExchange struct {
 	UseBlock    anthropic.ToolUseBlock
 	ResultBlock *anthropic.ToolResultBlockParam
+}
+
+// ToolExchangeParam is a ToolExchange as it will appear in API requests (as opposed to responses)
+type ToolExchangeParam struct {
+	UseBlock    anthropic.ToolUseBlockParam
+	ResultBlock anthropic.ToolResultBlockParam
+}
+
+func (te ToolExchange) ToParam() (ToolExchangeParam, error) {
+	if te.ResultBlock == nil {
+		return ToolExchangeParam{}, fmt.Errorf("cannot create ToolExchangeParam from ToolExchange with nil ResultBlock")
+	}
+	return ToolExchangeParam{
+		UseBlock:    te.UseBlock.ToParam(),
+		ResultBlock: *te.ResultBlock,
+	}, nil
 }
 
 func NewConversation(
@@ -78,14 +126,14 @@ func ResumeConversation(
 
 // SendMessage sends the last turn's tool results and optional supplemental instructions to the AI, awaits its response,
 // and adds both to the conversation as a new turn
-func (cc *Conversation) SendMessage(ctx context.Context, instructions ...anthropic.ContentBlockParamUnion) (*anthropic.Message, error) {
+func (cc *Conversation) SendMessage(ctx context.Context, instructions ...anthropic.ContentBlockParamUnion) (anthropic.Message, error) {
 	return cc.sendMessage(ctx, true, instructions...)
 }
 
 // ResendLastMessage erases the last turn in the conversation history and resends the user message in that turn
-func (cc *Conversation) ResendLastMessage(ctx context.Context) (*anthropic.Message, error) {
+func (cc *Conversation) ResendLastMessage(ctx context.Context) (anthropic.Message, error) {
 	if len(cc.Turns) == 0 {
-		return nil, fmt.Errorf("cannot resend last message: no messages")
+		return anthropic.Message{}, fmt.Errorf("cannot resend last message: no messages")
 	}
 
 	var lastTurn ConversationTurn
@@ -96,17 +144,34 @@ func (cc *Conversation) ResendLastMessage(ctx context.Context) (*anthropic.Messa
 }
 
 // sendMessage is the internal implementation with a boolean parameter to specify caching
-func (cc *Conversation) sendMessage(ctx context.Context, enableCache bool, instructions ...anthropic.ContentBlockParamUnion) (*anthropic.Message, error) {
+func (cc *Conversation) sendMessage(ctx context.Context, enableCache bool, instructions ...anthropic.ContentBlockParamUnion) (anthropic.Message, error) {
 	// Safeguard: prevent tool results from being passed as instructions
 	for _, instruction := range instructions {
 		if instruction.OfToolResult != nil {
-			return nil, fmt.Errorf("tool results must not be passed as instructions; use AddToolResult instead")
+			return anthropic.Message{}, fmt.Errorf("tool results must not be passed as instructions; use AddToolResult instead")
 		}
 	}
 
-	messages, err := convertTurnsToMessages(append(cc.Turns, ConversationTurn{Instructions: instructions}))
+	var turnParams []ConversationTurnParam
+	for i, turn := range cc.Turns {
+		turnParam, err := turn.ToParam()
+		if err != nil {
+			return anthropic.Message{}, fmt.Errorf("failed to convert turn %d to param: %w", i, err)
+		}
+		turnParams = append(turnParams, turnParam)
+	}
+	turnParams = append(turnParams, ConversationTurnParam{
+		Instructions: instructions,
+	})
+
+	// Apply output filter if set
+	if cc.outputFilter != nil {
+		turnParams = cc.outputFilter(turnParams)
+	}
+
+	messages, err := convertTurnParamsToMessages(turnParams)
 	if err != nil {
-		return nil, fmt.Errorf("failed to convert turns to messages: %w", err)
+		return anthropic.Message{}, fmt.Errorf("failed to convert turns to messages: %w", err)
 	}
 
 	// Set cache point only if caching is enabled
@@ -148,7 +213,7 @@ func (cc *Conversation) sendMessage(ctx context.Context, enableCache bool, instr
 
 	response, err := cc.sender.SendMessage(ctx, params)
 	if err != nil {
-		return nil, err
+		return anthropic.Message{}, err
 	}
 
 	log.Printf("Token usage - Input: %d, Cache create: %d, Cache read: %d, Total: %d",
@@ -180,9 +245,6 @@ func (cc *Conversation) GetPendingToolUses() []anthropic.ToolUseBlock {
 	}
 
 	lastTurn := &cc.Turns[len(cc.Turns)-1]
-	if lastTurn.Response == nil {
-		return nil
-	}
 
 	var pending []anthropic.ToolUseBlock
 	for _, toolExchange := range lastTurn.ToolExchanges {
@@ -210,6 +272,13 @@ func (cc *Conversation) AddToolResult(result anthropic.ToolResultBlockParam) err
 	return fmt.Errorf("tool use block with ID '%s' not found", result.ToolUseID)
 }
 
+// SetOutputFilter sets a filter function that will be applied to conversation turns before sending to the AI.
+// The filter receives all turns and can analyze and modify them (e.g., suppress verbose tool results).
+// The original conversation history is not modified, only the messages sent to the AI.
+func (cc *Conversation) SetOutputFilter(filter OutputFilter) {
+	cc.outputFilter = filter
+}
+
 // Fork returns a new conversation with the same history as this one up to but not including the turn at the given
 // index. E.g. if the given index is 3, the forked conversation's history will be turns 0, 1, and 2
 func (cc Conversation) Fork(turnIndex int) (*Conversation, error) {
@@ -220,7 +289,7 @@ func (cc Conversation) Fork(turnIndex int) (*Conversation, error) {
 	return &cc, nil
 }
 
-func buildToolExchangesFromResponse(response *anthropic.Message) []ToolExchange {
+func buildToolExchangesFromResponse(response anthropic.Message) []ToolExchange {
 	toolExchanges := []ToolExchange{}
 	for _, block := range response.Content {
 		if toolUseBlock, ok := block.AsAny().(anthropic.ToolUseBlock); ok {
@@ -230,20 +299,52 @@ func buildToolExchangesFromResponse(response *anthropic.Message) []ToolExchange 
 	return toolExchanges
 }
 
-func convertTurnsToMessages(turns []ConversationTurn) ([]anthropic.MessageParam, error) {
+// cloneTurns creates a deep copy of conversation turns to prevent filters from modifying the original history
+func cloneTurns(turns []ConversationTurn) []ConversationTurn {
+	cloned := make([]ConversationTurn, len(turns))
+	for i, turn := range turns {
+		clonedTurn := ConversationTurn{
+			Response: turn.Response, // Response is immutable (from API), no need to clone
+		}
+
+		// Clone Instructions slice
+		if turn.Instructions != nil {
+			clonedTurn.Instructions = make([]anthropic.ContentBlockParamUnion, len(turn.Instructions))
+			copy(clonedTurn.Instructions, turn.Instructions)
+		}
+
+		// Clone ToolExchanges slice and its elements
+		if turn.ToolExchanges != nil {
+			clonedTurn.ToolExchanges = make([]ToolExchange, len(turn.ToolExchanges))
+			for j, exchange := range turn.ToolExchanges {
+				clonedExchange := ToolExchange{
+					UseBlock: exchange.UseBlock, // UseBlock is immutable (from API response)
+				}
+				// Clone ResultBlock if present
+				if exchange.ResultBlock != nil {
+					resultCopy := *exchange.ResultBlock
+					clonedExchange.ResultBlock = &resultCopy
+				}
+				clonedTurn.ToolExchanges[j] = clonedExchange
+			}
+		}
+
+		cloned[i] = clonedTurn
+	}
+	return cloned
+}
+
+func convertTurnParamsToMessages(turns []ConversationTurnParam) ([]anthropic.MessageParam, error) {
 	messages := []anthropic.MessageParam{}
 
 	// Convert conversation turns into API messages
-	var previousTurn *ConversationTurn
+	var previousTurn *ConversationTurnParam
 	for _, turn := range turns {
 		userBlocks := []anthropic.ContentBlockParamUnion{}
 		// Start the message with tool results from the previous turn
 		if previousTurn != nil {
 			for _, toolExchange := range previousTurn.ToolExchanges {
-				if toolExchange.ResultBlock == nil {
-					return nil, fmt.Errorf("no result added for tool use '%s' (%s)", toolExchange.UseBlock.ID, toolExchange.UseBlock.Name)
-				}
-				userBlocks = append(userBlocks, anthropic.ContentBlockParamUnion{OfToolResult: toolExchange.ResultBlock})
+				userBlocks = append(userBlocks, anthropic.ContentBlockParamUnion{OfToolResult: &toolExchange.ResultBlock})
 			}
 		}
 		// Add current turn's instructions
@@ -252,10 +353,8 @@ func convertTurnsToMessages(turns []ConversationTurn) ([]anthropic.MessageParam,
 		// We're done with the user message part of the turn
 		messages = append(messages, anthropic.NewUserMessage(userBlocks...))
 
-		// Add the assistant response part of the turn, if populated
-		if turn.Response != nil {
-			messages = append(messages, turn.Response.ToParam())
-		}
+		// Add the assistant response part of the turn
+		messages = append(messages, turn.Response)
 
 		previousTurn = &turn
 	}

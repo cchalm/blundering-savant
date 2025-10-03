@@ -14,15 +14,15 @@ import (
 
 // messageSenderStub is a stub implementation of MessageSender for testing
 type messageSenderStub struct {
-	response       *anthropic.Message
+	response       anthropic.Message
 	capturedParams *anthropic.MessageNewParams
 	err            error
 }
 
-func (m *messageSenderStub) SendMessage(_ context.Context, params anthropic.MessageNewParams, _ ...anthropt.RequestOption) (*anthropic.Message, error) {
+func (m *messageSenderStub) SendMessage(_ context.Context, params anthropic.MessageNewParams, _ ...anthropt.RequestOption) (anthropic.Message, error) {
 	m.capturedParams = &params
 	if m.err != nil {
-		return nil, m.err
+		return anthropic.Message{}, m.err
 	}
 	return m.response, nil
 }
@@ -39,7 +39,7 @@ func newToolResultBlockParam(toolID string, result string, isError bool) anthrop
 }
 
 // newAnthropicMessage creates an anthropic.Message for testing by serializing and deserializing
-func newAnthropicMessage(t *testing.T, content ...anthropic.ContentBlockParamUnion) *anthropic.Message {
+func newAnthropicMessage(t *testing.T, content ...anthropic.ContentBlockParamUnion) anthropic.Message {
 	if t != nil {
 		t.Helper()
 	}
@@ -68,7 +68,7 @@ func newAnthropicMessage(t *testing.T, content ...anthropic.ContentBlockParamUni
 		CacheReadInputTokens:     5,
 	}
 
-	return &msg
+	return msg
 }
 
 func TestNewConversation(t *testing.T) {
@@ -282,7 +282,7 @@ func TestGetPendingToolUses_NoResponseInLastTurn(t *testing.T) {
 	conv := &Conversation{
 		Turns: []ConversationTurn{
 			{
-				Response: nil,
+				// Response is zero value (no response set)
 			},
 		},
 	}
@@ -420,136 +420,6 @@ func TestSendMessage_RejectsToolResults(t *testing.T) {
 	assert.Contains(t, err.Error(), "tool results must not be passed as instructions")
 }
 
-func TestConvertTurnsToMessages_Empty(t *testing.T) {
-	turns := []ConversationTurn{}
-
-	messages, err := convertTurnsToMessages(turns)
-
-	require.NoError(t, err)
-	assert.Empty(t, messages)
-}
-
-func TestConvertTurnsToMessages_SingleTurnWithoutResponse(t *testing.T) {
-	turns := []ConversationTurn{
-		{
-			Instructions: []anthropic.ContentBlockParamUnion{
-				anthropic.NewTextBlock("user instruction"),
-			},
-		},
-	}
-
-	messages, err := convertTurnsToMessages(turns)
-
-	require.NoError(t, err)
-	require.Len(t, messages, 1)
-	assert.Equal(t, anthropic.MessageParamRoleUser, messages[0].Role)
-}
-
-func TestConvertTurnsToMessages_SingleTurnWithResponse(t *testing.T) {
-	turns := []ConversationTurn{
-		{
-			Instructions: []anthropic.ContentBlockParamUnion{
-				anthropic.NewTextBlock("user instruction"),
-			},
-			Response: newAnthropicMessage(nil, anthropic.NewTextBlock("assistant response")),
-		},
-	}
-
-	messages, err := convertTurnsToMessages(turns)
-
-	require.NoError(t, err)
-	require.Len(t, messages, 2)
-	assert.Equal(t, anthropic.MessageParamRoleUser, messages[0].Role)
-	assert.Equal(t, anthropic.MessageParamRoleAssistant, messages[1].Role)
-}
-
-func TestConvertTurnsToMessages_MultipleTurnsWithToolExchange(t *testing.T) {
-	response1 := newAnthropicMessage(nil,
-		anthropic.NewTextBlock("use tool"),
-		anthropic.NewToolUseBlock("tool_123", map[string]string{"param": "value"}, "test_tool"),
-	)
-
-	// Extract the tool use block from the response
-	var toolUseBlock anthropic.ToolUseBlock
-	for _, content := range response1.Content {
-		if block, ok := content.AsAny().(anthropic.ToolUseBlock); ok {
-			toolUseBlock = block
-			break
-		}
-	}
-
-	toolResult := newToolResultBlockParam("tool_123", "result", false)
-
-	turns := []ConversationTurn{
-		{
-			Instructions: []anthropic.ContentBlockParamUnion{
-				anthropic.NewTextBlock("first instruction"),
-			},
-			Response: response1,
-			ToolExchanges: []ToolExchange{
-				{UseBlock: toolUseBlock, ResultBlock: &toolResult},
-			},
-		},
-		{
-			Instructions: []anthropic.ContentBlockParamUnion{
-				anthropic.NewTextBlock("second instruction"),
-			},
-			Response: newAnthropicMessage(nil, anthropic.NewTextBlock("final response")),
-		},
-	}
-
-	messages, err := convertTurnsToMessages(turns)
-
-	require.NoError(t, err)
-	require.Len(t, messages, 4)
-	assert.Equal(t, anthropic.MessageParamRoleUser, messages[0].Role)
-	assert.Equal(t, anthropic.MessageParamRoleAssistant, messages[1].Role)
-	assert.Equal(t, anthropic.MessageParamRoleUser, messages[2].Role)
-	// Second user message should contain tool result
-	require.Len(t, messages[2].Content, 2)
-	assert.NotNil(t, messages[2].Content[0].OfToolResult)
-	assert.Equal(t, anthropic.MessageParamRoleAssistant, messages[3].Role)
-}
-
-func TestConvertTurnsToMessages_MissingToolResult(t *testing.T) {
-	response1 := newAnthropicMessage(nil,
-		anthropic.NewTextBlock("use tool"),
-		anthropic.NewToolUseBlock("tool_123", map[string]string{"param": "value"}, "test_tool"),
-	)
-
-	// Extract the tool use block from the response
-	var toolUseBlock anthropic.ToolUseBlock
-	for _, content := range response1.Content {
-		if block, ok := content.AsAny().(anthropic.ToolUseBlock); ok {
-			toolUseBlock = block
-			break
-		}
-	}
-
-	turns := []ConversationTurn{
-		{
-			Instructions: []anthropic.ContentBlockParamUnion{
-				anthropic.NewTextBlock("first instruction"),
-			},
-			Response: response1,
-			ToolExchanges: []ToolExchange{
-				{UseBlock: toolUseBlock, ResultBlock: nil},
-			},
-		},
-		{
-			Instructions: []anthropic.ContentBlockParamUnion{
-				anthropic.NewTextBlock("second instruction"),
-			},
-		},
-	}
-
-	messages, err := convertTurnsToMessages(turns)
-
-	require.Error(t, err)
-	assert.Nil(t, messages)
-	assert.Contains(t, err.Error(), "no result added for tool use")
-}
-
 func TestBuildToolExchangesFromResponse_NoToolUses(t *testing.T) {
 	response := newAnthropicMessage(nil, anthropic.NewTextBlock("just text"))
 
@@ -676,4 +546,171 @@ func TestFork_IndependentCopy(t *testing.T) {
 	assert.Equal(t, "turn 2", conv.Turns[1].Instructions[0].OfText.Text)
 	assert.Equal(t, "turn 1", forked.Turns[0].Instructions[0].OfText.Text)
 	assert.Equal(t, "new instruction", forked.Turns[1].Instructions[0].OfText.Text)
+}
+
+func TestOutputFilter_Basic(t *testing.T) {
+	// Create a simple filter that replaces all tool result text with "SUPPRESSED"
+	filter := func(turns []ConversationTurnParam) []ConversationTurnParam {
+		modifiedTurns := make([]ConversationTurnParam, len(turns))
+		for i, turn := range turns {
+			modifiedTurn := turn
+			modifiedToolExchanges := make([]ToolExchangeParam, len(turn.ToolExchanges))
+			copy(modifiedToolExchanges, turn.ToolExchanges)
+
+			for j, exchange := range modifiedToolExchanges {
+				suppressedResult := exchange.ResultBlock
+				suppressedResult.Content = []anthropic.ToolResultBlockParamContentUnion{
+					{OfText: &anthropic.TextBlockParam{Text: "SUPPRESSED"}},
+				}
+				modifiedToolExchanges[j].ResultBlock = suppressedResult
+			}
+
+			modifiedTurn.ToolExchanges = modifiedToolExchanges
+			modifiedTurns[i] = modifiedTurn
+		}
+		return modifiedTurns
+	}
+
+	response1 := newAnthropicMessage(nil,
+		anthropic.NewTextBlock("use tool"),
+		anthropic.NewToolUseBlock("tool_123", map[string]string{"param": "value"}, "test_tool"),
+	)
+
+	var toolUseBlock anthropic.ToolUseBlock
+	for _, content := range response1.Content {
+		if block, ok := content.AsAny().(anthropic.ToolUseBlock); ok {
+			toolUseBlock = block
+			break
+		}
+	}
+
+	toolResult := newToolResultBlockParam("tool_123", "original result", false)
+
+	turns := []ConversationTurn{
+		{
+			Instructions: []anthropic.ContentBlockParamUnion{
+				anthropic.NewTextBlock("first instruction"),
+			},
+			Response: response1,
+			ToolExchanges: []ToolExchange{
+				{UseBlock: toolUseBlock, ResultBlock: &toolResult},
+			},
+		},
+		{
+			Instructions: []anthropic.ContentBlockParamUnion{
+				anthropic.NewTextBlock("second instruction"),
+			},
+		},
+	}
+
+	// Convert turns to params and apply filter
+	turnParams := make([]ConversationTurnParam, len(turns))
+	for i, turn := range turns {
+		tp, err := turn.ToParam()
+		require.NoError(t, err)
+		turnParams[i] = tp
+	}
+	filteredTurns := filter(turnParams)
+	messages, err := convertTurnParamsToMessages(filteredTurns)
+
+	require.NoError(t, err)
+	require.Len(t, messages, 3)
+
+	// The second user message should contain the suppressed tool result
+	assert.Equal(t, anthropic.MessageParamRoleUser, messages[2].Role)
+	require.Len(t, messages[2].Content, 2)
+	assert.NotNil(t, messages[2].Content[0].OfToolResult)
+	assert.Len(t, messages[2].Content[0].OfToolResult.Content, 1)
+	assert.Equal(t, "SUPPRESSED", messages[2].Content[0].OfToolResult.Content[0].OfText.Text)
+}
+
+func TestOutputFilter_AppliedDynamically(t *testing.T) {
+	// Create a filter that counts how many times it's called
+	callCount := 0
+	filter := func(turns []ConversationTurnParam) []ConversationTurnParam {
+		callCount++
+		return turns // No-op filter
+	}
+
+	stub := &messageSenderStub{
+		response: newAnthropicMessage(t, anthropic.NewTextBlock("response")),
+	}
+	conv := NewConversation(stub, anthropic.ModelClaudeSonnet4_5, 1000, []anthropic.ToolParam{}, "test prompt")
+	conv.SetOutputFilter(filter)
+
+	// Send first message
+	_, err := conv.SendMessage(context.Background(), anthropic.NewTextBlock("message 1"))
+	require.NoError(t, err)
+	assert.Equal(t, 1, callCount)
+
+	// Send second message
+	_, err = conv.SendMessage(context.Background(), anthropic.NewTextBlock("message 2"))
+	require.NoError(t, err)
+	assert.Equal(t, 2, callCount)
+}
+
+func TestOutputFilter_ReceivesAllTurns(t *testing.T) {
+	// Create a filter that verifies it receives all turns
+	var capturedTurnCount int
+	filter := func(turns []ConversationTurnParam) []ConversationTurnParam {
+		capturedTurnCount = len(turns)
+		return turns
+	}
+
+	stub := &messageSenderStub{
+		response: newAnthropicMessage(t, anthropic.NewTextBlock("response")),
+	}
+	conv := NewConversation(stub, anthropic.ModelClaudeSonnet4_5, 1000, []anthropic.ToolParam{}, "test prompt")
+	conv.SetOutputFilter(filter)
+
+	// Send first message
+	_, err := conv.SendMessage(context.Background(), anthropic.NewTextBlock("message 1"))
+	require.NoError(t, err)
+	assert.Equal(t, 1, capturedTurnCount) // Initial turn being sent
+
+	// Send second message
+	_, err = conv.SendMessage(context.Background(), anthropic.NewTextBlock("message 2"))
+	require.NoError(t, err)
+	assert.Equal(t, 2, capturedTurnCount) // Previous turn + new turn being sent
+}
+
+func TestOutputFilter_DoesNotModifyOriginalHistory(t *testing.T) {
+	// Create a malicious filter that tries to modify turns in place
+	maliciousFilter := func(turns []ConversationTurnParam) []ConversationTurnParam {
+		// Try to corrupt the first turn's instructions
+		if len(turns) > 0 && len(turns[0].Instructions) > 0 {
+			turns[0].Instructions[0] = anthropic.NewTextBlock("CORRUPTED")
+		}
+		return turns
+	}
+
+	response1 := newAnthropicMessage(t,
+		anthropic.NewTextBlock("response 1"),
+		anthropic.NewToolUseBlock("tool_123", map[string]string{"param": "value"}, "test_tool"),
+	)
+
+	stub := &messageSenderStub{response: response1}
+	conv := NewConversation(stub, anthropic.ModelClaudeSonnet4_5, 1000, []anthropic.ToolParam{}, "test prompt")
+	conv.SetOutputFilter(maliciousFilter)
+
+	// Send first message
+	originalInstruction := "original message"
+	_, err := conv.SendMessage(context.Background(), anthropic.NewTextBlock(originalInstruction))
+	require.NoError(t, err)
+
+	// Add tool result
+	toolResult := newToolResultBlockParam("tool_123", "result", false)
+	err = conv.AddToolResult(toolResult)
+	require.NoError(t, err)
+
+	// Send second message - this will trigger the filter again
+	stub.response = newAnthropicMessage(t, anthropic.NewTextBlock("response 2"))
+	_, err = conv.SendMessage(context.Background(), anthropic.NewTextBlock("message 2"))
+	require.NoError(t, err)
+
+	// Verify the original conversation history was not corrupted
+	require.Len(t, conv.Turns, 2)
+	require.Len(t, conv.Turns[0].Instructions, 1)
+	assert.Equal(t, originalInstruction, conv.Turns[0].Instructions[0].OfText.Text)
+	assert.NotEqual(t, "CORRUPTED", conv.Turns[0].Instructions[0].OfText.Text)
 }

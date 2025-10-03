@@ -79,8 +79,8 @@ func (cc *Conversation) buildMarkdownData() (*conversationMarkdownData, error) {
 		data.Messages = append(data.Messages, userMessages...)
 
 		// 2. Convert assistant response (text and thinking blocks only)
-		if turn.Response != nil {
-			assistantMessages := convertAssistantMessage(turn.Response)
+		if turn.Response.ID != "" {
+			assistantMessages := convertAssistantMessage(&turn.Response)
 			data.Messages = append(data.Messages, assistantMessages...)
 
 			// Accumulate token usage

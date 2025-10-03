@@ -270,19 +270,19 @@ func sendMessage(
 	conversation *ai.Conversation,
 	tokenLimit int64,
 	instructions ...anthropic.ContentBlockParamUnion,
-) (*anthropic.Message, error) {
+) (anthropic.Message, error) {
 
 	if tokenUsageExceedsLimit(conversation, tokenLimit) {
 		keepFirst, keepLast := 0, 10 // Keep the last 10 messages
 		err := summarize(ctx, conversation, keepFirst, keepLast)
 		if err != nil {
-			return nil, err
+			return anthropic.Message{}, err
 		}
 	}
 
 	response, err := conversation.SendMessage(ctx, instructions...)
 	if err != nil {
-		return nil, fmt.Errorf("failed to send message: %w", err)
+		return anthropic.Message{}, fmt.Errorf("failed to send message: %w", err)
 	}
 
 	return response, nil
@@ -296,7 +296,7 @@ func tokenUsageExceedsLimit(conversation *ai.Conversation, tokenLimit int64) boo
 
 	// Get the most recent response
 	lastMessage := conversation.Turns[len(conversation.Turns)-1]
-	if lastMessage.Response == nil {
+	if lastMessage.Response.ID == "" {
 		return false
 	}
 
@@ -394,7 +394,7 @@ func ensureLabelExists(ctx context.Context, issuesService *github.IssuesService,
 // Utility functions
 
 // initConversation either constructs a new conversation or resumes a previous conversation
-func (b *Bot) initConversation(ctx context.Context, tsk task.Task, toolCtx *ToolContext) (*ai.Conversation, *anthropic.Message, error) {
+func (b *Bot) initConversation(ctx context.Context, tsk task.Task, toolCtx *ToolContext) (*ai.Conversation, anthropic.Message, error) {
 	model := anthropic.ModelClaudeSonnet4_5
 	var maxTokens int64 = 64000
 
@@ -406,7 +406,7 @@ func (b *Bot) initConversation(ctx context.Context, tsk task.Task, toolCtx *Tool
 		var err error
 		history, err = b.resumableConversations.Get(strconv.Itoa(tsk.Issue.Number))
 		if err != nil {
-			return nil, nil, fmt.Errorf("failed to look up resumable conversation by issue number: %w", err)
+			return nil, anthropic.Message{}, fmt.Errorf("failed to look up resumable conversation by issue number: %w", err)
 		}
 	}
 
@@ -424,25 +424,28 @@ func (b *Bot) resumeConversation(
 	maxTokens int64,
 	tools []anthropic.ToolParam,
 	toolCtx *ToolContext,
-) (*ai.Conversation, *anthropic.Message, error) {
+) (*ai.Conversation, anthropic.Message, error) {
 	conv, err := ai.ResumeConversation(b.sender, history, model, maxTokens, tools)
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to resume conversation: %w", err)
+		return nil, anthropic.Message{}, fmt.Errorf("failed to resume conversation: %w", err)
 	}
+
+	// Set up output filter to reduce token usage by suppressing old validation results
+	conv.SetOutputFilter(newValidationSuppressionFilter())
 
 	err = b.rerunStatefulToolCalls(ctx, toolCtx, conv)
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to rerun stateful tool calls: %w", err)
+		return nil, anthropic.Message{}, fmt.Errorf("failed to rerun stateful tool calls: %w", err)
 	}
 
 	// Extract the last message of the resumed conversation. If tool uses are already resolved, send the next
 	// message. Otherwise, return the response from the last message
-	var response *anthropic.Message
+	var response anthropic.Message
 	if len(conv.GetPendingToolUses()) == 0 {
 		log.Printf("Resuming previous conversation from a completed turn - sending next message")
 		r, err := conv.SendMessage(ctx)
 		if err != nil {
-			return nil, nil, fmt.Errorf("failed to send message: %w", err)
+			return nil, anthropic.Message{}, fmt.Errorf("failed to send message: %w", err)
 		}
 		response = r
 	} else {
@@ -465,18 +468,21 @@ func (b *Bot) newConversation(
 	model anthropic.Model,
 	maxTokens int64,
 	tools []anthropic.ToolParam,
-) (*ai.Conversation, *anthropic.Message, error) {
+) (*ai.Conversation, anthropic.Message, error) {
 	systemPrompt, err := buildSystemPrompt("Blundering Savant", *b.user.Login)
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to build system prompt: %w", err)
+		return nil, anthropic.Message{}, fmt.Errorf("failed to build system prompt: %w", err)
 	}
 
 	c := ai.NewConversation(b.sender, model, maxTokens, tools, systemPrompt)
 
+	// Set up output filter to reduce token usage by suppressing old validation results
+	c.SetOutputFilter(newValidationSuppressionFilter())
+
 	log.Printf("Sending initial message to AI")
 	repositoryContent, taskContent, err := buildPrompt(tsk)
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to build prompt: %w", err)
+		return nil, anthropic.Message{}, fmt.Errorf("failed to build prompt: %w", err)
 	}
 
 	// Send repository content as cacheable block, followed by task-specific content
@@ -485,7 +491,7 @@ func (b *Bot) newConversation(
 
 	response, err := c.SendMessage(ctx, repositoryBlock, taskBlock)
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to send initial message to AI: %w", err)
+		return nil, anthropic.Message{}, fmt.Errorf("failed to send initial message to AI: %w", err)
 	}
 	return c, response, nil
 }
@@ -583,7 +589,7 @@ func summarize(ctx context.Context, conversation *ai.Conversation, keepFirst int
 	{
 		// Get token count from most recent response for logging
 		var totalTokens int64
-		if lastMsg := conversation.Turns[len(conversation.Turns)-1]; lastMsg.Response != nil {
+		if lastMsg := conversation.Turns[len(conversation.Turns)-1]; lastMsg.Response.ID != "" {
 			totalTokens = lastMsg.Response.Usage.InputTokens +
 				lastMsg.Response.Usage.CacheReadInputTokens +
 				lastMsg.Response.Usage.CacheCreationInputTokens
@@ -624,10 +630,10 @@ func summarize(ctx context.Context, conversation *ai.Conversation, keepFirst int
 
 // generateSummary uses AI to generate a summary of the given conversation excluding the specified number of
 // conversation turns. Does not modify the given conversation. excludeLast must be > 0
-func generateSummary(ctx context.Context, conversation *ai.Conversation, excludeLast int) (*anthropic.Message, error) {
+func generateSummary(ctx context.Context, conversation *ai.Conversation, excludeLast int) (anthropic.Message, error) {
 	summaryConversation, err := conversation.Fork(len(conversation.Turns) - excludeLast)
 	if err != nil {
-		return nil, fmt.Errorf("failed to fork conversation at summarization point: %w", err)
+		return anthropic.Message{}, fmt.Errorf("failed to fork conversation at summarization point: %w", err)
 	}
 	summaryPrompt := buildSummaryPrompt()
 

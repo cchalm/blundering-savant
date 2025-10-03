@@ -24,25 +24,25 @@ func (sms StreamingMessageSender) SendMessage(
 	ctx context.Context,
 	params anthropic.MessageNewParams,
 	opts ...anthropt.RequestOption,
-) (*anthropic.Message, error) {
+) (anthropic.Message, error) {
 	stream := sms.client.Messages.NewStreaming(ctx, params)
-	response := &anthropic.Message{}
+	response := anthropic.Message{}
 	for stream.Next() {
 		event := stream.Current()
 		err := response.Accumulate(event)
 		if err != nil {
-			return nil, fmt.Errorf("failed to accumulate response content stream: %w", err)
+			return anthropic.Message{}, fmt.Errorf("failed to accumulate response content stream: %w", err)
 		}
 	}
 	if stream.Err() != nil {
-		return nil, fmt.Errorf("failed to stream response: %w", stream.Err())
+		return anthropic.Message{}, fmt.Errorf("failed to stream response: %w", stream.Err())
 	}
 	if response.StopReason == "" {
 		b, err := json.Marshal(response)
 		if err != nil {
 			log.Printf("error while marshalling corrupt message for inspection: %v", err)
 		}
-		return nil, fmt.Errorf("malformed message: %v", string(b))
+		return anthropic.Message{}, fmt.Errorf("malformed message: %v", string(b))
 	}
 
 	return response, nil
