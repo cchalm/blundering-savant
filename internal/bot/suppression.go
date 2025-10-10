@@ -5,11 +5,9 @@ import (
 	"github.com/cchalm/blundering-savant/internal/ai"
 )
 
-// newValidationSuppressionFilter creates an output filter that keeps only the most recent
-// validation result in the conversation history sent to the AI. All earlier validation results
-// are replaced with a brief message indicating the content was suppressed.
-//
-// This reduces token usage while maintaining the full conversation history for forking purposes.
+// newValidationSuppressionFilter creates an output filter that keeps only the most recent validation result in the
+// conversation history sent to the AI. All earlier validation results are replaced with a brief message indicating the
+// content was suppressed. Removing previous validation results reduces context size for long conversations
 func newValidationSuppressionFilter() ai.OutputFilter {
 	return func(turns []ai.ConversationTurnParam) []ai.ConversationTurnParam {
 		// First pass: find the index of the last turn containing a validation result
